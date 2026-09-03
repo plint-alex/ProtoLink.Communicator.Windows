@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Main chrome -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#FFF5F5F5"/>
+    <SolidColorBrush x:Key="ContentBackground" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="SettingsOverlayBackground" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="ToolbarBackground" Color="#FFF0F0F0"/>
+    <SolidColorBrush x:Key="ToolbarBorderBrush" Color="#FFE0E0E0"/>
+    <SolidColorBrush x:Key="ForegroundBrush" Color="#FF202124"/>
+    <SolidColorBrush x:Key="ForegroundMutedBrush" Color="#FF666666"/>
+    <SolidColorBrush x:Key="ForegroundLinkBrush" Color="#FF0066CC"/>
+    <SolidColorBrush x:Key="BorderBrushStandard" Color="#FFE0E0E0"/>
+    <SolidColorBrush x:Key="SplitterBrush" Color="#FF606060"/>
+    <SolidColorBrush x:Key="StatusBarBackground" Color="#FFECF0F1"/>
+    <SolidColorBrush x:Key="PanelCardBackground" Color="#FFF5F5F5"/>
+    <SolidColorBrush x:Key="ListBackground" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="TabItemBackgroundBrush" Color="#FFE8E8E8"/>
+    <SolidColorBrush x:Key="SuccessTintBrush" Color="#FF006600"/>
+
+    <!-- Notes toolbar -->
+    <SolidColorBrush x:Key="NotesToolbarBackground" Color="#FFF4F5F7"/>
+    <SolidColorBrush x:Key="NotesToolbarSeparatorBrush" Color="#FFDFE1E6"/>
+    <SolidColorBrush x:Key="NotesToolbarButtonHoverBrush" Color="#FFEBECF0"/>
+
+    <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource TabItemBackgroundBrush}"/>
+    </Style>
+</ResourceDictionary>

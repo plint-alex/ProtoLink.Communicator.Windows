@@ -1,0 +1,19 @@
+# Build
+**/bin/
+**/obj/
+publish/
+.vs/
+*.user
+*.suo
+*.userosscache
+
+# Secrets / local
+.env
+.env.*
+*.local.json
+*.local.txt
+
+# WebView2 runtime cache
+**/*.exe.WebView2/
+
+*.log

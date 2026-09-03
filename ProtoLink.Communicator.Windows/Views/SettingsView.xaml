@@ -1,0 +1,59 @@
+<UserControl x:Class="ProtoLink.Communicator.Windows.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
+             mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
+             HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+             HorizontalContentAlignment="Stretch"
+             Background="{DynamicResource SettingsOverlayBackground}">
+    <Grid Margin="24" Background="{DynamicResource SettingsOverlayBackground}" HorizontalAlignment="Stretch">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Button Command="{Binding CloseCommand}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                Width="30" Height="30" Content="✕" Background="Transparent" BorderThickness="0" FontSize="18" ToolTip="Close Settings"
+                Foreground="{DynamicResource ForegroundBrush}"/>
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <StackPanel HorizontalAlignment="Stretch" Margin="0,10,0,0">
+                <TextBlock Text="Appearance" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBlock Text="Theme" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
+                <ComboBox ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" Margin="0,0,0,16"/>
+                <TextBlock Text="API Settings" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBlock Text="API Base Address" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBox Text="{Binding ApiBaseAddress, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                <TextBlock Text="Public site (Cloud → Open in browser)" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBox Text="{Binding PublicSiteBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                <Button Content="Save Settings" Command="{Binding SaveCommand}" Height="30" Margin="0,0,0,20"/>
+                <TextBlock Text="Notes" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBlock Text="Notes root folder" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Text="{Binding NotesRootPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                    <Button Grid.Column="1" Content="Browse…" Click="OnNotesBrowseClick" MinWidth="70" Padding="8,4"/>
+                </Grid>
+                <TextBlock Text="Account" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding CurrentLogin, StringFormat='Logged in as: {0}'}" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                        <Button Content="Log Off" Command="{Binding LogOffCommand}" Height="30" Width="100" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                </Grid>
+                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
+                    <views:LoginView DataContext="{Binding LoginViewModel}"/>
+                </Grid>
+                <TextBlock Text="Contacts" FontSize="18" FontWeight="Bold" Margin="0,20,0,10" Foreground="{DynamicResource ForegroundBrush}"
+                           Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <views:AddContactView DataContext="{Binding AddContactViewModel}"/>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
