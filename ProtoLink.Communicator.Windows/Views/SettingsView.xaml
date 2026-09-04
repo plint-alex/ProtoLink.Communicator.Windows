@@ -19,6 +19,14 @@
         <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
             <StackPanel HorizontalAlignment="Stretch" Margin="0,10,0,0">
+                <TextBlock Text="About" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <TextBlock Text="{Binding AppVersion, StringFormat=App version: {0}}" Margin="0,0,0,4" Foreground="{DynamicResource ForegroundBrush}"/>
+                <DockPanel Margin="0,0,0,16" LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshApiVersionCommand}"
+                            MinWidth="70" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding ApiVersionText, StringFormat=API version: {0}}" VerticalAlignment="Center"
+                               TextWrapping="Wrap" Foreground="{DynamicResource ForegroundBrush}"/>
+                </DockPanel>
                 <TextBlock Text="Appearance" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
                 <TextBlock Text="Theme" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
                 <ComboBox ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" Margin="0,0,0,16"/>
@@ -27,6 +35,13 @@
                 <TextBox Text="{Binding ApiBaseAddress, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
                 <TextBlock Text="Public site (Cloud → Open in browser)" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
                 <TextBox Text="{Binding PublicSiteBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+                <TextBlock Text="Sync" FontSize="18" FontWeight="Bold" Margin="0,8,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
+                <CheckBox IsChecked="{Binding CompareSizeAndTimeOnSync}" Margin="0,0,0,4"
+                          Foreground="{DynamicResource ForegroundBrush}"
+                          Content="Compare size &amp; time on sync"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,16" Opacity="0.75"
+                           Foreground="{DynamicResource ForegroundBrush}"
+                           Text="When on, sync compares file size and update time, then uploads (write) or downloads (read). Turn off for classic sync."/>
                 <Button Content="Save Settings" Command="{Binding SaveCommand}" Height="30" Margin="0,0,0,20"/>
                 <TextBlock Text="Notes" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
                 <TextBlock Text="Notes root folder" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>

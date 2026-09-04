@@ -62,6 +62,8 @@ public class AuthService : IAuthService
 
     public async Task<bool> RefreshTokenAsync()
     {
+        // Prefer in-memory token; fall back to disk (AuthHandler may call us after LoadToken).
+        _currentToken ??= _tokenService.LoadToken();
         if (_currentToken?.RefreshToken == null) return false;
 
         var contract = new RefreshTokenContract
@@ -76,7 +78,9 @@ public class AuthService : IAuthService
             if (!response.IsSuccessStatusCode) return false;
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            if (string.IsNullOrWhiteSpace(responseContent)) return false;
+            if (string.IsNullOrWhiteSpace(responseContent) ||
+                string.Equals(responseContent.Trim(), "null", StringComparison.OrdinalIgnoreCase))
+                return false;
 
             var result = JsonConvert.DeserializeObject<RefreshTokenResult>(responseContent);
             if (result != null && !string.IsNullOrEmpty(result.AccessToken))
@@ -93,8 +97,6 @@ public class AuthService : IAuthService
             _logger.LogError(ex, "Token refresh failed");
         }
 
-        _currentToken = null;
-        _tokenService.ClearToken();
         return false;
     }
 

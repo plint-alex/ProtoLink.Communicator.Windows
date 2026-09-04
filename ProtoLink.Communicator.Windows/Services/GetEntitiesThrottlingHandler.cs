@@ -5,11 +5,11 @@ namespace ProtoLink.Communicator.Windows.Services;
 
 /// <summary>
 /// Limits concurrent <c>POST /api/Entities/GetEntities</c> calls app-wide (messenger + cloud + settings share the same gate).
-/// Heavy overlapping requests were overwhelming the server (503 / dropped connections).
+/// Allow 2 so messenger contact load is not stuck behind a long cloud sync page walk.
 /// </summary>
 public sealed class GetEntitiesThrottlingHandler : DelegatingHandler
 {
-    private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static readonly SemaphoreSlim Gate = new(2, 2);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {

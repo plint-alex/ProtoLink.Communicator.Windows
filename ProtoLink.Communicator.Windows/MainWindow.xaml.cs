@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private readonly ILogger<MainWindow> _logger;
     private HttpClient _httpClient;
     private readonly NotesViewModel _notesViewModel;
+    private readonly Views.NotesView _notesView;
     private CloudViewModel _cloudViewModel = null!;
     private readonly HttpClient _cloudHttpClient;
     private readonly SyncMappingStore _syncStore;
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title = $"ProtoLink Communicator {AppVersionInfo.Current}";
         DeveloperToolsHost.CloseRequested += () => SetDeveloperToolsVisible(false);
         _logger = App.LoggerFactory.CreateLogger<MainWindow>();
         _tokenService = new TokenService(App.LoggerFactory.CreateLogger<TokenService>());
@@ -41,11 +43,16 @@ public partial class MainWindow : Window
         _cloudHttpClient = new HttpClient(cloudHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         RebuildCloudTab();
         _notesViewModel = new NotesViewModel(_settingsService, path => _cloudViewModel.RequestSyncForLocalPath(path));
-        NotesTabContent.Children.Add(new Views.NotesView { DataContext = _notesViewModel });
+        _notesView = new Views.NotesView { DataContext = _notesViewModel };
+        NotesTabContent.Children.Add(_notesView);
     }
 
     private AuthHandler CreateAuthHandler()
-        => new AuthHandler(_tokenService, App.LoggerFactory.CreateLogger<AuthHandler>(), OnApiUnauthorized);
+        => new AuthHandler(
+            _tokenService,
+            App.LoggerFactory.CreateLogger<AuthHandler>(),
+            OnApiUnauthorized,
+            () => _authService.RefreshTokenAsync());
 
     private static DevToolsLoggingHandler WrapWithDevToolsLogging(HttpClientHandler inner)
         => new DevToolsLoggingHandler(inner);
@@ -109,12 +116,24 @@ public partial class MainWindow : Window
     private void RebuildCloudTab()
     {
         CloudTabContent.Children.Clear();
-        _cloudViewModel = new CloudViewModel(_authService, _cloudHttpClient, _syncStore, _settingsService, ex =>
-        {
-            Dispatcher.InvokeAsync(() =>
-                ProtoLink.Communicator.Windows.Dialogs.ErrorDetailDialog.Show("Sync error", ex));
-        });
+        _cloudViewModel = new CloudViewModel(
+            _authService,
+            _cloudHttpClient,
+            _syncStore,
+            _settingsService,
+            ex =>
+            {
+                Dispatcher.InvokeAsync(() =>
+                    ProtoLink.Communicator.Windows.Dialogs.ErrorDetailDialog.Show("Sync error", ex));
+            },
+            OpenSettingsForLogin);
         CloudTabContent.Children.Add(new CloudView { DataContext = _cloudViewModel });
+    }
+
+    private void OpenSettingsForLogin()
+    {
+        if (!_authService.IsAuthenticated)
+            Settings_Click(this, new RoutedEventArgs());
     }
 
     private void MainTabControl_Loaded(object sender, RoutedEventArgs e)
@@ -126,8 +145,15 @@ public partial class MainWindow : Window
         if (toolbarPanel != null)
         {
             _tabToolbarPanel = toolbarPanel;
-            MainTabControl.SelectionChanged += (s2, e2) => UpdateTabToolbar(toolbarPanel);
+            MainTabControl.SelectionChanged += (s2, e2) =>
+            {
+                UpdateTabToolbar(toolbarPanel);
+                if (MainTabControl.SelectedIndex == 1)
+                    _notesView.ActivateNotesTab();
+            };
             UpdateTabToolbar(toolbarPanel);
+            if (MainTabControl.SelectedIndex == 1)
+                _notesView.ActivateNotesTab();
         }
     }
 

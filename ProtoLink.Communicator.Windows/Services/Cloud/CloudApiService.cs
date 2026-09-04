@@ -23,6 +23,14 @@ public class CloudApiService
         if (response.IsSuccessStatusCode) return;
         var body = response.Content != null ? await response.Content.ReadAsStringAsync() : null;
         if (string.IsNullOrWhiteSpace(body)) body = "(no response body from server)";
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized
+            || (response.StatusCode == HttpStatusCode.Forbidden
+                && body.Contains("User ID not found", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new CloudAuthRequiredException();
+        }
+
         var requestUri = response.RequestMessage?.RequestUri?.ToString() ?? "(unknown)";
         throw new HttpRequestException(
             $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Request: {requestUri}{Environment.NewLine}Response: {body}");
@@ -30,14 +38,46 @@ public class CloudApiService
 
     public async Task<List<GetEntitiesResult>> GetEntitiesAsync(Guid[]? parentIds, bool includeValues = true)
     {
-        var response = await _http.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+        const int pageSize = 200;
+        var all = new List<GetEntitiesResult>();
+        var skip = 0;
+        while (true)
         {
-            ParentIds = parentIds,
-            IncludeValues = includeValues
+            var response = await _http.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+            {
+                ParentIds = parentIds,
+                IncludeValues = includeValues,
+                Skip = skip,
+                Take = pageSize
+            });
+            await EnsureSuccessAsync(response);
+            var list = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>()
+                       ?? new List<GetEntitiesResult>();
+            all.AddRange(list);
+            if (list.Count < pageSize) break;
+            skip += pageSize;
+        }
+        return all;
+    }
+
+    public async Task AddParentAsync(Guid entityId, Guid parentId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Entities/AddParent", new
+        {
+            Id = entityId,
+            ParentId = parentId
         });
         await EnsureSuccessAsync(response);
-        var list = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-        return list ?? new List<GetEntitiesResult>();
+    }
+
+    public async Task RemoveParentAsync(Guid entityId, Guid parentId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Entities/RemoveParent", new
+        {
+            Id = entityId,
+            ParentId = parentId
+        });
+        await EnsureSuccessAsync(response);
     }
 
     public async Task<Guid> AddEntityAsync(string code, Guid[] parentIds, string? displayName = null)
@@ -97,6 +137,22 @@ public class CloudApiService
         return await response.Content.ReadAsStreamAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Content-Length from response headers without buffering the body.
+    /// Used for start-of-sync size compare (not a full download).
+    /// </summary>
+    public async Task<long?> GetFileContentLengthOrNullAsync(Guid entityId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync(
+            $"api/Files/getFile/{entityId}",
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response);
+        return response.Content.Headers.ContentLength;
+    }
+
     public async Task AddFileAsync(Guid entityId, string fileName, Stream content, string mimeType)
     {
         using var form = new MultipartFormDataContent();
@@ -106,6 +162,14 @@ public class CloudApiService
         form.Add(streamContent, "File", fileName);
         var response = await _http.PostAsync("api/Files/addFile", form);
         await EnsureSuccessAsync(response);
+
+        // Live API may bump entity version with mime-only values and drop NAME_TYPE from the
+        // current version (→ UI/sync see file-{guid}). Re-assert display name so sync can match.
+        if (!string.IsNullOrWhiteSpace(fileName)
+            && !string.Equals(fileName, $"file-{entityId:N}", StringComparison.OrdinalIgnoreCase))
+        {
+            await AddValueAsync(entityId, fileName);
+        }
     }
 
     /// <summary>

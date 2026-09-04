@@ -25,12 +25,16 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private NotesNotesRootWatcher? _rootWatcher;
     private NotesExternalChangeDialog? _externalChangeDialog;
     private bool _notesWebViewReady;
+    private bool _webViewInitStarted;
+    private Task? _webViewInitTask;
 
     public NotesView()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        IsVisibleChanged += OnNotesVisibilityChanged;
+        NotesWebView.SizeChanged += OnNotesWebViewSizeChanged;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -48,7 +52,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             PopulateTree();
         }
         StartRootWatcher();
-        _ = InitWebViewAsync();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -65,6 +68,38 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm.NotesRootPathChanged -= OnNotesRootPathChanged;
             _vm.ContentSaved -= OnContentSaved;
         }
+    }
+
+    private void OnNotesVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) =>
+        TryStartWebViewInit();
+
+    private void OnNotesWebViewSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width > 0 && e.NewSize.Height > 0)
+            TryStartWebViewInit();
+    }
+
+    /// <summary>Call when the Notes tab becomes selected (WebView2 needs a visible HWND).</summary>
+    public void ActivateNotesTab() => TryStartWebViewInit();
+
+    private void TryStartWebViewInit()
+    {
+        if (_notesWebViewReady || _webViewInitStarted) return;
+        if (!IsLoaded || !IsVisible || !IsNotesTabVisible()) return;
+        if (!NotesWebView.IsVisible || NotesWebView.ActualWidth < 2 || NotesWebView.ActualHeight < 2)
+            return;
+        _webViewInitStarted = true;
+        _webViewInitTask = InitWebViewAsync();
+    }
+
+    private bool IsNotesTabVisible()
+    {
+        for (var el = (DependencyObject?)this; el != null; el = VisualTreeHelper.GetParent(el))
+        {
+            if (el is UIElement ui && ui.Visibility != Visibility.Visible)
+                return false;
+        }
+        return true;
     }
 
     private void OnNotesRootPathChanged()
@@ -151,20 +186,105 @@ public partial class NotesView : System.Windows.Controls.UserControl
         });
     }
 
+    private static string WebView2UserDataFolder()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ProtoLinkCommunicator",
+            "WebView2-Notes");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     private async Task InitWebViewAsync()
     {
         try
         {
-            await NotesWebView.EnsureCoreWebView2Async();
+            // Let layout finish; creating the controller with a zero-size / hidden HWND
+            // frequently throws COMException 0x8000FFFF (E_UNEXPECTED) on Windows.
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            await Task.Delay(50);
+
+            if (!IsNotesTabVisible())
+            {
+                _webViewInitStarted = false;
+                return;
+            }
+
+            if (NotesWebView.CoreWebView2 != null)
+            {
+                WireWebViewEvents();
+                _notesWebViewReady = true;
+                return;
+            }
+
+            var userData = WebView2UserDataFolder();
+            var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+            try
+            {
+                await EnsureCoreWebView2WithRetryAsync(env);
+            }
+            catch (System.Runtime.InteropServices.COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+            {
+                // Corrupted profile or stale lock — recreate folder once and retry.
+                TryClearWebView2Profile(userData);
+                env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+                await EnsureCoreWebView2WithRetryAsync(env);
+            }
+
+            WireWebViewEvents();
             _notesWebViewReady = true;
-            NotesWebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-            NotesWebView.CoreWebView2.NavigationStarting += OnWebViewNavigationStarting;
+            if (_vm != null)
+                _vm.StatusText = "Notes editor ready";
+
+            if (_vm?.CurrentPagePath != null && Directory.Exists(_vm.CurrentPagePath))
+                await NavigateToAsync(_vm.CurrentPagePath);
         }
         catch (Exception ex)
         {
+            _webViewInitStarted = false;
             if (_vm != null) _vm.StatusText = "WebView error: " + ex.Message;
             ErrorDetailDialog.Show("WebView", ex);
         }
+    }
+
+    private static void TryClearWebView2Profile(string userDataFolder)
+    {
+        try
+        {
+            if (Directory.Exists(userDataFolder))
+                Directory.Delete(userDataFolder, recursive: true);
+            Directory.CreateDirectory(userDataFolder);
+        }
+        catch
+        {
+            // Best effort; environment create may still succeed.
+        }
+    }
+
+    private async Task EnsureCoreWebView2WithRetryAsync(CoreWebView2Environment env)
+    {
+        try
+        {
+            await NotesWebView.EnsureCoreWebView2Async(env);
+        }
+        catch (System.Runtime.InteropServices.COMException ex) when ((uint)ex.HResult == 0x8000FFFF)
+        {
+            // Controllers occasionally fail on first create after tab switch / profile lock.
+            await Task.Delay(250);
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            await NotesWebView.EnsureCoreWebView2Async(env);
+        }
+    }
+
+    private void WireWebViewEvents()
+    {
+        var core = NotesWebView.CoreWebView2;
+        if (core == null) return;
+        core.WebMessageReceived -= OnWebMessageReceived;
+        core.NavigationStarting -= OnWebViewNavigationStarting;
+        core.WebMessageReceived += OnWebMessageReceived;
+        core.NavigationStarting += OnWebViewNavigationStarting;
     }
 
     private static void OnWebViewNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)

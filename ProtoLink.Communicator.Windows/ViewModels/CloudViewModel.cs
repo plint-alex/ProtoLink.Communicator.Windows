@@ -19,18 +19,28 @@ public class CloudViewModel : ViewModelBase
     private readonly CloudMappedSyncCoordinator _mappedSync;
     private readonly ISyncMappingStore _syncStore;
     private readonly Action<Exception>? _syncFullErrorReporter;
+    private readonly Action? _onAuthRequired;
     private Guid? _currentFolderId;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
 
-    public CloudViewModel(IAuthService authService, HttpClient httpClient, ISyncMappingStore syncStore, ISettingsService settingsService, Action<Exception>? syncFullErrorReporter = null)
+    public CloudViewModel(
+        IAuthService authService,
+        HttpClient httpClient,
+        ISyncMappingStore syncStore,
+        ISettingsService settingsService,
+        Action<Exception>? syncFullErrorReporter = null,
+        Action? onAuthRequired = null)
     {
         _authService = authService;
         _settingsService = settingsService;
         _api = new CloudApiService(httpClient);
-        var folderSynchronizer = new CloudFolderSynchronizer(_api);
+        var folderSynchronizer = new CloudFolderSynchronizer(
+            _api,
+            compareSizeAndTimeOnSync: () => _settingsService.LoadSettings().CompareSizeAndTimeOnSync);
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
+        _onAuthRequired = onAuthRequired;
         Items = new ObservableCollection<CloudItemViewModel>();
         BreadcrumbPath = new ObservableCollection<CloudBreadcrumbEntry>();
         SyncMappings = new ObservableCollection<CloudSyncMapping>(_syncStore.Load());
@@ -39,8 +49,19 @@ public class CloudViewModel : ViewModelBase
             SyncMappings,
             LoadCurrentAsync,
             s => StatusText = s,
-            _syncFullErrorReporter,
-            System.Windows.Application.Current.Dispatcher);
+            ex =>
+            {
+                if (CloudFolderSynchronizer.IsAuthFailure(ex))
+                {
+                    StatusText = "Please log in.";
+                    _onAuthRequired?.Invoke();
+                    return;
+                }
+                _syncFullErrorReporter?.Invoke(ex);
+            },
+            System.Windows.Application.Current.Dispatcher,
+            () => _authService.IsAuthenticated,
+            () => _onAuthRequired?.Invoke());
         _mappedSync.RestartFileWatchers();
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());
         NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => _currentFolderId.HasValue);
@@ -141,18 +162,17 @@ public class CloudViewModel : ViewModelBase
 
     public async Task SyncAllMappingsOnStartupAsync()
     {
-        if (!_authService.IsAuthenticated) return;
+        if (!_authService.IsAuthenticated)
+        {
+            StatusText = "Please log in.";
+            return;
+        }
         var mappings = SyncMappings
             .Where(m => !string.IsNullOrWhiteSpace(m.LocalPath) && Directory.Exists(m.LocalPath))
             .ToList();
-        var total = mappings.Count;
-        for (var i = 0; i < mappings.Count; i++)
-        {
-            var m = mappings[i];
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
-                StatusText = total > 1 ? $"Syncing folder {i + 1}/{total}…" : "Syncing…");
-            await _mappedSync.RunFolderSynchronizeAsync(m.CloudFolderId, m.LocalPath);
-        }
+        if (mappings.Count == 0) return;
+        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Syncing…");
+        await _mappedSync.SynchronizeAllMappedAsync();
     }
 
     public async Task EnsureRootAsync()
@@ -204,9 +224,20 @@ public class CloudViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = "Error: " + ex.Message;
+            ReportCaughtException(ex);
         }
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    private void ReportCaughtException(Exception ex)
+    {
+        if (CloudFolderSynchronizer.IsAuthFailure(ex))
+        {
+            StatusText = "Please log in.";
+            _onAuthRequired?.Invoke();
+        }
+        else
+            StatusText = "Error: " + ex.Message;
     }
 
     public async Task NavigateToAsync(Guid folderId, string folderName)
@@ -255,7 +286,7 @@ public class CloudViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Error: " + ex.Message);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
             }
         });
     }
@@ -291,7 +322,7 @@ public class CloudViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Error: " + ex.Message);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
             }
         });
     }
@@ -347,7 +378,7 @@ public class CloudViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Error: " + ex.Message);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
             }
         });
     }
@@ -381,7 +412,7 @@ public class CloudViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Error: " + ex.Message);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
             }
         });
     }
@@ -432,7 +463,7 @@ public class CloudViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = "Error: " + ex.Message;
+            ReportCaughtException(ex);
         }
     }
 
@@ -459,7 +490,7 @@ public class CloudViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = "Error: " + ex.Message;
+            ReportCaughtException(ex);
         }
     }
 

@@ -22,10 +22,10 @@
 			"path": "../../tmp/MyNotesFolder/Protolink.ru"
 		},
 		{
-			"path": "../MyCloud"
+			"path": "../VPN/TorAppVpn"
 		},
 		{
-			"path": "../VPN/TorAppVpn"
+			"path": "../ProtoLink.Communicator.Android"
 		}
 	],
 	"settings": {}

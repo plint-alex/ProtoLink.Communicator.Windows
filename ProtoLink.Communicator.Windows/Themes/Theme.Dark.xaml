@@ -16,6 +16,15 @@
     <SolidColorBrush x:Key="TabItemBackgroundBrush" Color="#FF3C3C3C"/>
     <SolidColorBrush x:Key="SuccessTintBrush" Color="#FF6BCF7F"/>
 
+    <!-- Messenger (Android bubble parity) -->
+    <SolidColorBrush x:Key="ChatBackgroundBrush" Color="#FF1B2A24"/>
+    <SolidColorBrush x:Key="ChatBubbleOutgoingBrush" Color="#FF005C4B"/>
+    <SolidColorBrush x:Key="ChatBubbleIncomingBrush" Color="#FF2A3942"/>
+    <SolidColorBrush x:Key="ChatBubbleTextBrush" Color="#FFE9EDEF"/>
+    <SolidColorBrush x:Key="ChatBubbleTimeBrush" Color="#FF8696A0"/>
+    <SolidColorBrush x:Key="ChatDateChipBackgroundBrush" Color="#CC182229"/>
+    <SolidColorBrush x:Key="ChatDateChipForegroundBrush" Color="#FF8696A0"/>
+
     <SolidColorBrush x:Key="NotesToolbarBackground" Color="#FF2D2D30"/>
     <SolidColorBrush x:Key="NotesToolbarSeparatorBrush" Color="#FF505050"/>
     <SolidColorBrush x:Key="NotesToolbarButtonHoverBrush" Color="#FF3E3E42"/>

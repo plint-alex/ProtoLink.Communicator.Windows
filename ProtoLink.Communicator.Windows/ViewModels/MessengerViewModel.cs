@@ -6,6 +6,7 @@ using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -60,10 +61,7 @@ public class MessengerViewModel : ViewModelBase
                 // Only skip API load when we already completed LoadMessagesAsync for this contact.
                 // (A stale empty cache from a failed optimistic send would otherwise block loading forever.)
                 if (_loadedContacts.Contains(value.Id) && _cachedMessages.TryGetValue(value.Id, out var cached))
-                {
-                    Messages.Clear();
-                    foreach (var m in cached) Messages.Add(m);
-                }
+                    ShowMessages(cached);
                 else
                     _ = LoadMessagesAsync();
             }
@@ -74,6 +72,23 @@ public class MessengerViewModel : ViewModelBase
     public string MessageText { get => _messageText; set { _messageText = value; OnPropertyChanged(); } }
     public ICommand SendCommand { get; }
     public ICommand ReceiveCommand { get; }
+
+    private void ShowMessages(IReadOnlyList<MessageViewModel> messages)
+    {
+        Messages.Clear();
+        foreach (var m in messages.OrderBy(x => x.Timestamp))
+        {
+            if (m.IsDateSeparator) continue;
+            m.RefreshLabels();
+            Messages.Add(m);
+        }
+    }
+
+    private void AppendMessageToChat(MessageViewModel message)
+    {
+        message.RefreshLabels();
+        Messages.Add(message);
+    }
 
     private async Task<string> GetUserLoginAsync(Guid userId)
     {
@@ -99,11 +114,9 @@ public class MessengerViewModel : ViewModelBase
     private async Task InitializeAsync()
     {
         if (_authService.CurrentToken == null) return;
-        try
-        {
-            await _signalRService.ConnectAsync();
-        }
-        catch { }
+
+        // Do not block contacts on SignalR (or cloud sync elsewhere).
+        _ = ConnectSignalRAsync();
 
         try
         {
@@ -137,9 +150,9 @@ public class MessengerViewModel : ViewModelBase
             });
             var contactsResults = await contactsResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
             Contacts.Clear();
+            var contactUserIds = new List<Guid>();
             if (contactsResults != null)
             {
-                var contactUserIds = new List<Guid>();
                 foreach (var c in contactsResults)
                 {
                     Guid contactUserId = Guid.Empty;
@@ -163,38 +176,86 @@ public class MessengerViewModel : ViewModelBase
                     if (contactUserId != Guid.Empty)
                         contactUserIds.Add(contactUserId);
                 }
-                var loginTasks = contactUserIds.Select(GetUserLoginAsync).ToArray();
-                var names = await Task.WhenAll(loginTasks);
-                for (var i = 0; i < contactUserIds.Count; i++)
-                    Contacts.Add(new Contact { Id = contactUserIds[i], Name = names[i] });
             }
 
-            var selfResponse = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+            // Show list immediately (provisional names), then open first chat.
+            foreach (var id in contactUserIds)
             {
-                ParentIds = new[] { _userContactsId.Value, userId }
+                var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                    ? cached
+                    : id.ToString();
+                Contacts.Add(new Contact { Id = id, Name = provisional });
+            }
+
+            if (SelectedContact == null && Contacts.Count > 0)
+                SelectedContact = Contacts[0];
+
+            await EnsureSelfContactAsync(userId);
+
+            if (SelectedContact == null && Contacts.Count > 0)
+                SelectedContact = Contacts[0];
+
+            // Enrich display names in the background without delaying the chat.
+            _ = EnrichContactNamesAsync(contactUserIds);
+        }
+        catch { }
+    }
+
+    private async Task ConnectSignalRAsync()
+    {
+        try { await _signalRService.ConnectAsync(); }
+        catch { }
+    }
+
+    private async Task EnsureSelfContactAsync(Guid userId)
+    {
+        if (!_userContactsId.HasValue) return;
+        var selfResponse = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+        {
+            ParentIds = new[] { _userContactsId.Value, userId }
+        });
+        var selfResults = await selfResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
+        var selfContact = selfResults?.FirstOrDefault();
+        var hasSelf = Contacts.Any(x => x.Id == userId);
+
+        if (selfContact != null && !hasSelf)
+        {
+            var name = selfContact.Code ?? _authService.CurrentToken?.Login ?? "Me";
+            if (string.IsNullOrWhiteSpace(name)) name = "Me";
+            Contacts.Insert(0, new Contact { Id = userId, Name = name });
+        }
+        else if (selfContact == null && !hasSelf)
+        {
+            var name = _authService.CurrentToken?.Login ?? "Me";
+            if (string.IsNullOrWhiteSpace(name)) name = "Me";
+            var addSelf = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
+            {
+                Code = name,
+                ParentIds = new[] { _userContactsId.Value, userId },
+                Values = new List<AddValueContract> { new() { Type = TypeOfValue.String, Value = $"userid:{userId}", ParentIds = Array.Empty<Guid>() } }
             });
-            var selfResults = await selfResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-            var selfContact = selfResults?.FirstOrDefault();
-            var hasSelf = Contacts.Any(x => x.Id == userId);
+            if (addSelf.IsSuccessStatusCode)
+                Contacts.Insert(0, new Contact { Id = userId, Name = name });
+        }
+    }
 
-            if (selfContact != null && !hasSelf)
+    private async Task EnrichContactNamesAsync(List<Guid> contactUserIds)
+    {
+        try
+        {
+            var loginTasks = contactUserIds.Select(GetUserLoginAsync).ToArray();
+            var names = await Task.WhenAll(loginTasks);
+            for (var i = 0; i < contactUserIds.Count; i++)
             {
-                var name = selfContact.Code ?? _authService.CurrentToken?.Login ?? "Me";
-                if (string.IsNullOrWhiteSpace(name)) name = "Me";
-                Contacts.Add(new Contact { Id = userId, Name = name });
-            }
-            else if (selfContact == null && !hasSelf)
-            {
-                var name = _authService.CurrentToken?.Login ?? "Me";
-                if (string.IsNullOrWhiteSpace(name)) name = "Me";
-                var addSelf = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
+                var id = contactUserIds[i];
+                var name = names[i];
+                for (var j = 0; j < Contacts.Count; j++)
                 {
-                    Code = name,
-                    ParentIds = new[] { _userContactsId.Value, userId },
-                    Values = new List<AddValueContract> { new() { Type = TypeOfValue.String, Value = $"userid:{userId}", ParentIds = Array.Empty<Guid>() } }
-                });
-                if (addSelf.IsSuccessStatusCode)
-                    Contacts.Add(new Contact { Id = userId, Name = name });
+                    if (Contacts[j].Id != id) continue;
+                    if (!string.Equals(Contacts[j].Name, name, StringComparison.Ordinal))
+                        Contacts[j] = new Contact { Id = id, Name = name };
+                    break;
+                }
             }
         }
         catch { }
@@ -248,9 +309,12 @@ public class MessengerViewModel : ViewModelBase
             list.Remove(optimistic);
             if (list.Count == 0)
                 _cachedMessages.Remove(partnerUserId);
+            ShowMessages(list);
         }
-
-        Messages.Remove(optimistic);
+        else
+        {
+            Messages.Remove(optimistic);
+        }
     }
 
     private void CacheContainer(Guid systemParentId, Guid userId, Guid id)
@@ -272,7 +336,7 @@ public class MessengerViewModel : ViewModelBase
         var optimistic = new MessageViewModel { Text = text, Timestamp = now, IsFromMe = true, SenderName = await GetUserLoginAsync(myUserId) };
         if (!_cachedMessages.ContainsKey(partnerUserId)) _cachedMessages[partnerUserId] = new List<MessageViewModel>();
         _cachedMessages[partnerUserId].Add(optimistic);
-        Messages.Add(optimistic);
+        AppendMessageToChat(optimistic);
         MessageText = string.Empty;
 
         var sentTask = GetOrCreateUserContainer(SystemEntities.Sent, myUserId, "Sent");
@@ -372,8 +436,7 @@ public class MessengerViewModel : ViewModelBase
 
         _cachedMessages[partnerUserId] = list.OrderBy(x => x.Timestamp).ToList();
         _loadedContacts.Add(partnerUserId);
-        Messages.Clear();
-        foreach (var m in _cachedMessages[partnerUserId]) Messages.Add(m);
+        ShowMessages(_cachedMessages[partnerUserId]);
     }
 
     private static MessageViewModel? ParseMessage(GetEntitiesResult message, bool isFromMe, string senderName)
@@ -415,4 +478,21 @@ public class MessageViewModel
     public string SenderName { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
     public bool IsFromMe { get; set; }
+    public bool IsDateSeparator { get; set; }
+    public string TimeLabel { get; set; } = string.Empty;
+    public string DayLabel { get; set; } = string.Empty;
+
+    public static MessageViewModel DateHeader(string label) => new()
+    {
+        IsDateSeparator = true,
+        DayLabel = label,
+        Text = label
+    };
+
+    public void RefreshLabels()
+    {
+        if (IsDateSeparator) return;
+        TimeLabel = ChatTime.FormatTime(Timestamp);
+        DayLabel = ChatTime.FormatDayLabel(Timestamp);
+    }
 }

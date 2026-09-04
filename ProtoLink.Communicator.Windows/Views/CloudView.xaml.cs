@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -26,7 +27,22 @@ public partial class CloudView : System.Windows.Controls.UserControl
             _vm.NavigateToFolder += OnNavigateToFolder;
             _vm.DownloadFile += OnDownloadFile;
             await _vm.EnsureRootAsync();
-            _ = _vm.SyncAllMappingsOnStartupAsync();
+            // Defer sync so messenger contact GetEntities is not starved at startup.
+            _ = StartDeferredSyncAsync();
+        }
+    }
+
+    private async Task StartDeferredSyncAsync()
+    {
+        try
+        {
+            await Task.Delay(1500);
+            if (_vm != null)
+                await _vm.SyncAllMappingsOnStartupAsync();
+        }
+        catch
+        {
+            // Sync errors are reported via CloudViewModel callback.
         }
     }
 
