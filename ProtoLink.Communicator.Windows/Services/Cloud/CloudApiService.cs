@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -138,10 +139,12 @@ public class CloudApiService
     }
 
     /// <summary>
-    /// Content-Length from response headers without buffering the body.
-    /// Used for start-of-sync size compare (not a full download).
+    /// Content-Length from response headers only (no body read).
+    /// OpenResty often serves getFile as chunked with no Content-Length — return null then.
+    /// Never download the body here: enrich-all-files was stalling mapped sync forever.
+    /// Same-size edits use ContentHash / unseeded remote hash probe in SyncEngine instead.
     /// </summary>
-    public async Task<long?> GetFileContentLengthOrNullAsync(Guid entityId, CancellationToken cancellationToken = default)
+    public virtual async Task<long?> GetFileContentLengthOrNullAsync(Guid entityId, CancellationToken cancellationToken = default)
     {
         using var response = await _http.GetAsync(
             $"api/Files/getFile/{entityId}",
@@ -150,7 +153,14 @@ public class CloudApiService
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response);
-        return response.Content.Headers.ContentLength;
+        // Treat 0 as unknown — some servers/proxies report Content-Length: 0 incorrectly.
+        var len = response.Content.Headers.ContentLength;
+        if (len is null or <= 0
+            && response.Content.Headers.TryGetValues("Content-Length", out var raw)
+            && long.TryParse(raw.FirstOrDefault(), out var parsed)
+            && parsed > 0)
+            len = parsed;
+        return len is > 0 ? len : null;
     }
 
     public async Task AddFileAsync(Guid entityId, string fileName, Stream content, string mimeType)
@@ -170,6 +180,19 @@ public class CloudApiService
         {
             await AddValueAsync(entityId, fileName);
         }
+    }
+
+    /// <summary>Push a SignalR command so other devices refresh (messenger/cloud/notes).</summary>
+    public async Task SendRealtimeCommandAsync(string commandType, string targetUserId, object? parameters = null)
+    {
+        var response = await _http.PostAsJsonAsync("api/commands/send", new
+        {
+            commandType,
+            targetUserId,
+            parameters
+        });
+        // Non-fatal for callers — ignore failures.
+        _ = response;
     }
 
     /// <summary>

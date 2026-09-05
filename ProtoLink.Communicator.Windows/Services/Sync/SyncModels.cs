@@ -19,6 +19,8 @@ public sealed class SyncItemMeta
     public bool IsFolder { get; set; }
     public long SizeBytes { get; set; }
     public DateTime? RemoteUpdateTime { get; set; }
+    /// <summary>SHA-256 hex of file bytes at last sync; empty until first hash seed.</summary>
+    public string ContentHash { get; set; } = "";
 }
 
 public sealed class FsEntry
@@ -26,6 +28,7 @@ public sealed class FsEntry
     public string RelativePath { get; set; } = "";
     public bool IsFolder { get; set; }
     public long SizeBytes { get; set; }
+    public string ContentHash { get; set; } = "";
 }
 
 public sealed class RemoteEntryInfo

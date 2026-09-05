@@ -39,9 +39,11 @@ public sealed class JsonSyncMetadataStore
             _items = dto.Items.ToDictionary(i => Key(i.MappingId, i.RelativePath), i => i);
             _lastSync = dto.LastSync ?? new Dictionary<string, DateTime>();
         }
-        catch
+        catch (Exception ex)
         {
-            _items = new Dictionary<string, SyncItemMeta>(StringComparer.Ordinal);
+            throw new SyncException(
+                $"Corrupt sync metadata at '{_filePath}'. Fix or delete the file, then use Force Download.",
+                inner: ex);
         }
     }
 
@@ -109,6 +111,7 @@ public sealed class JsonSyncMetadataStore
         RelativePath = i.RelativePath,
         IsFolder = i.IsFolder,
         SizeBytes = i.SizeBytes,
-        RemoteUpdateTime = i.RemoteUpdateTime
+        RemoteUpdateTime = i.RemoteUpdateTime,
+        ContentHash = i.ContentHash
     };
 }

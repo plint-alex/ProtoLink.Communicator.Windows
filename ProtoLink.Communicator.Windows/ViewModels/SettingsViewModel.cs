@@ -20,7 +20,6 @@ public class SettingsViewModel : ViewModelBase
     private string _publicSiteBaseUrl;
     private string? _notesRootPath;
     private string _theme;
-    private bool _compareSizeAndTimeOnSync;
     private string _apiVersionText = "Loading…";
 
     public IReadOnlyList<string> ThemeOptions { get; } = new[] { ThemeManager.Light, ThemeManager.Dark };
@@ -37,7 +36,6 @@ public class SettingsViewModel : ViewModelBase
         _publicSiteBaseUrl = settings.PublicSiteBaseUrl;
         _notesRootPath = settings.NotesRootPath;
         _theme = ThemeManager.Normalize(settings.Theme);
-        _compareSizeAndTimeOnSync = settings.CompareSizeAndTimeOnSync;
 
         SaveCommand = new RelayCommand(_ => SaveSettings());
         LogOffCommand = new RelayCommand(_ => LogOff(), _ => _authService.IsAuthenticated);
@@ -63,11 +61,6 @@ public class SettingsViewModel : ViewModelBase
     public string ApiBaseAddress { get => _apiBaseAddress; set { _apiBaseAddress = value; OnPropertyChanged(); } }
     public string PublicSiteBaseUrl { get => _publicSiteBaseUrl; set { _publicSiteBaseUrl = value; OnPropertyChanged(); } }
     public string? NotesRootPath { get => _notesRootPath; set { _notesRootPath = value; OnPropertyChanged(); } }
-    public bool CompareSizeAndTimeOnSync
-    {
-        get => _compareSizeAndTimeOnSync;
-        set { _compareSizeAndTimeOnSync = value; OnPropertyChanged(); }
-    }
 
     public string Theme
     {
@@ -137,8 +130,7 @@ public class SettingsViewModel : ViewModelBase
             Theme = Theme,
             ApiBaseAddress = ApiBaseAddress,
             PublicSiteBaseUrl = PublicSiteBaseUrl,
-            NotesRootPath = NotesRootPath,
-            CompareSizeAndTimeOnSync = CompareSizeAndTimeOnSync
+            NotesRootPath = NotesRootPath
         });
         OnSettingsSaved?.Invoke();
         _ = LoadApiVersionAsync();

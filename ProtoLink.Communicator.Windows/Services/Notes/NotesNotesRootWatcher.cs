@@ -20,10 +20,12 @@ public sealed class NotesNotesRootWatcher : IDisposable
         _debounce = new System.Timers.Timer(400) { AutoReset = false };
         _debounce.Elapsed += (_, _) => TreeStructureChanged?.Invoke();
 
+        // Structure only — ignore index.html content writes so saves/sync do not rebuild the tree
+        // (rebuild steals focus and can collapse expansion).
         _watcher = new FileSystemWatcher(rootPath)
         {
             IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.DirectoryName | NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+            NotifyFilter = NotifyFilters.DirectoryName | NotifyFilters.FileName
         };
         _watcher.Created += OnFsEvent;
         _watcher.Deleted += OnFsEvent;

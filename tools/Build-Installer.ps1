@@ -2,14 +2,26 @@
 <#
 .SYNOPSIS
   Builds ProtoLink.Communicator.Windows-Setup.exe (self-contained publish + Inno Setup).
+
+.PARAMETER Upload
+  After a successful build, publish the installer via Publish-Release-To-Cloud.ps1 (Files API).
+
+.PARAMETER Version
+  Version string when -Upload is set. Defaults to csproj Version.
 #>
-param()
+param(
+    [switch] $Upload,
+    [string] $Version = "",
+    [string] $AndroidApkPath = ""
+)
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PublishScript = Join-Path $PSScriptRoot "Publish.ps1"
+$UploadScript = Join-Path $PSScriptRoot "Publish-Release-To-Cloud.ps1"
 $IssPath = Join-Path $RepoRoot "installer\ProtoLink.Communicator.Windows.iss"
+$Csproj = Join-Path $RepoRoot "ProtoLink.Communicator.Windows\ProtoLink.Communicator.Windows.csproj"
 $ArtifactsDir = Join-Path $RepoRoot "artifacts"
 $SetupOut = Join-Path $ArtifactsDir "ProtoLink.Communicator.Windows-Setup.exe"
 
@@ -32,6 +44,14 @@ function Find-ISCC {
     }
 
     return $null
+}
+
+function Get-ProjectVersion {
+    param([string] $Path)
+    [xml] $xml = Get-Content -LiteralPath $Path
+    $ver = $xml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    if ($ver) { return [string]$ver }
+    return "1.0.0"
 }
 
 Write-Host "=== ProtoLink Communicator Windows installer build ==="
@@ -73,3 +93,19 @@ if (-not (Test-Path $SetupOut)) {
 Write-Host ""
 Write-Host "Installer ready: $SetupOut"
 Get-Item $SetupOut | Format-List FullName, Length, LastWriteTime
+
+if ($Upload) {
+    if (-not $Version) {
+        $Version = Get-ProjectVersion -Path $Csproj
+    }
+    Write-Host ""
+    Write-Host "Step 3: Publish release $Version to ProtoLink cloud (Files API)"
+    $uploadArgs = @{
+        Version = $Version
+        WindowsSetupPath = $SetupOut
+    }
+    if ($AndroidApkPath) {
+        $uploadArgs.AndroidApkPath = $AndroidApkPath
+    }
+    & $UploadScript @uploadArgs
+}

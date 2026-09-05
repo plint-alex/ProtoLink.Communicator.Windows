@@ -5,13 +5,14 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
         PreviewKeyDown="Window_PreviewKeyDown"
+        Activated="Window_Activated"
         mc:Ignorable="d"
-        Title="ProtoLink Communicator" Height="600" Width="800"
+        Title="ProtoLink Communicator" Height="640" Width="900"
         Background="{DynamicResource WindowBackground}"
         Foreground="{DynamicResource ForegroundBrush}"
         Icon="pack://application:,,,/ProtoLink.Communicator.Windows;component/Assets/icon.png">
     <Window.Resources>
-        <!-- Tab strip: tabs (left), tab toolbar e.g. New folder/Refresh (right), Settings (right) -->
+        <!-- Instagram-style top chrome: tabs + actions; Settings opens as full-width page instead of overlay -->
         <Style TargetType="TabControl" x:Key="TabControlWithSettingsButton">
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Template">
@@ -22,17 +23,22 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}" Padding="0" Margin="0" BorderThickness="0" Height="22">
+                            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
+                                    BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"
+                                    Padding="4,0" MinHeight="48">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TabPanel IsItemsHost="True" Grid.Column="0" Margin="0" VerticalAlignment="Stretch"/>
-                                    <StackPanel x:Name="TabToolbarPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Stretch" Margin="6,0,2,0"/>
-                                    <Button x:Name="SettingsButtonInTemplate" Grid.Column="2" Margin="0,0,8,0" Width="22" Height="22" VerticalAlignment="Center"
-                                            Content="&#9881;" FontSize="16" Background="Transparent" BorderThickness="0" ToolTip="Settings"
+                                    <TabPanel IsItemsHost="True" Grid.Column="0" Margin="4,0,0,0" VerticalAlignment="Stretch"/>
+                                    <StackPanel x:Name="TabToolbarPanel" Grid.Column="1" Orientation="Horizontal"
+                                                VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <Button x:Name="SettingsButtonInTemplate" Grid.Column="2" Margin="0,0,12,0"
+                                            MinWidth="40" Height="36" VerticalAlignment="Center"
+                                            Content="&#9881;" FontSize="18" Background="Transparent" BorderThickness="0"
+                                            ToolTip="Settings" Cursor="Hand"
                                             Foreground="{DynamicResource ForegroundBrush}"/>
                                 </Grid>
                             </Border>
@@ -50,21 +56,21 @@
             <RowDefinition x:Name="DevToolsPanelRow" Height="0" MinHeight="0"/>
         </Grid.RowDefinitions>
         <Grid x:Name="ContentGrid" Grid.Row="0" Background="{DynamicResource ContentBackground}">
-            <Grid Background="{DynamicResource ContentBackground}">
-                <TabControl x:Name="MainTabControl" Style="{StaticResource TabControlWithSettingsButton}" Loaded="MainTabControl_Loaded">
-                    <TabItem Header="Messenger">
-                        <Grid x:Name="MessengerTabContent"/>
-                    </TabItem>
-                    <TabItem Header="Notes">
-                        <Grid x:Name="NotesTabContent"/>
-                    </TabItem>
-                    <TabItem Header="Cloud">
-                        <Grid x:Name="CloudTabContent"/>
-                    </TabItem>
-                </TabControl>
-                <Grid x:Name="SettingsPanel" Visibility="Collapsed" Background="{DynamicResource SettingsOverlayBackground}" Panel.ZIndex="1000"
-                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-            </Grid>
+            <!-- Main tabs (hidden while Settings is open) -->
+            <TabControl x:Name="MainTabControl" Style="{StaticResource TabControlWithSettingsButton}" Loaded="MainTabControl_Loaded">
+                <TabItem Header="Messenger">
+                    <Grid x:Name="MessengerTabContent"/>
+                </TabItem>
+                <TabItem Header="Notes">
+                    <Grid x:Name="NotesTabContent"/>
+                </TabItem>
+                <TabItem Header="Cloud">
+                    <Grid x:Name="CloudTabContent"/>
+                </TabItem>
+            </TabControl>
+            <!-- Settings: full-width page instead of the tab strip -->
+            <Grid x:Name="SettingsPanel" Visibility="Collapsed" Background="{DynamicResource SettingsOverlayBackground}"
+                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
         </Grid>
         <GridSplitter x:Name="DevToolsSplitter"
                       Grid.Row="1"

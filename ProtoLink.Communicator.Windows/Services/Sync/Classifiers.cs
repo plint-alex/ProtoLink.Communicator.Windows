@@ -20,8 +20,12 @@ public sealed class LocalChangeClassifier
 {
     public List<LocalChange> Classify(IReadOnlyList<FsEntry> fs, IReadOnlyList<SyncItemMeta> store)
     {
-        var fsByPath = fs.ToDictionary(e => SyncPathUtil.Normalize(e.RelativePath), e => e);
-        var storeByPath = store.ToDictionary(e => SyncPathUtil.Normalize(e.RelativePath), e => e);
+        var fsByPath = fs
+            .GroupBy(e => SyncPathUtil.Normalize(e.RelativePath), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var storeByPath = store
+            .GroupBy(e => SyncPathUtil.Normalize(e.RelativePath), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         var onlyFs = fsByPath.Keys.Except(storeByPath.Keys).ToList();
         var onlyStore = storeByPath.Keys.Except(fsByPath.Keys).ToList();
         var both = fsByPath.Keys.Intersect(storeByPath.Keys).ToList();
@@ -70,7 +74,10 @@ public sealed class LocalChangeClassifier
             var f = fsByPath[path];
             var s = storeByPath[path];
             if (f.IsFolder != s.IsFolder) continue;
-            if (f.SizeBytes != s.SizeBytes)
+            var sizeChanged = f.SizeBytes != s.SizeBytes;
+            var hashChanged = !f.IsFolder
+                && ContentHashUtil.IsLocalContentChanged(s.ContentHash, f.ContentHash);
+            if (sizeChanged || hashChanged)
                 changes.Add(new LocalChange.Updated(s, f.SizeBytes));
         }
         return changes;
@@ -92,7 +99,9 @@ public sealed class RemoteChangeClassifier
         HashSet<Guid> allStoreRemoteIds,
         HashSet<string> dirtyLocalPaths)
     {
-        var remoteById = remoteLocated.ToDictionary(r => r.Entry.Id);
+        var remoteById = remoteLocated
+            .GroupBy(r => r.Entry.Id)
+            .ToDictionary(g => g.Key, g => g.First());
         var changes = new List<RemoteChange>();
 
         foreach (var meta in store)
@@ -113,7 +122,7 @@ public sealed class RemoteChangeClassifier
             var sizeDiffers = remote.Entry.SizeBytes is long rs && rs != meta.SizeBytes;
             var updateNewer = remote.Entry.UpdateTime is DateTime ru
                               && meta.RemoteUpdateTime is DateTime mu
-                              && ru > mu;
+                              && ToUtcTicks(ru) > ToUtcTicks(mu);
             if (!dirty && !meta.IsFolder && (sizeDiffers || updateNewer))
                 changes.Add(new RemoteChange.Updated(meta, remote.Entry));
         }
@@ -125,4 +134,9 @@ public sealed class RemoteChangeClassifier
         }
         return changes;
     }
+
+    private static long ToUtcTicks(DateTime dt) =>
+        (dt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+            : dt.ToUniversalTime()).Ticks;
 }

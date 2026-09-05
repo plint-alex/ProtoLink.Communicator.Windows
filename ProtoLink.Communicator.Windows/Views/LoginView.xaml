@@ -5,15 +5,17 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d" d:DesignHeight="300" d:DesignWidth="400"
              Foreground="{DynamicResource ForegroundBrush}">
-    <Grid VerticalAlignment="Center" HorizontalAlignment="Stretch">
+    <Grid VerticalAlignment="Top" HorizontalAlignment="Stretch">
         <StackPanel HorizontalAlignment="Stretch">
-            <TextBlock Text="Login" Margin="0,0,0,5"/>
-            <TextBox Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
-            <TextBlock Text="Password" Margin="0,0,0,5"/>
-            <PasswordBox x:Name="PasswordBox" Margin="0,0,0,10" PasswordChanged="PasswordBox_PasswordChanged"/>
-            <Button Content="Login" Command="{Binding LoginCommand}" IsDefault="True" Height="30" Margin="0,10,0,10"/>
-            <ProgressBar IsIndeterminate="True" Height="10" Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap" Margin="0,10,0,0"/>
+            <TextBlock Text="Login" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+            <TextBox Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}" Style="{DynamicResource IgTextBox}" Margin="0,0,0,12"/>
+            <TextBlock Text="Password" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+            <PasswordBox x:Name="PasswordBox" Margin="0,0,0,12" Padding="12,10" Height="40"
+                         PasswordChanged="PasswordBox_PasswordChanged"/>
+            <Button Content="Log in" Command="{Binding LoginCommand}" IsDefault="True"
+                    Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch" Margin="0,4,0,10"/>
+            <ProgressBar IsIndeterminate="True" Height="4" Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFED4956" TextWrapping="Wrap" Margin="0,10,0,0"/>
         </StackPanel>
     </Grid>
 </UserControl>

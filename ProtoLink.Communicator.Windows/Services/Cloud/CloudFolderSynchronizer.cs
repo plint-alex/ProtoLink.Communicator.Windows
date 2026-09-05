@@ -12,17 +12,14 @@ public class CloudFolderSynchronizer
     private readonly CloudApiService _api;
     private readonly JsonSyncMetadataStore _store;
     private readonly SyncEngine _engine;
-    private readonly Func<bool> _compareSizeAndTimeOnSync;
 
     public CloudFolderSynchronizer(
         CloudApiService api,
-        JsonSyncMetadataStore? store = null,
-        Func<bool>? compareSizeAndTimeOnSync = null)
+        JsonSyncMetadataStore? store = null)
     {
         _api = api;
         _store = store ?? new JsonSyncMetadataStore();
         _engine = new SyncEngine(_store, _api);
-        _compareSizeAndTimeOnSync = compareSizeAndTimeOnSync ?? (() => true);
     }
 
     public async Task<bool> SynchronizeAsync(
@@ -49,10 +46,7 @@ public class CloudFolderSynchronizer
                 CloudFolderId = cloudFolderId,
                 LocalRootPath = Path.GetFullPath(localPath)
             };
-            await _engine.ReconcileAllAsync(
-                new[] { mapping },
-                cancellationToken,
-                compareSizeAndTime: _compareSizeAndTimeOnSync());
+            await _engine.ReconcileAllAsync(new[] { mapping }, cancellationToken);
             reportStatus("Sync complete.");
             return true;
         }
@@ -90,10 +84,7 @@ public class CloudFolderSynchronizer
                     CloudFolderName = m.CloudFolderName ?? ""
                 })
                 .ToList();
-            await _engine.ReconcileAllAsync(
-                list,
-                cancellationToken,
-                compareSizeAndTime: _compareSizeAndTimeOnSync());
+            await _engine.ReconcileAllAsync(list, cancellationToken);
             reportStatus("Sync complete.");
             return true;
         }
@@ -110,6 +101,113 @@ public class CloudFolderSynchronizer
             return false;
         }
     }
+
+    /// <summary>Local-only push (no remote scan). Returns ops applied, or -1 on failure.</summary>
+    public async Task<int> PushLocalChangesAllAsync(
+        IEnumerable<CloudSyncMapping> mappings,
+        Action<string> reportStatus,
+        Action<Exception>? reportFullError,
+        Action? onAuthRequired = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            reportStatus("Uploading local changes…");
+            var list = mappings
+                .Where(m => !string.IsNullOrWhiteSpace(m.LocalPath) && Directory.Exists(m.LocalPath))
+                .Select(m => new SyncMappingInfo
+                {
+                    Id = m.CloudFolderId.ToString("N"),
+                    CloudFolderId = m.CloudFolderId,
+                    LocalRootPath = Path.GetFullPath(m.LocalPath),
+                    CloudFolderName = m.CloudFolderName ?? ""
+                })
+                .ToList();
+            var applied = await _engine.PushLocalChangesAsync(list, cancellationToken);
+            reportStatus(applied > 0
+                ? $"Uploaded local changes ({applied})."
+                : "No local changes to upload.");
+            return applied;
+        }
+        catch (Exception ex) when (IsAuthFailure(ex))
+        {
+            reportStatus("Please log in.");
+            onAuthRequired?.Invoke();
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            reportStatus("Error: " + ex.Message);
+            reportFullError?.Invoke(ex);
+            return -1;
+        }
+    }
+
+    public async Task<bool> ForcePushAsync(
+        CloudSyncMapping mapping,
+        Action<string> reportStatus,
+        Action<Exception>? reportFullError,
+        Action? onAuthRequired = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            reportStatus("Force upload…");
+            var info = ToMappingInfo(mapping);
+            await _engine.ForcePushMappingAsync(info, cancellationToken);
+            reportStatus("Force upload complete.");
+            return true;
+        }
+        catch (Exception ex) when (IsAuthFailure(ex))
+        {
+            reportStatus("Please log in.");
+            onAuthRequired?.Invoke();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            reportStatus("Force upload error: " + ex.Message);
+            reportFullError?.Invoke(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> ForcePullAsync(
+        CloudSyncMapping mapping,
+        Action<string> reportStatus,
+        Action<Exception>? reportFullError,
+        Action? onAuthRequired = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            reportStatus("Force download…");
+            var info = ToMappingInfo(mapping);
+            await _engine.ForcePullMappingAsync(info, cancellationToken);
+            reportStatus("Force download complete.");
+            return true;
+        }
+        catch (Exception ex) when (IsAuthFailure(ex))
+        {
+            reportStatus("Please log in.");
+            onAuthRequired?.Invoke();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            reportStatus("Force download error: " + ex.Message);
+            reportFullError?.Invoke(ex);
+            return false;
+        }
+    }
+
+    private static SyncMappingInfo ToMappingInfo(CloudSyncMapping m) => new()
+    {
+        Id = m.CloudFolderId.ToString("N"),
+        CloudFolderId = m.CloudFolderId,
+        LocalRootPath = Path.GetFullPath(m.LocalPath),
+        CloudFolderName = m.CloudFolderName ?? ""
+    };
 
     internal static bool IsAuthFailure(Exception ex)
     {

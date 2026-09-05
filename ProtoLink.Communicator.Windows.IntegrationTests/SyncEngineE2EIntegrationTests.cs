@@ -71,6 +71,25 @@ public class SyncEngineE2EIntegrationTests
     }
 
     [Fact]
+    public async Task ChangeContent_SameSize_DeviceA_PropagatesToDeviceB()
+    {
+        await using var h = await SyncTestHarness.TryCreateAsync();
+        if (h == null) { _output.WriteLine("Skip: set PROTOLINK_TEST_PASSWORD"); return; }
+
+        h.WriteRelativeFile(h.DeviceARoot, "notes/page/index.html", "v1!!");
+        await h.ReconcileAAsync();
+        await h.ReconcileBAsync();
+        Assert.Equal("v1!!", h.ReadRelativeFile(h.DeviceBRoot, "notes/page/index.html"));
+
+        // Same length (4), different content — must still sync (Films same-size edits).
+        h.WriteRelativeFile(h.DeviceARoot, "notes/page/index.html", "v2!!");
+        await h.ReconcileAAsync();
+        await h.ReconcileBAsync();
+
+        Assert.Equal("v2!!", h.ReadRelativeFile(h.DeviceBRoot, "notes/page/index.html"));
+    }
+
+    [Fact]
     public async Task RenameFile_DeviceA_PropagatesToDeviceBAndApi()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -263,5 +282,56 @@ public class SyncEngineE2EIntegrationTests
             Assert.Equal("index.html", filesAfter[0].DisplayName, ignoreCase: true);
             Assert.Equal(0, synthAfter);
         }
+    }
+
+    [Fact]
+    public async Task EmptyLocalStub_Heals_WhenRemoteHasNoSize()
+    {
+        await using var h = await SyncTestHarness.TryCreateAsync();
+        if (h == null) { _output.WriteLine("Skip: set PROTOLINK_TEST_PASSWORD"); return; }
+
+        // Listing never sets SizeBytes; also disable Content-Length probe.
+        h.UseNoRemoteSizeProbe();
+
+        const string relative = "films/index.html";
+        const string content = "<p>Movie notes</p>";
+        h.WriteRelativeFile(h.DeviceARoot, relative, content);
+        await h.ReconcileAAsync();
+        await h.ReconcileBAsync();
+        Assert.Equal(content, h.ReadRelativeFile(h.DeviceBRoot, relative));
+
+        // Corrupt Device B to empty stub + meta size 0 (Films bug).
+        h.WriteRelativeFile(h.DeviceBRoot, relative, "");
+        var meta = h.StoreB.GetAll(h.MappingId)
+            .Single(m => !m.IsFolder && m.RelativePath == SyncPathUtil.Normalize(relative));
+        meta.SizeBytes = 0;
+        h.StoreB.Upsert(meta);
+
+        await h.ReconcileBAsync();
+
+        Assert.Equal(content, h.ReadRelativeFile(h.DeviceBRoot, relative));
+        var healed = h.StoreB.GetAll(h.MappingId)
+            .Single(m => !m.IsFolder && m.RelativePath == SyncPathUtil.Normalize(relative));
+        Assert.True(healed.SizeBytes > 0, "Meta size should reflect healed content");
+        Assert.Equal(healed.SizeBytes, new FileInfo(Path.Combine(h.DeviceBRoot, "films", "index.html")).Length);
+    }
+
+    [Fact]
+    public async Task LocalEdit_Writes_WhenRemoteHasNoSize()
+    {
+        await using var h = await SyncTestHarness.TryCreateAsync();
+        if (h == null) { _output.WriteLine("Skip: set PROTOLINK_TEST_PASSWORD"); return; }
+
+        h.UseNoRemoteSizeProbe();
+
+        h.WriteRelativeFile(h.DeviceARoot, "notes/page/index.html", "v1");
+        await h.ReconcileAAsync();
+        await h.ReconcileBAsync();
+
+        h.WriteRelativeFile(h.DeviceARoot, "notes/page/index.html", "v2-no-remote-size");
+        await h.ReconcileAAsync();
+        await h.ReconcileBAsync();
+
+        Assert.Equal("v2-no-remote-size", h.ReadRelativeFile(h.DeviceBRoot, "notes/page/index.html"));
     }
 }

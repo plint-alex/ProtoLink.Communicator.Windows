@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
@@ -30,14 +31,13 @@ public class CloudViewModel : ViewModelBase
         ISyncMappingStore syncStore,
         ISettingsService settingsService,
         Action<Exception>? syncFullErrorReporter = null,
-        Action? onAuthRequired = null)
+        Action? onAuthRequired = null,
+        Action? onAfterMappedSync = null)
     {
         _authService = authService;
         _settingsService = settingsService;
         _api = new CloudApiService(httpClient);
-        var folderSynchronizer = new CloudFolderSynchronizer(
-            _api,
-            compareSizeAndTimeOnSync: () => _settingsService.LoadSettings().CompareSizeAndTimeOnSync);
+        var folderSynchronizer = new CloudFolderSynchronizer(_api);
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
@@ -46,6 +46,7 @@ public class CloudViewModel : ViewModelBase
         SyncMappings = new ObservableCollection<CloudSyncMapping>(_syncStore.Load());
         _mappedSync = new CloudMappedSyncCoordinator(
             folderSynchronizer,
+            _api,
             SyncMappings,
             LoadCurrentAsync,
             s => StatusText = s,
@@ -61,8 +62,12 @@ public class CloudViewModel : ViewModelBase
             },
             System.Windows.Application.Current.Dispatcher,
             () => _authService.IsAuthenticated,
-            () => _onAuthRequired?.Invoke());
-        _mappedSync.RestartFileWatchers();
+            () => _authService.CurrentToken?.UserId.ToString(),
+            () => _onAuthRequired?.Invoke(),
+            onSyncCompleted: () =>
+            {
+                try { onAfterMappedSync?.Invoke(); } catch { /* ignore */ }
+            });
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());
         NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => _currentFolderId.HasValue);
         UploadCommand = new RelayCommand(_ => Upload(), _ => _currentFolderId.HasValue);
@@ -138,7 +143,6 @@ public class CloudViewModel : ViewModelBase
         if (ancestorSynced) return;
         SyncMappings.Add(new CloudSyncMapping { CloudFolderId = cloudFolderId, LocalPath = localPath.Trim(), CloudFolderName = cloudFolderName ?? "" });
         _syncStore.Save(SyncMappings);
-        _mappedSync.RestartFileWatchers();
         _ = LoadCurrentAsync();
     }
 
@@ -148,15 +152,54 @@ public class CloudViewModel : ViewModelBase
         if (mapping == null) return;
         SyncMappings.Remove(mapping);
         _syncStore.Save(SyncMappings);
-        _mappedSync.RestartFileWatchers();
         _ = LoadCurrentAsync();
     }
 
-    public void RequestSyncForLocalPath(string? localPathOrFile) => _mappedSync.NotifyLocalPathChanged(localPathOrFile);
+    /// <summary>Refresh cloud folder listing only.</summary>
+    public async Task RefreshFromRealtimeAsync()
+    {
+        if (!_authService.IsAuthenticated) return;
+        if (CurrentFolderId.HasValue)
+            await LoadCurrentAsync();
+    }
+
+    /// <summary>Full reconcile from SignalR <c>data_changed</c> (or coalesced after busy sync).</summary>
+    public Task RequestFullSyncFromRealtimeAsync() => _mappedSync.RequestFullSyncAsync();
+
+    /// <summary>Local-only push after Notes page save (same as interval).</summary>
+    public void RequestLocalPushAfterNoteSave() => _ = _mappedSync.RequestLocalPushAsync();
+
+    public void StopAutoSync() => _mappedSync.StopAutoSyncInterval();
 
     public Task SyncMappingAsync(CloudSyncMapping mapping)
     {
         _mappedSync.StartManualSync(mapping);
+        return Task.CompletedTask;
+    }
+
+    public Task ForceUploadMappingAsync(CloudSyncMapping mapping)
+    {
+        var confirm = System.Windows.MessageBox.Show(
+            $"Upload all local files in:\n{mapping.LocalPath}\n\nto the server (overwrite remote)?",
+            "Force upload",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+            return Task.CompletedTask;
+        _mappedSync.StartForcePush(mapping);
+        return Task.CompletedTask;
+    }
+
+    public Task ForceDownloadMappingAsync(CloudSyncMapping mapping)
+    {
+        var confirm = System.Windows.MessageBox.Show(
+            $"Download all server files for “{mapping.CloudFolderName}”\n\noverwriting local files in:\n{mapping.LocalPath}?",
+            "Force download",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+        if (confirm != System.Windows.MessageBoxResult.Yes)
+            return Task.CompletedTask;
+        _mappedSync.StartForcePull(mapping);
         return Task.CompletedTask;
     }
 

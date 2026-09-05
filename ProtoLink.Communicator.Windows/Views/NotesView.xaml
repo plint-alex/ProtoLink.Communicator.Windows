@@ -5,15 +5,17 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
-             Foreground="{DynamicResource ForegroundBrush}">
+             Foreground="{DynamicResource ForegroundBrush}"
+             SizeChanged="OnRootSizeChanged">
     <UserControl.Resources>
         <Style x:Key="NotesToolbarButton" TargetType="Button">
-            <Setter Property="Width" Value="32"/>
-            <Setter Property="Height" Value="32"/>
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
             <Setter Property="Margin" Value="2,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{DynamicResource NotesToolbarButtonHoverBrush}"/>
@@ -22,64 +24,42 @@
         </Style>
     </UserControl.Resources>
     <Grid Background="{DynamicResource ContentBackground}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <Border Grid.Row="0" Background="{DynamicResource NotesToolbarBackground}" Padding="4,4,4,4">
-            <StackPanel Orientation="Horizontal">
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBold" ToolTip="Bold (Ctrl+B)">
-                    <TextBlock Text="B" FontWeight="Bold" FontSize="14"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatItalic" ToolTip="Italic (Ctrl+I)">
-                    <TextBlock Text="I" FontStyle="Italic" FontSize="14"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatUnderline" ToolTip="Underline (Ctrl+U)">
-                    <TextBlock Text="U" TextDecorations="Underline" FontSize="14"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatStrikethrough" ToolTip="Strikethrough">
-                    <TextBlock Text="S" TextDecorations="Strikethrough" FontSize="14"/>
-                </Button>
-                <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                <ComboBox x:Name="HeadingCombo" Width="100" Height="32" Margin="2,0"
-                          SelectionChanged="OnHeadingComboSelectionChanged" ToolTip="Text style">
-                    <ComboBoxItem Content="Normal" Tag=""/>
-                    <ComboBoxItem Content="Heading 1" Tag="h1"/>
-                    <ComboBoxItem Content="Heading 2" Tag="h2"/>
-                    <ComboBoxItem Content="Heading 3" Tag="h3"/>
-                </ComboBox>
-                <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBulletList" ToolTip="Bullet list">
-                    <TextBlock Text="•" FontSize="16" TextAlignment="Center"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatNumberedList" ToolTip="Numbered list">
-                    <TextBlock Text="1." FontSize="12" TextAlignment="Center"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCheckboxList" ToolTip="Checkbox list">
-                    <TextBlock Text="☐" FontSize="14" TextAlignment="Center"/>
-                </Button>
-                <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatInsertLink" ToolTip="Insert link">
-                    <TextBlock Text="🔗" FontSize="14"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCode" ToolTip="Code block">
-                    <TextBlock Text="&lt;/&gt;" FontSize="12" FontFamily="Consolas"/>
-                </Button>
-                <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatTable" ToolTip="Insert table">
-                    <TextBlock Text="⊞" FontSize="16"/>
-                </Button>
-            </StackPanel>
-        </Border>
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="250"/>
-                <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TreeView x:Name="NotesTreeView" Grid.Column="0" SelectedItemChanged="OnTreeSelectionChanged"
-                      Background="{DynamicResource ListBackground}"
-                      MouseDoubleClick="OnTreeDoubleClick" ContextMenuOpening="OnNotesTreeContextMenuOpening">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="TreeColumn" Width="280"/>
+            <ColumnDefinition x:Name="EditorColumn" Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Instagram-style notes list -->
+        <Grid x:Name="TreePane" Grid.Column="0" Background="{DynamicResource ListBackground}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
+                    BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
+                <DockPanel LastChildFill="True">
+                    <Button x:Name="NotesBackButton" DockPanel.Dock="Left" Content="←" Width="36" Height="32"
+                            FontSize="16" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                            Foreground="{DynamicResource ForegroundBrush}" Visibility="Collapsed"
+                            Click="OnNotesBackClick" ToolTip="Back to notes"/>
+                    <TextBlock Text="Notes" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"
+                               Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+                </DockPanel>
+            </Border>
+            <TreeView x:Name="NotesTreeView" Grid.Row="1" SelectedItemChanged="OnTreeSelectionChanged"
+                      Background="{DynamicResource ListBackground}" BorderThickness="0"
+                      MouseDoubleClick="OnTreeDoubleClick" ContextMenuOpening="OnNotesTreeContextMenuOpening"
+                      Padding="0,4"
+                      TreeViewItem.Expanded="OnTreeItemExpanded"
+                      TreeViewItem.Collapsed="OnTreeItemCollapsed">
+                <TreeView.Resources>
+                    <Style TargetType="TreeViewItem">
+                        <Setter Property="Padding" Value="8,6"/>
+                        <Setter Property="Margin" Value="0"/>
+                        <Setter Property="FontSize" Value="14"/>
+                        <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+                    </Style>
+                </TreeView.Resources>
                 <TreeView.ContextMenu>
                     <ContextMenu x:Name="NotesTreeContextMenu">
                         <MenuItem Header="New Page" Click="OnNewPageClick"/>
@@ -89,11 +69,71 @@
                     </ContextMenu>
                 </TreeView.ContextMenu>
             </TreeView>
-            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource SplitterBrush}"/>
-            <wv2:WebView2 x:Name="NotesWebView" Grid.Column="2"/>
         </Grid>
-        <StatusBar Grid.Row="2" Background="{DynamicResource StatusBarBackground}">
-            <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource ForegroundBrush}"/>
-        </StatusBar>
+
+        <!-- Editor pane -->
+        <Grid x:Name="EditorPane" Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Background="{DynamicResource NotesToolbarBackground}" Padding="8,6"
+                    BorderBrush="{DynamicResource NotesToolbarSeparatorBrush}" BorderThickness="0,0,0,1">
+                <DockPanel LastChildFill="True">
+                    <Button x:Name="EditorBackButton" DockPanel.Dock="Left" Content="←" Width="36" Height="32"
+                            FontSize="16" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                            Foreground="{DynamicResource ForegroundBrush}" Visibility="Collapsed"
+                            Click="OnNotesBackClick" ToolTip="Back to list" Margin="0,0,6,0"/>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBold" ToolTip="Bold (Ctrl+B)">
+                        <TextBlock Text="B" FontWeight="Bold" FontSize="14"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatItalic" ToolTip="Italic (Ctrl+I)">
+                        <TextBlock Text="I" FontStyle="Italic" FontSize="14"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatUnderline" ToolTip="Underline (Ctrl+U)">
+                        <TextBlock Text="U" TextDecorations="Underline" FontSize="14"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatStrikethrough" ToolTip="Strikethrough">
+                        <TextBlock Text="S" TextDecorations="Strikethrough" FontSize="14"/>
+                    </Button>
+                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                    <ComboBox x:Name="HeadingCombo" Width="110" Height="32" Margin="2,0"
+                              SelectionChanged="OnHeadingComboSelectionChanged" ToolTip="Text style">
+                        <ComboBoxItem Content="Normal" Tag=""/>
+                        <ComboBoxItem Content="Heading 1" Tag="h1"/>
+                        <ComboBoxItem Content="Heading 2" Tag="h2"/>
+                        <ComboBoxItem Content="Heading 3" Tag="h3"/>
+                    </ComboBox>
+                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBulletList" ToolTip="Bullet list">
+                        <TextBlock Text="•" FontSize="16" TextAlignment="Center"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatNumberedList" ToolTip="Numbered list">
+                        <TextBlock Text="1." FontSize="12" TextAlignment="Center"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCheckboxList" ToolTip="Checkbox list">
+                        <TextBlock Text="☐" FontSize="14" TextAlignment="Center"/>
+                    </Button>
+                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatInsertLink" ToolTip="Insert link">
+                        <TextBlock Text="🔗" FontSize="14"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCode" ToolTip="Code block">
+                        <TextBlock Text="&lt;/&gt;" FontSize="12" FontFamily="Consolas"/>
+                    </Button>
+                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatTable" ToolTip="Insert table">
+                        <TextBlock Text="⊞" FontSize="16"/>
+                    </Button>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <wv2:WebView2 x:Name="NotesWebView" Grid.Row="1"/>
+            <Border Grid.Row="2" Background="{DynamicResource StatusBarBackground}"
+                    BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
+                <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>

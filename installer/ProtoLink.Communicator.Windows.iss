@@ -1,8 +1,15 @@
 ; ProtoLink Communicator (Windows) Inno Setup script
 ; Builds artifacts\ProtoLink.Communicator.Windows-Setup.exe from artifacts\publish
+;
+; Quiet install from command line:
+;   ProtoLink.Communicator.Windows-Setup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
+; Optional:
+;   /DIR="C:\Path\To\Install"
+; Quiet uninstall:
+;   uninstall.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 
 #define MyAppName "ProtoLink Communicator"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "ProtoLink"
 #define MyAppExeName "ProtoLink.Communicator.Windows.exe"
 #define MyAppId "{{B8D4F0A2-5C3E-4F9B-8D2A-7E6F9B3C4D5E}"
@@ -28,6 +35,9 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 VersionInfoVersion={#MyAppVersion}
 VersionInfoProductName={#MyAppName}
 SetupLogging=yes
+CloseApplications=force
+RestartApplications=no
+AllowNoIcons=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -56,9 +66,13 @@ var
 function InitializeUninstall(): Boolean;
 begin
   Result := True;
-  RemoveUserData :=
-    MsgBox('Also remove ProtoLink Communicator settings and sync metadata from this user profile?',
-      mbConfirmation, MB_YESNO) = IDYES;
+  { Silent uninstall: keep user data (no interactive prompt). }
+  if UninstallSilent then
+    RemoveUserData := False
+  else
+    RemoveUserData :=
+      MsgBox('Also remove ProtoLink Communicator settings and sync metadata from this user profile?',
+        mbConfirmation, MB_YESNO) = IDYES;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

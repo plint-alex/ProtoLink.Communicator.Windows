@@ -4,70 +4,122 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
-             mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
+             mc:Ignorable="d" d:DesignHeight="640" d:DesignWidth="900"
              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-             HorizontalContentAlignment="Stretch"
              Background="{DynamicResource SettingsOverlayBackground}">
-    <Grid Margin="24" Background="{DynamicResource SettingsOverlayBackground}" HorizontalAlignment="Stretch">
+    <Grid HorizontalAlignment="Stretch">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <Button Command="{Binding CloseCommand}" HorizontalAlignment="Right" VerticalAlignment="Top"
-                Width="30" Height="30" Content="✕" Background="Transparent" BorderThickness="0" FontSize="18" ToolTip="Close Settings"
-                Foreground="{DynamicResource ForegroundBrush}"/>
+
+        <!-- Instagram-style sticky header -->
+        <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
+                BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="8,10">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Left" Command="{Binding CloseCommand}"
+                        Content="←" Width="40" Height="36" FontSize="18"
+                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                        Foreground="{DynamicResource ForegroundBrush}" ToolTip="Back"/>
+                <TextBlock Text="Settings" FontSize="18" FontWeight="Bold"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+            </DockPanel>
+        </Border>
+
         <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
-                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-            <StackPanel HorizontalAlignment="Stretch" Margin="0,10,0,0">
-                <TextBlock Text="About" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBlock Text="{Binding AppVersion, StringFormat=App version: {0}}" Margin="0,0,0,4" Foreground="{DynamicResource ForegroundBrush}"/>
-                <DockPanel Margin="0,0,0,16" LastChildFill="True">
-                    <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshApiVersionCommand}"
-                            MinWidth="70" Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="{Binding ApiVersionText, StringFormat=API version: {0}}" VerticalAlignment="Center"
-                               TextWrapping="Wrap" Foreground="{DynamicResource ForegroundBrush}"/>
-                </DockPanel>
-                <TextBlock Text="Appearance" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBlock Text="Theme" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
-                <ComboBox ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" Margin="0,0,0,16"/>
-                <TextBlock Text="API Settings" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBlock Text="API Base Address" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBox Text="{Binding ApiBaseAddress, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
-                <TextBlock Text="Public site (Cloud → Open in browser)" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBox Text="{Binding PublicSiteBaseUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
-                <TextBlock Text="Sync" FontSize="18" FontWeight="Bold" Margin="0,8,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <CheckBox IsChecked="{Binding CompareSizeAndTimeOnSync}" Margin="0,0,0,4"
-                          Foreground="{DynamicResource ForegroundBrush}"
-                          Content="Compare size &amp; time on sync"/>
-                <TextBlock TextWrapping="Wrap" Margin="0,0,0,16" Opacity="0.75"
-                           Foreground="{DynamicResource ForegroundBrush}"
-                           Text="When on, sync compares file size and update time, then uploads (write) or downloads (read). Turn off for classic sync."/>
-                <Button Content="Save Settings" Command="{Binding SaveCommand}" Height="30" Margin="0,0,0,20"/>
-                <TextBlock Text="Notes" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <TextBlock Text="Notes root folder" Margin="0,0,0,5" Foreground="{DynamicResource ForegroundBrush}"/>
-                <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Text="{Binding NotesRootPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                    <Button Grid.Column="1" Content="Browse…" Click="OnNotesBrowseClick" MinWidth="70" Padding="8,4"/>
-                </Grid>
-                <TextBlock Text="Account" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                      HorizontalAlignment="Stretch">
+            <StackPanel MaxWidth="720" HorizontalAlignment="Stretch" Margin="0,0,0,32">
+
+                <TextBlock Text="ABOUT" Style="{DynamicResource IgSectionTitle}"/>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1">
                     <StackPanel>
-                        <TextBlock Text="{Binding CurrentLogin, StringFormat='Logged in as: {0}'}" Margin="0,0,0,10" Foreground="{DynamicResource ForegroundBrush}"/>
-                        <Button Content="Log Off" Command="{Binding LogOffCommand}" Height="30" Width="100" HorizontalAlignment="Left"/>
+                        <DockPanel Margin="16,14">
+                            <TextBlock Text="App version" VerticalAlignment="Center" Foreground="{DynamicResource ForegroundBrush}"/>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding AppVersion}"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        </DockPanel>
+                        <Border Height="1" Background="{DynamicResource BorderBrushStandard}" Margin="16,0,0,0"/>
+                        <DockPanel Margin="16,14">
+                            <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding RefreshApiVersionCommand}"
+                                    Style="{DynamicResource IgGhostButton}" VerticalAlignment="Center"/>
+                            <StackPanel>
+                                <TextBlock Text="API version" Foreground="{DynamicResource ForegroundBrush}"/>
+                                <TextBlock Text="{Binding ApiVersionText}" Margin="0,2,0,0"
+                                           Foreground="{DynamicResource ForegroundMutedBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </DockPanel>
                     </StackPanel>
-                </Grid>
-                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
+                </Border>
+
+                <TextBlock Text="APPEARANCE" Style="{DynamicResource IgSectionTitle}"/>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1">
+                    <DockPanel Margin="16,12">
+                        <TextBlock Text="Theme" VerticalAlignment="Center" Foreground="{DynamicResource ForegroundBrush}"/>
+                        <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}"
+                                  MinWidth="140" VerticalAlignment="Center"/>
+                    </DockPanel>
+                </Border>
+
+                <TextBlock Text="API" Style="{DynamicResource IgSectionTitle}"/>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,12">
+                    <StackPanel>
+                        <TextBlock Text="API base address" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <TextBox Text="{Binding ApiBaseAddress, UpdateSourceTrigger=PropertyChanged}" Style="{DynamicResource IgTextBox}" Margin="0,0,0,14"/>
+                        <TextBlock Text="Public site (Cloud → Open in browser)" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <TextBox Text="{Binding PublicSiteBaseUrl, UpdateSourceTrigger=PropertyChanged}" Style="{DynamicResource IgTextBox}"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="NOTES" Style="{DynamicResource IgSectionTitle}"/>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,12">
+                    <StackPanel>
+                        <TextBlock Text="Notes root folder" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding NotesRootPath, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{DynamicResource IgTextBox}" Margin="0,0,8,0"/>
+                            <Button Grid.Column="1" Content="Browse" Click="OnNotesBrowseClick"
+                                    Style="{DynamicResource IgGhostButton}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Button Content="Save settings" Command="{Binding SaveCommand}"
+                        Style="{DynamicResource IgPrimaryButton}"
+                        HorizontalAlignment="Stretch" Margin="16,20,16,0"/>
+
+                <TextBlock Text="ACCOUNT" Style="{DynamicResource IgSectionTitle}"/>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,14"
+                        Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Log off" Command="{Binding LogOffCommand}"
+                                Style="{DynamicResource IgGhostButton}"/>
+                        <TextBlock Text="{Binding CurrentLogin, StringFormat='Logged in as {0}'}"
+                                   VerticalAlignment="Center" Foreground="{DynamicResource ForegroundBrush}"/>
+                    </DockPanel>
+                </Border>
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,14"
+                        Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
                     <views:LoginView DataContext="{Binding LoginViewModel}"/>
-                </Grid>
-                <TextBlock Text="Contacts" FontSize="18" FontWeight="Bold" Margin="0,20,0,10" Foreground="{DynamicResource ForegroundBrush}"
+                </Border>
+
+                <TextBlock Text="CONTACTS" Style="{DynamicResource IgSectionTitle}"
                            Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                <Grid Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border Background="{DynamicResource PanelCardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,14"
+                        Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <views:AddContactView DataContext="{Binding AddContactViewModel}"/>
-                </Grid>
+                </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>

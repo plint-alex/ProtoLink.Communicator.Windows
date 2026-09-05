@@ -5,16 +5,55 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
              Foreground="{DynamicResource ForegroundBrush}">
+    <UserControl.Resources>
+        <Style x:Key="CloudListBoxItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" Padding="16,12"
+                                BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,0,0,1">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowSelectedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowHoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
     <Grid Background="{DynamicResource ContentBackground}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}" Padding="6,4" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource ToolbarBorderBrush}">
+
+        <!-- Instagram-style title bar -->
+        <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
+                BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
+            <TextBlock Text="Cloud" FontSize="20" FontWeight="Bold"
+                       Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+        </Border>
+
+        <!-- Breadcrumb row -->
+        <Border Grid.Row="1" Background="{DynamicResource ContentBackground}"
+                BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,0,0,1" Padding="12,8">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="&#x2190; Up" Command="{Binding UpCommand}" Padding="8,4" Margin="0,0,8,0"
-                        IsEnabled="{Binding CanGoUp}"/>
+                <Button Content="↑ Up" Command="{Binding UpCommand}" Style="{DynamicResource IgGhostButton}"
+                        IsEnabled="{Binding CanGoUp}" Margin="0,0,8,0"/>
                 <ItemsControl ItemsSource="{Binding BreadcrumbPath}" VerticalAlignment="Center">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -24,11 +63,12 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Content="{Binding Name}" Command="{Binding DataContext.NavigateToBreadcrumbCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                        CommandParameter="{Binding Index}" Style="{StaticResource {x:Type Button}}"
-                                        Padding="4,2" Margin="0,0,4,0" Background="Transparent" BorderThickness="0"
-                                        Cursor="Hand" Foreground="{DynamicResource ForegroundLinkBrush}"/>
-                                <TextBlock Text=" &#x203A; " VerticalAlignment="Center" Foreground="{DynamicResource ForegroundMutedBrush}"
+                                <Button Content="{Binding Name}"
+                                        Command="{Binding DataContext.NavigateToBreadcrumbCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding Index}"
+                                        Style="{DynamicResource IgGhostButton}" Padding="4,2" Margin="0,0,2,0"/>
+                                <TextBlock Text="›" VerticalAlignment="Center" Margin="2,0,4,0"
+                                           Foreground="{DynamicResource ForegroundMutedBrush}"
                                            Visibility="{Binding Index, Converter={StaticResource IndexToVisibilityConverter}}"/>
                             </StackPanel>
                         </DataTemplate>
@@ -36,60 +76,108 @@
                 </ItemsControl>
             </StackPanel>
         </Border>
-        <Grid Grid.Row="1">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <Grid Grid.Row="0">
-                <ListBox x:Name="CloudListBox" ItemsSource="{Binding Items}" MouseDoubleClick="OnItemDoubleClick"
-                         SelectionChanged="OnSelectionChanged" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
-                         BorderThickness="0" Background="{DynamicResource ListBackground}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="&#x1F4C1;" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"
-                                           Visibility="{Binding IsFolder, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                <TextBlock Text="&#x1F4C4;" FontSize="14" VerticalAlignment="Center" Margin="0,0,6,0"
-                                           Visibility="{Binding IsFolder, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}"/>
-                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-                                <TextBlock Text=" (synced)" FontSize="11" VerticalAlignment="Center" Margin="4,0,0,0" Foreground="{DynamicResource SuccessTintBrush}"
-                                           Visibility="{Binding IsSynced, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                <TextBlock Text="This folder is empty. Upload files or create a new folder."
-                           HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource ForegroundMutedBrush}"
-                           Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-            </Grid>
-            <Expander Grid.Row="1" Header="Synced folders" IsExpanded="False" Margin="4,2" VerticalAlignment="Top">
-                <ItemsControl x:Name="SyncedMappingsList" ItemsSource="{Binding SyncMappings}" Margin="4,0">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Margin="0,2" Padding="6,4" Background="{DynamicResource PanelCardBackground}" BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,0,0,1">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding CloudFolderName}" FontWeight="SemiBold" Margin="0,0,8,0"/>
-                                        <TextBlock Text="&#x2194;" Margin="0,0,8,0"/>
-                                        <TextBlock Text="{Binding LocalPath}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="Sync now" Margin="4,0" Padding="8,4" Tag="{Binding}" Click="OnSyncNowClick"/>
-                                    <Button Grid.Column="2" Content="Unmap" Margin="4,0" Padding="8,4" Tag="{Binding}" Click="OnUnmapSyncClick"/>
-                                </Grid>
+
+        <Grid Grid.Row="2">
+            <ListBox x:Name="CloudListBox" ItemsSource="{Binding Items}" MouseDoubleClick="OnItemDoubleClick"
+                     SelectionChanged="OnSelectionChanged" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                     BorderThickness="0" Background="{DynamicResource ListBackground}"
+                     ItemContainerStyle="{StaticResource CloudListBoxItemStyle}"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel LastChildFill="True">
+                            <Border DockPanel.Dock="Left" Width="44" Height="44" CornerRadius="12" Margin="0,0,14,0"
+                                    Background="{DynamicResource AccentSoftBrush}">
+                                <TextBlock FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="📄"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                                    <Setter Property="Text" Value="📁"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </Expander>
+                            <TextBlock DockPanel.Dock="Right" Text="›" FontSize="18" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource ForegroundMutedBrush}" Margin="8,0,0,0"/>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource ForegroundBrush}"/>
+                                <TextBlock FontSize="12" Foreground="{DynamicResource ForegroundMutedBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="File"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                                    <Setter Property="Text" Value="Folder"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsSynced}" Value="True">
+                                                    <Setter Property="Text" Value="Synced"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource SuccessTintBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Text="This folder is empty"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{DynamicResource ForegroundMutedBrush}"
+                       Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
         </Grid>
-        <StatusBar Grid.Row="2" Background="{DynamicResource StatusBarBackground}">
-            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" MaxHeight="80" Foreground="{DynamicResource ForegroundBrush}"/>
-        </StatusBar>
+
+        <Expander Grid.Row="3" Header="Synced folders" IsExpanded="True" Margin="12,8"
+                  Foreground="{DynamicResource ForegroundBrush}">
+            <ItemsControl x:Name="SyncedMappingsList" ItemsSource="{Binding SyncMappings}" Margin="4,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,4" Padding="12,10" CornerRadius="10"
+                                Background="{DynamicResource PanelCardBackground}"
+                                BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding CloudFolderName}" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource ForegroundBrush}"/>
+                                    <TextBlock Text="{Binding LocalPath}" FontSize="12"
+                                               Foreground="{DynamicResource ForegroundMutedBrush}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Sync" Margin="4,0" Style="{DynamicResource IgGhostButton}"
+                                        Tag="{Binding}" Click="OnSyncNowClick"/>
+                                <Button Grid.Column="2" Content="Upload all" Margin="4,0" Style="{DynamicResource IgGhostButton}"
+                                        Tag="{Binding}" Click="OnForceUploadClick"
+                                        ToolTip="Overwrite server with local files"/>
+                                <Button Grid.Column="3" Content="Download all" Margin="4,0" Style="{DynamicResource IgGhostButton}"
+                                        Tag="{Binding}" Click="OnForceDownloadClick"
+                                        ToolTip="Overwrite local files from server"/>
+                                <Button Grid.Column="4" Content="Unmap" Style="{DynamicResource IgGhostButton}"
+                                        Tag="{Binding}" Click="OnUnmapSyncClick"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Expander>
+
+        <Border Grid.Row="4" Background="{DynamicResource StatusBarBackground}"
+                BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" MaxHeight="60"
+                       Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
+        </Border>
     </Grid>
 </UserControl>

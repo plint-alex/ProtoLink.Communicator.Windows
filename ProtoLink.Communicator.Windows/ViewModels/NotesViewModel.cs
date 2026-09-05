@@ -25,11 +25,9 @@ public class NotesViewModel : ViewModelBase
     private string _statusText = "Ready";
     private CancellationTokenSource? _saveCts;
     private bool _pendingDebouncedSave;
-    private readonly Action<string?>? _notifyLocalPathForCloudSync;
 
-    public NotesViewModel(ISettingsService settingsService, Action<string?>? notifyLocalPathForCloudSync = null)
+    public NotesViewModel(ISettingsService settingsService)
     {
-        _notifyLocalPathForCloudSync = notifyLocalPathForCloudSync;
         _settingsService = settingsService;
         _fileService = new NotesFileService();
         _fsService = new NotesFileSystemService();
@@ -43,7 +41,20 @@ public class NotesViewModel : ViewModelBase
 
     public string? RootPath { get => _rootPath; private set { _rootPath = value; OnPropertyChanged(); } }
     public TreeItemViewModel? TreeRoot { get => _treeRoot; private set { _treeRoot = value; OnPropertyChanged(); } }
-    public string? CurrentPagePath { get => _currentPagePath; set { _currentPagePath = value; OnPropertyChanged(); } }
+    public string? CurrentPagePath
+    {
+        get => _currentPagePath;
+        set
+        {
+            _currentPagePath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CurrentPageTitle));
+            OnPropertyChanged(nameof(HasOpenPage));
+        }
+    }
+    public string CurrentPageTitle =>
+        string.IsNullOrEmpty(_currentPagePath) ? "Select a note" : Path.GetFileName(_currentPagePath);
+    public bool HasOpenPage => !string.IsNullOrEmpty(_currentPagePath);
     public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
     public ICommand NewFolderCommand { get; }
     public ICommand RefreshCommand { get; }
@@ -58,8 +69,18 @@ public class NotesViewModel : ViewModelBase
     public bool IsDirty => !string.Equals(_currentHtml, _htmlSyncedToDisk, StringComparison.Ordinal);
     public bool HasPendingDebouncedSave => _pendingDebouncedSave;
     public bool HasUnsavedWork => IsDirty || HasPendingDebouncedSave;
+    /// <summary>Last HTML body known to match disk (for skip-reload when unchanged).</summary>
+    public string HtmlSyncedToDisk => _htmlSyncedToDisk;
 
     public string GetWatchedIndexPath(string folderPath) => _fsService.GetWriteIndexFilePath(folderPath);
+
+    public async Task<string> ReadDiskInnerHtmlAsync(string folderPath)
+    {
+        if (!_fsService.HasIndexFile(folderPath))
+            return "<p><br></p>";
+        var indexPath = _fsService.GetIndexFilePath(folderPath);
+        return await _fileService.OpenFileAsync(indexPath);
+    }
 
     private static void PostUi(Action action)
     {
@@ -69,9 +90,6 @@ public class NotesViewModel : ViewModelBase
         else
             d.BeginInvoke(action);
     }
-
-    private void NotifyCloudSyncIfMapped(string? path) => _notifyLocalPathForCloudSync?.Invoke(path);
-
     public void CancelPendingSave()
     {
         _saveCts?.Cancel();
@@ -92,16 +110,17 @@ public class NotesViewModel : ViewModelBase
         CancelPendingSave();
         RefreshTree();
         StatusText = "Restored page from unsaved content";
-        NotifyCloudSyncIfMapped(folderPath);
     }
 
     public void CreateFolder(string parentPath, string folderName)
     {
         _fsService.CreateFolder(parentPath, folderName);
-        var indexPath = Path.Combine(parentPath, folderName, "index.html");
+        var newPath = Path.Combine(parentPath, folderName);
+        var indexPath = Path.Combine(newPath, "index.html");
         File.WriteAllText(indexPath, $"<h1>{System.Net.WebUtility.HtmlEncode(folderName)}</h1>\n\n<p><br></p>", Encoding.UTF8);
+        CurrentPagePath = newPath;
         RefreshTree();
-        NotifyCloudSyncIfMapped(Path.Combine(parentPath, folderName));
+        NotesPagePathChanged?.Invoke(newPath);
     }
 
     public void ReloadFromSettings()
@@ -178,7 +197,6 @@ public class NotesViewModel : ViewModelBase
                 _pendingDebouncedSave = false;
                 StatusText = $"Saved at {DateTime.Now:HH:mm:ss}";
                 ContentSaved?.Invoke(folderPath);
-                NotifyCloudSyncIfMapped(folderPath);
             });
         }
         catch (Exception ex)
@@ -263,7 +281,6 @@ public class NotesViewModel : ViewModelBase
             RefreshTree();
             StatusText = $"Page renamed to: {Path.GetFileName(newPath)}";
             NotesPagePathChanged?.Invoke(newPath);
-            NotifyCloudSyncIfMapped(newPath);
         }
 
         ScheduleSave(CurrentPagePath!, html);
@@ -297,7 +314,6 @@ public class NotesViewModel : ViewModelBase
                 CurrentPagePath = newPath;
             RefreshTree();
             StatusText = "Renamed";
-            NotifyCloudSyncIfMapped(newPath);
             return true;
         }
         catch (Exception ex)
@@ -325,7 +341,6 @@ public class NotesViewModel : ViewModelBase
                 CurrentPagePath = null;
             RefreshTree();
             StatusText = "Deleted";
-            NotifyCloudSyncIfMapped(folderPath);
             return true;
         }
         catch (Exception ex)

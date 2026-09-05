@@ -9,8 +9,12 @@ namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class MessengerView : System.Windows.Controls.UserControl
 {
+    /// <summary>Matches Android compactWidth (&lt; 600dp): contacts XOR chat.</summary>
+    private const double CompactBreakpoint = 600;
+
     private DispatcherTimer? _stickyHideTimer;
     private bool _stickToBottom = true;
+    private MessengerViewModel? _boundVm;
 
     public MessengerView()
     {
@@ -23,21 +27,80 @@ public partial class MessengerView : System.Windows.Controls.UserControl
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         HookMessagesCollection();
+        ApplyResponsiveLayout();
         ScrollMessagesToEnd();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         UnhookMessagesCollection();
+        UnhookViewModel();
         _stickyHideTimer?.Stop();
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
+        UnhookViewModel();
         if (e.OldValue is MessengerViewModel oldVm)
             oldVm.Messages.CollectionChanged -= OnMessagesCollectionChanged;
         HookMessagesCollection();
+        HookViewModel();
+        ApplyResponsiveLayout();
         ScrollMessagesToEnd();
+    }
+
+    private void HookViewModel()
+    {
+        if (DataContext is not MessengerViewModel vm) return;
+        _boundVm = vm;
+        vm.LayoutChanged += OnViewModelLayoutChanged;
+    }
+
+    private void UnhookViewModel()
+    {
+        if (_boundVm == null) return;
+        _boundVm.LayoutChanged -= OnViewModelLayoutChanged;
+        _boundVm = null;
+    }
+
+    private void OnViewModelLayoutChanged() =>
+        Dispatcher.BeginInvoke(ApplyColumnWidths, DispatcherPriority.Loaded);
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Math.Abs(e.PreviousSize.Width - e.NewSize.Width) < 0.5) return;
+        ApplyResponsiveLayout();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        if (DataContext is not MessengerViewModel vm) return;
+        vm.IsCompactLayout = ActualWidth > 0 && ActualWidth < CompactBreakpoint;
+        ApplyColumnWidths();
+    }
+
+    private void ApplyColumnWidths()
+    {
+        if (DataContext is not MessengerViewModel vm) return;
+
+        if (vm.IsCompactLayout)
+        {
+            if (vm.SelectedContact != null)
+            {
+                ContactsColumn.Width = new GridLength(0);
+                ChatColumn.Width = new GridLength(1, GridUnitType.Star);
+            }
+            else
+            {
+                ContactsColumn.Width = new GridLength(1, GridUnitType.Star);
+                ChatColumn.Width = new GridLength(0);
+            }
+        }
+        else
+        {
+            ContactsColumn.Width = new GridLength(280);
+            ChatColumn.Width = new GridLength(1, GridUnitType.Star);
+        }
     }
 
     private void HookMessagesCollection()

@@ -14,9 +14,9 @@ public class MessengerViewModel : ViewModelBase
 {
     private readonly IAuthService _authService;
     private readonly HttpClient _httpClient;
-    private readonly SignalRService _signalRService;
     private Contact? _selectedContact;
     private string _messageText = string.Empty;
+    private bool _isCompactLayout;
     private Guid? _userContactsId;
     private Guid? _mySentContainerId;
     private Guid? _myReceivedContainerId;
@@ -30,25 +30,41 @@ public class MessengerViewModel : ViewModelBase
     {
         _authService = authService;
         _httpClient = httpClient;
-        _signalRService = new SignalRService(
-            _httpClient.BaseAddress?.ToString()?.TrimEnd('/') ?? "",
-            _authService.CurrentToken?.AccessToken ?? "");
 
         Contacts = new ObservableCollection<Contact>();
         Messages = new ObservableCollection<MessageViewModel>();
         SendCommand = new RelayCommand(async _ => await SendMessageAsync(), _ => SelectedContact != null && !string.IsNullOrWhiteSpace(MessageText));
         ReceiveCommand = new RelayCommand(async _ => await LoadMessagesAsync(), _ => SelectedContact != null);
-
-        _signalRService.MessageReceived += async () =>
-        {
-            if (SelectedContact != null) await LoadMessagesAsync();
-        };
+        RefreshContactsCommand = new RelayCommand(async _ => await LoadContactsAsync());
+        BackToContactsCommand = new RelayCommand(_ => SelectedContact = null, _ => SelectedContact != null);
 
         _ = InitializeAsync();
     }
 
     public ObservableCollection<Contact> Contacts { get; }
     public ObservableCollection<MessageViewModel> Messages { get; }
+
+    /// <summary>True when the messenger host is narrower than the split breakpoint (~600px).</summary>
+    public bool IsCompactLayout
+    {
+        get => _isCompactLayout;
+        set
+        {
+            if (_isCompactLayout == value) return;
+            _isCompactLayout = value;
+            OnPropertyChanged();
+            NotifyPaneVisibility();
+            // Wide layout: open first chat if nothing selected (desktop convenience).
+            if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
+                SelectedContact = Contacts[0];
+        }
+    }
+
+    public bool ShowContactsPane => !_isCompactLayout || SelectedContact == null;
+    public bool ShowChatPane => !_isCompactLayout || SelectedContact != null;
+    public bool ShowChatBackButton => _isCompactLayout && SelectedContact != null;
+    public string ChatHeaderTitle => SelectedContact?.Name ?? "Select a chat";
+
     public Contact? SelectedContact
     {
         get => _selectedContact;
@@ -56,6 +72,9 @@ public class MessengerViewModel : ViewModelBase
         {
             _selectedContact = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ChatHeaderTitle));
+            NotifyPaneVisibility();
+            CommandManager.InvalidateRequerySuggested();
             if (value != null)
             {
                 // Only skip API load when we already completed LoadMessagesAsync for this contact.
@@ -72,6 +91,27 @@ public class MessengerViewModel : ViewModelBase
     public string MessageText { get => _messageText; set { _messageText = value; OnPropertyChanged(); } }
     public ICommand SendCommand { get; }
     public ICommand ReceiveCommand { get; }
+    public ICommand RefreshContactsCommand { get; }
+    public ICommand BackToContactsCommand { get; }
+
+    private void NotifyPaneVisibility()
+    {
+        OnPropertyChanged(nameof(ShowContactsPane));
+        OnPropertyChanged(nameof(ShowChatPane));
+        OnPropertyChanged(nameof(ShowChatBackButton));
+        LayoutChanged?.Invoke();
+    }
+
+    /// <summary>Raised when compact/wide or selected chat changes so the view can retarget columns.</summary>
+    public event Action? LayoutChanged;
+
+    /// <summary>Pull contacts + open chat from a SignalR push.</summary>
+    public async Task RefreshFromRealtimeAsync()
+    {
+        await LoadContactsAsync();
+        if (SelectedContact != null)
+            await LoadMessagesAsync();
+    }
 
     private void ShowMessages(IReadOnlyList<MessageViewModel> messages)
     {
@@ -114,9 +154,12 @@ public class MessengerViewModel : ViewModelBase
     private async Task InitializeAsync()
     {
         if (_authService.CurrentToken == null) return;
+        await LoadContactsAsync();
+    }
 
-        // Do not block contacts on SignalR (or cloud sync elsewhere).
-        _ = ConnectSignalRAsync();
+    private async Task LoadContactsAsync()
+    {
+        if (_authService.CurrentToken == null) return;
 
         try
         {
@@ -178,7 +221,7 @@ public class MessengerViewModel : ViewModelBase
                 }
             }
 
-            // Show list immediately (provisional names), then open first chat.
+            // Show list immediately (provisional names). Compact starts on the list (no auto-open chat).
             foreach (var id in contactUserIds)
             {
                 var provisional = _userLoginCache.TryGetValue(id, out var cached)
@@ -187,23 +230,15 @@ public class MessengerViewModel : ViewModelBase
                 Contacts.Add(new Contact { Id = id, Name = provisional });
             }
 
-            if (SelectedContact == null && Contacts.Count > 0)
-                SelectedContact = Contacts[0];
-
             await EnsureSelfContactAsync(userId);
 
-            if (SelectedContact == null && Contacts.Count > 0)
+            // Wide layout only: open first chat for convenience.
+            if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
                 SelectedContact = Contacts[0];
 
             // Enrich display names in the background without delaying the chat.
             _ = EnrichContactNamesAsync(contactUserIds);
         }
-        catch { }
-    }
-
-    private async Task ConnectSignalRAsync()
-    {
-        try { await _signalRService.ConnectAsync(); }
         catch { }
     }
 
@@ -373,13 +408,25 @@ public class MessengerViewModel : ViewModelBase
             return;
         }
 
-        // Optional real-time notification; message row is already stored above.
-        await _httpClient.PostAsJsonAsync("api/commands/send", new
+        // Real-time: notify peer and other devices of the same user.
+        var payload = new { senderId = myUserId.ToString(), messageText = text, timestamp = now };
+        await NotifyRealtimeAsync("message_sent", partnerUserId.ToString(), payload);
+        if (partnerUserId != myUserId)
+            await NotifyRealtimeAsync("message_sent", myUserId.ToString(), payload);
+    }
+
+    private async Task NotifyRealtimeAsync(string commandType, string targetUserId, object? parameters = null)
+    {
+        try
         {
-            commandType = "message_sent",
-            targetUserId = partnerUserId.ToString(),
-            parameters = new { senderId = myUserId.ToString(), messageText = text, timestamp = now }
-        });
+            await _httpClient.PostAsJsonAsync("api/commands/send", new
+            {
+                commandType,
+                targetUserId,
+                parameters
+            });
+        }
+        catch { /* non-fatal */ }
     }
 
     private async Task LoadMessagesAsync()
@@ -462,14 +509,22 @@ public class MessengerViewModel : ViewModelBase
         }
         return new MessageViewModel { Text = text, Timestamp = date, IsFromMe = isFromMe, SenderName = senderName };
     }
-
-    public async Task DisposeAsync() => await _signalRService.DisconnectAsync();
 }
 
 public class Contact
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
+
+    public string Initial
+    {
+        get
+        {
+            var t = Name?.Trim();
+            if (string.IsNullOrEmpty(t)) return "?";
+            return char.ToUpperInvariant(t[0]).ToString();
+        }
+    }
 }
 
 public class MessageViewModel

@@ -17,6 +17,9 @@ namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class NotesView : System.Windows.Controls.UserControl
 {
+    private const double CompactBreakpoint = 600;
+    private bool _isCompactLayout;
+    private bool _showEditorInCompact;
     private bool _isLoading;
     private bool _isInternalSave;
     private bool _suppressExternalReloadPrompt;
@@ -27,6 +30,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private bool _notesWebViewReady;
     private bool _webViewInitStarted;
     private Task? _webViewInitTask;
+    private readonly HashSet<string> _rememberedExpandedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public NotesView()
     {
@@ -52,6 +56,65 @@ public partial class NotesView : System.Windows.Controls.UserControl
             PopulateTree();
         }
         StartRootWatcher();
+        ApplyResponsiveLayout();
+    }
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Math.Abs(e.PreviousSize.Width - e.NewSize.Width) < 0.5) return;
+        ApplyResponsiveLayout();
+    }
+
+    private void OnNotesBackClick(object sender, RoutedEventArgs e)
+    {
+        _showEditorInCompact = false;
+        ApplyColumnLayout();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        _isCompactLayout = ActualWidth > 0 && ActualWidth < CompactBreakpoint;
+        if (!_isCompactLayout)
+            _showEditorInCompact = false;
+        else if (_vm?.HasOpenPage == true && !_showEditorInCompact)
+        {
+            // Keep list until user opens a note in compact mode.
+        }
+        ApplyColumnLayout();
+    }
+
+    private void ApplyColumnLayout()
+    {
+        if (_isCompactLayout)
+        {
+            var showEditor = _showEditorInCompact && _vm?.HasOpenPage == true;
+            if (showEditor)
+            {
+                TreeColumn.Width = new GridLength(0);
+                EditorColumn.Width = new GridLength(1, GridUnitType.Star);
+                TreePane.Visibility = Visibility.Collapsed;
+                EditorPane.Visibility = Visibility.Visible;
+                EditorBackButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                TreeColumn.Width = new GridLength(1, GridUnitType.Star);
+                EditorColumn.Width = new GridLength(0);
+                TreePane.Visibility = Visibility.Visible;
+                EditorPane.Visibility = Visibility.Collapsed;
+                EditorBackButton.Visibility = Visibility.Collapsed;
+            }
+            NotesBackButton.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            TreeColumn.Width = new GridLength(280);
+            EditorColumn.Width = new GridLength(1, GridUnitType.Star);
+            TreePane.Visibility = Visibility.Visible;
+            EditorPane.Visibility = Visibility.Visible;
+            EditorBackButton.Visibility = Visibility.Collapsed;
+            NotesBackButton.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -80,7 +143,42 @@ public partial class NotesView : System.Windows.Controls.UserControl
     }
 
     /// <summary>Call when the Notes tab becomes selected (WebView2 needs a visible HWND).</summary>
-    public void ActivateNotesTab() => TryStartWebViewInit();
+    public void ActivateNotesTab()
+    {
+        TryStartWebViewInit();
+        _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
+    }
+
+    /// <summary>Refresh open note from disk when tab is shown and editor is clean.</summary>
+    private async Task ReloadOpenPageFromDiskIfCleanAsync()
+    {
+        if (_isInternalSave || _isLoading || _vm?.CurrentPagePath == null) return;
+        if (_vm.HasUnsavedWork) return;
+        var core = NotesWebView.CoreWebView2;
+        if (core == null) return;
+        try
+        {
+            var diskInner = await _vm.ReadDiskInnerHtmlAsync(_vm.CurrentPagePath);
+            if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal))
+                return;
+
+            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
+            _isLoading = true;
+            var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
+            core.NavigateToString(html);
+            _vm.StatusText = "Reloaded";
+            if (keepFocus)
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+        }
+        catch
+        {
+            // Leave current buffer; disk watcher / next activate can retry.
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
 
     private void TryStartWebViewInit()
     {
@@ -154,9 +252,16 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void OnNotesPagePathChanged(string newFolderPath)
     {
         if (Dispatcher.CheckAccess())
+        {
             AttachIndexWatcher(newFolderPath);
+            if (_isCompactLayout && !string.IsNullOrEmpty(newFolderPath))
+            {
+                _showEditorInCompact = true;
+                ApplyColumnLayout();
+            }
+        }
         else
-            Dispatcher.BeginInvoke(new Action(() => AttachIndexWatcher(newFolderPath)));
+            Dispatcher.BeginInvoke(new Action(() => OnNotesPagePathChanged(newFolderPath)));
     }
 
     private void AttachIndexWatcher(string folderPath)
@@ -360,12 +465,59 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void PopulateTree()
     {
-        var expanded = CollectExpandedPaths();
+        // Capture expansion before Clear. If Items were already cleared by a racing refresh,
+        // keep the previous remembered set so the tree does not collapse.
+        var hadItems = NotesTreeView.Items.Count > 0;
+        var live = CollectExpandedPaths();
+        if (hadItems)
+        {
+            _rememberedExpandedPaths.Clear();
+            foreach (var p in live)
+                _rememberedExpandedPaths.Add(p);
+        }
+
+        EnsureAncestorsExpanded(_vm?.CurrentPagePath);
+        // Always keep root expanded when present so the tree does not look "empty".
+        if (_vm?.TreeRoot != null)
+            _rememberedExpandedPaths.Add(_vm.TreeRoot.Item.FullPath);
+
+        var keepEditorFocus = NotesWebView.IsKeyboardFocusWithin;
+
         NotesTreeView.Items.Clear();
         if (_vm?.TreeRoot == null) return;
-        var item = CreateTreeItem(_vm.TreeRoot, expanded);
+        var item = CreateTreeItem(_vm.TreeRoot, _rememberedExpandedPaths);
         NotesTreeView.Items.Add(item);
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(TryReselectCurrentPage));
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            TryReselectCurrentPage(focusTree: false);
+            if (keepEditorFocus)
+                NotesWebView.Focus();
+        }));
+    }
+
+    private void EnsureAncestorsExpanded(string? pagePath)
+    {
+        if (string.IsNullOrEmpty(pagePath) || string.IsNullOrEmpty(_vm?.RootPath)) return;
+        try
+        {
+            var root = Path.GetFullPath(_vm.RootPath);
+            var current = Path.GetFullPath(pagePath);
+            while (!string.IsNullOrEmpty(current))
+            {
+                _rememberedExpandedPaths.Add(current);
+                if (string.Equals(current, root, StringComparison.OrdinalIgnoreCase))
+                    break;
+                var parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) ||
+                    string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                    break;
+                current = parent;
+            }
+        }
+        catch
+        {
+            // Ignore path normalization failures.
+        }
     }
 
     private HashSet<string> CollectExpandedPaths()
@@ -386,7 +538,27 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private static TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
     {
-        var item = new TreeViewItem { Header = vm.Name, Tag = vm };
+        var icon = new TextBlock
+        {
+            Text = "📁",
+            FontSize = 16,
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var title = new TextBlock
+        {
+            Text = vm.Name,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        var header = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(icon, Dock.Left);
+        header.Children.Add(icon);
+        header.Children.Add(title);
+
+        var item = new TreeViewItem { Header = header, Tag = vm };
         if (expandedPaths != null && expandedPaths.Contains(vm.Item.FullPath))
             item.IsExpanded = true;
         foreach (var child in vm.Children)
@@ -394,13 +566,13 @@ public partial class NotesView : System.Windows.Controls.UserControl
         return item;
     }
 
-    private void TryReselectCurrentPage()
+    private void TryReselectCurrentPage(bool focusTree = false)
     {
         var path = _vm?.CurrentPagePath;
         if (string.IsNullOrEmpty(path)) return;
         foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
         {
-            if (TrySelectUnder(tvi, path))
+            if (TrySelectUnder(tvi, path, focusTree))
                 return;
         }
     }
@@ -414,30 +586,49 @@ public partial class NotesView : System.Windows.Controls.UserControl
         return t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TrySelectUnder(TreeViewItem node, string path)
+    private static bool TrySelectUnder(TreeViewItem node, string path, bool focusTree)
     {
         if (node.Tag is not TreeItemViewModel vm) return false;
         var nodePath = vm.Item.FullPath;
         if (string.Equals(nodePath, path, StringComparison.OrdinalIgnoreCase))
         {
             node.IsSelected = true;
-            node.Focus();
+            // Never steal keyboard focus from the editor on automatic reselect.
+            if (focusTree)
+                node.Focus();
             return true;
         }
         if (!PathIsUnderOrEqual(nodePath, path)) return false;
         node.IsExpanded = true;
         foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
         {
-            if (TrySelectUnder(child, path))
+            if (TrySelectUnder(child, path, focusTree))
                 return true;
         }
         return false;
     }
 
+    private void OnTreeItemExpanded(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
+            _rememberedExpandedPaths.Add(vm.Item.FullPath);
+    }
+
+    private void OnTreeItemCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
+            _rememberedExpandedPaths.Remove(vm.Item.FullPath);
+    }
+
     private void OnTreeSelectionChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
         if (e.NewValue is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
+        {
+            if (_isCompactLayout)
+                _showEditorInCompact = true;
             _ = NavigateToAsync(vm.Item.FullPath);
+            ApplyColumnLayout();
+        }
     }
 
     private void OnTreeDoubleClick(object sender, MouseButtonEventArgs e)
@@ -490,12 +681,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
     }
 
-    private async Task NavigateToAsync(string folderPath)
+    private async Task NavigateToAsync(string folderPath, bool forceReload = false)
     {
         if (_vm == null || !Directory.Exists(folderPath)) return;
 
         var samePage = string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase);
-        if (samePage && NotesWebView.CoreWebView2 != null)
+        if (samePage && !forceReload && NotesWebView.CoreWebView2 != null)
         {
             AttachIndexWatcher(folderPath);
             return;
@@ -536,12 +727,26 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         if (!_vm.HasUnsavedWork)
         {
+            try
+            {
+                var diskInner = await _vm.ReadDiskInnerHtmlAsync(_vm.CurrentPagePath);
+                if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal))
+                    return;
+            }
+            catch
+            {
+                // Fall through to reload attempt.
+            }
+
+            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
             _isLoading = true;
             try
             {
                 var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
                 core.NavigateToString(html);
-                _vm.StatusText = "Reloaded from external change";
+                _vm.StatusText = "Reloaded";
+                if (keepFocus)
+                    _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
             }
             finally
             {
@@ -564,7 +769,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             }
             catch
             {
-                // ignore
+                // Dialog may already be closing
             }
         }
 
@@ -622,14 +827,15 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         if (_vm == null) return;
         var parentPath = _vm.RootPath;
-        if (string.IsNullOrEmpty(parentPath) || !Directory.Exists(parentPath))
-        {
-            if (NotesTreeView.SelectedItem is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
-                parentPath = vm.Item.FullPath;
-        }
-        if (string.IsNullOrEmpty(parentPath)) return;
+        if (NotesTreeView.SelectedItem is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
+            parentPath = vm.Item.FullPath;
+        if (string.IsNullOrEmpty(parentPath) || !Directory.Exists(parentPath)) return;
         if (!InputDialog.TryShow("Enter page name:", "New Page", out var name) || string.IsNullOrWhiteSpace(name)) return;
+        EnsureAncestorsExpanded(parentPath);
+        _rememberedExpandedPaths.Add(Path.Combine(parentPath, name.Trim()));
         _vm.CreateFolder(parentPath, name.Trim());
+        if (_vm.CurrentPagePath != null)
+            _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);
     }
 
     private void OnNotesTreeContextMenuOpening(object sender, ContextMenuEventArgs e)
@@ -665,7 +871,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
         var parentPath = vm.Item.FullPath;
         if (string.IsNullOrEmpty(parentPath)) return;
         if (!InputDialog.TryShow("Enter page name:", "New Page", out var name) || string.IsNullOrWhiteSpace(name)) return;
+        EnsureAncestorsExpanded(parentPath);
+        _rememberedExpandedPaths.Add(Path.Combine(parentPath, name.Trim()));
         _vm.CreateFolder(parentPath, name.Trim());
+        if (_vm.CurrentPagePath != null)
+            _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);
         NotesTreeContextMenu.Tag = null;
     }
 

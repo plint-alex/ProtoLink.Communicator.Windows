@@ -161,4 +161,16 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
         _ = _vm?.SyncMappingAsync(mapping);
     }
+
+    private void OnForceUploadClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
+        _ = _vm?.ForceUploadMappingAsync(mapping);
+    }
+
+    private void OnForceDownloadClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
+        _ = _vm?.ForceDownloadMappingAsync(mapping);
+    }
 }

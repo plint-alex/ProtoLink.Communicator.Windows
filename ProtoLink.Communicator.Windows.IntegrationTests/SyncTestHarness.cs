@@ -87,6 +87,17 @@ internal sealed class SyncTestHarness : IAsyncDisposable
         EngineB = new SyncEngine(StoreB, Api);
     }
 
+    /// <summary>
+    /// Rebuild engines so remote size is never known (no Content-Length probe).
+    /// GetEntities listing already omits SizeBytes — this covers the full “no remote size” case.
+    /// </summary>
+    public void UseNoRemoteSizeProbe()
+    {
+        var noSizeApi = new NoRemoteSizeCloudApiService(Http);
+        EngineA = new SyncEngine(StoreA, noSizeApi);
+        EngineB = new SyncEngine(StoreB, noSizeApi);
+    }
+
     private string CreateTempDir(string label)
     {
         var path = Path.Combine(Path.GetTempPath(), "ProtoLinkSyncE2E", CloudFolderName, label + "-" + Guid.NewGuid().ToString("N")[..8]);

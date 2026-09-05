@@ -17,3 +17,7 @@ publish/
 **/*.exe.WebView2/
 
 *.log
+
+# Installer output
+artifacts/
+
