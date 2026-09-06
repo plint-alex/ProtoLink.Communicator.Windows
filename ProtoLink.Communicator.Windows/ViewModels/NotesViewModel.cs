@@ -131,10 +131,13 @@ public class NotesViewModel : ViewModelBase
         NotesRootPathChanged?.Invoke();
     }
 
+    private string? _lastTreeFingerprint;
+
     public void RefreshTree()
     {
         if (string.IsNullOrEmpty(_rootPath) || !Directory.Exists(_rootPath))
         {
+            _lastTreeFingerprint = null;
             TreeRoot = null;
             TreeRefreshed?.Invoke();
             return;
@@ -146,8 +149,12 @@ public class NotesViewModel : ViewModelBase
             try
             {
                 var built = _fsService.BuildTree(path);
+                var fingerprint = ComputeTreeFingerprint(built);
                 PostUi(() =>
                 {
+                    if (fingerprint == _lastTreeFingerprint && TreeRoot != null)
+                        return;
+                    _lastTreeFingerprint = fingerprint;
                     TreeRoot = built != null ? new TreeItemViewModel(built) : null;
                     TreeRefreshed?.Invoke();
                 });
@@ -156,6 +163,7 @@ public class NotesViewModel : ViewModelBase
             {
                 PostUi(() =>
                 {
+                    _lastTreeFingerprint = null;
                     TreeRoot = null;
                     StatusText = "Error loading notes tree.";
                     TreeRefreshed?.Invoke();
@@ -163,6 +171,26 @@ public class NotesViewModel : ViewModelBase
                 });
             }
         });
+    }
+
+    private static string ComputeTreeFingerprint(FileSystemItem? root)
+    {
+        if (root == null) return string.Empty;
+        var entries = new List<string>();
+        void Walk(FileSystemItem node, string relative)
+        {
+            entries.Add(relative + '\0' + node.Name);
+            foreach (var child in node.Children)
+            {
+                var childRel = string.IsNullOrEmpty(relative)
+                    ? child.Name
+                    : relative + '/' + child.Name;
+                Walk(child, childRel);
+            }
+        }
+        Walk(root, string.Empty);
+        entries.Sort(StringComparer.OrdinalIgnoreCase);
+        return string.Join('\n', entries);
     }
 
     public async Task<string> LoadPageContentAsync(string folderPath)

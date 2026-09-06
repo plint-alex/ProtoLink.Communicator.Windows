@@ -31,6 +31,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private bool _webViewInitStarted;
     private Task? _webViewInitTask;
     private readonly HashSet<string> _rememberedExpandedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private bool _treeEventsHooked;
+    private bool _suppressTreeExpandMemory;
 
     public NotesView()
     {
@@ -44,19 +46,25 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _vm = DataContext as NotesViewModel;
-        if (_vm != null)
-        {
-            _vm.TreeRefreshed += PopulateTree;
-            _vm.RequestNewFolder += OnRequestNewFolder;
-            _vm.InternalNoteWriteStarting += OnInternalNoteWriteStarting;
-            _vm.InternalNoteWriteCompleted += OnInternalNoteWriteCompleted;
-            _vm.NotesPagePathChanged += OnNotesPagePathChanged;
-            _vm.NotesRootPathChanged += OnNotesRootPathChanged;
-            _vm.ContentSaved += OnContentSaved;
-            PopulateTree();
-        }
+        EnsureNotesEventHandlers();
+        // Always repaint: TabControl SelectedContent unloads this view when leaving the Notes tab,
+        // so async TreeRefreshed can be missed while unhooked / Items can be empty on return.
+        PopulateTree();
         StartRootWatcher();
         ApplyResponsiveLayout();
+    }
+
+    private void EnsureNotesEventHandlers()
+    {
+        if (_vm == null || _treeEventsHooked) return;
+        _vm.TreeRefreshed += PopulateTree;
+        _vm.RequestNewFolder += OnRequestNewFolder;
+        _vm.InternalNoteWriteStarting += OnInternalNoteWriteStarting;
+        _vm.InternalNoteWriteCompleted += OnInternalNoteWriteCompleted;
+        _vm.NotesPagePathChanged += OnNotesPagePathChanged;
+        _vm.NotesRootPathChanged += OnNotesRootPathChanged;
+        _vm.ContentSaved += OnContentSaved;
+        _treeEventsHooked = true;
     }
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
@@ -121,16 +129,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         StopIndexWatcher();
         StopRootWatcher();
-        if (_vm != null)
-        {
-            _vm.TreeRefreshed -= PopulateTree;
-            _vm.RequestNewFolder -= OnRequestNewFolder;
-            _vm.InternalNoteWriteStarting -= OnInternalNoteWriteStarting;
-            _vm.InternalNoteWriteCompleted -= OnInternalNoteWriteCompleted;
-            _vm.NotesPagePathChanged -= OnNotesPagePathChanged;
-            _vm.NotesRootPathChanged -= OnNotesRootPathChanged;
-            _vm.ContentSaved -= OnContentSaved;
-        }
+        // Keep TreeRefreshed (and other VM) handlers subscribed across tab switches.
+        // TabControl SelectedContent unloads this view when Notes is not selected; unhooking
+        // here drops async RefreshTree completions and left users with an empty tree.
     }
 
     private void OnNotesVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e) =>
@@ -145,6 +146,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
     /// <summary>Call when the Notes tab becomes selected (WebView2 needs a visible HWND).</summary>
     public void ActivateNotesTab()
     {
+        EnsureNotesEventHandlers();
+        if (NotesTreeView.Items.Count == 0)
+        {
+            if (_vm?.TreeRoot != null)
+                PopulateTree();
+            else
+                _vm?.RefreshTree();
+        }
         TryStartWebViewInit();
         _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
     }
@@ -223,6 +232,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
         try
         {
+            StopRootWatcher();
             _rootWatcher = new NotesNotesRootWatcher(root);
             _rootWatcher.TreeStructureChanged += OnNotesRootStructureChanged;
         }
@@ -465,34 +475,177 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void PopulateTree()
     {
-        // Capture expansion before Clear. If Items were already cleared by a racing refresh,
-        // keep the previous remembered set so the tree does not collapse.
-        var hadItems = NotesTreeView.Items.Count > 0;
+        if (_vm?.TreeRoot == null)
+        {
+            NotesTreeView.Items.Clear();
+            return;
+        }
+
+        var rootPath = _vm.TreeRoot.Item.FullPath;
+        var keepEditorFocus = NotesWebView.IsKeyboardFocusWithin;
+
+        if (NotesTreeView.Items.Count == 1
+            && NotesTreeView.Items[0] is TreeViewItem existingRoot
+            && existingRoot.Tag is TreeItemViewModel existingVm
+            && string.Equals(
+                NormalizePathKey(existingVm.Item.FullPath),
+                NormalizePathKey(rootPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            // In-place merge: never rewrite IsExpanded — live TreeViewItems keep user collapse/expand.
+            MergeTreeItem(existingRoot, _vm.TreeRoot);
+            TryReselectCurrentPage(focusTree: false);
+            if (keepEditorFocus)
+                NotesWebView.Focus();
+            return;
+        }
+
+        // First paint or root path changed — rebuild once; respect remembered expansion.
         var live = CollectExpandedPaths();
-        if (hadItems)
+        if (live.Count > 0)
         {
             _rememberedExpandedPaths.Clear();
             foreach (var p in live)
                 _rememberedExpandedPaths.Add(p);
         }
+        else if (_rememberedExpandedPaths.Count == 0)
+        {
+            // First load only: expand root so the tree is usable.
+            _rememberedExpandedPaths.Add(NormalizePathKey(rootPath));
+        }
 
-        EnsureAncestorsExpanded(_vm?.CurrentPagePath);
-        // Always keep root expanded when present so the tree does not look "empty".
-        if (_vm?.TreeRoot != null)
-            _rememberedExpandedPaths.Add(_vm.TreeRoot.Item.FullPath);
-
-        var keepEditorFocus = NotesWebView.IsKeyboardFocusWithin;
-
+        // Build before Clear so a create failure cannot leave an empty tree.
+        var rootItem = CreateTreeItem(_vm.TreeRoot, _rememberedExpandedPaths);
         NotesTreeView.Items.Clear();
-        if (_vm?.TreeRoot == null) return;
-        var item = CreateTreeItem(_vm.TreeRoot, _rememberedExpandedPaths);
-        NotesTreeView.Items.Add(item);
+        NotesTreeView.Items.Add(rootItem);
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
             TryReselectCurrentPage(focusTree: false);
             if (keepEditorFocus)
                 NotesWebView.Focus();
         }));
+    }
+
+    /// <summary>Patch an existing TreeViewItem from model data without rewriting IsExpanded except via restore after replace.</summary>
+    private void MergeTreeItem(TreeViewItem tvi, TreeItemViewModel vm)
+    {
+        tvi.Tag = vm;
+        UpdateTreeItemHeader(tvi, vm.Name);
+
+        // Index live children by normalized path; drop UI duplicates immediately.
+        var byPath = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var child in tvi.Items.OfType<TreeViewItem>().ToList())
+        {
+            if (child.Tag is not TreeItemViewModel childVm)
+            {
+                tvi.Items.Remove(child);
+                continue;
+            }
+
+            var key = NormalizePathKey(childVm.Item.FullPath);
+            if (string.IsNullOrEmpty(key) || !byPath.TryAdd(key, child))
+                tvi.Items.Remove(child);
+        }
+
+        // Model order, first path wins (skip duplicate model entries).
+        var ordered = new List<TreeViewItem>(vm.Children.Count);
+        var seenWant = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var childVm in vm.Children)
+        {
+            var key = NormalizePathKey(childVm.Item.FullPath);
+            if (string.IsNullOrEmpty(key) || !seenWant.Add(key))
+                continue;
+
+            if (byPath.Remove(key, out var existing))
+            {
+                MergeTreeItem(existing, childVm);
+                ordered.Add(existing);
+            }
+            else
+            {
+                ordered.Add(CreateTreeItem(childVm, _rememberedExpandedPaths));
+            }
+        }
+
+        // Orphans (not in model) are dropped by the replace below — no need to Remove individually.
+
+        _suppressTreeExpandMemory = true;
+        try
+        {
+            var expandState = new bool[ordered.Count];
+            for (var i = 0; i < ordered.Count; i++)
+                expandState[i] = ordered[i].IsExpanded;
+
+            tvi.Items.Clear();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                tvi.Items.Add(ordered[i]);
+                ordered[i].IsExpanded = expandState[i];
+            }
+        }
+        finally
+        {
+            _suppressTreeExpandMemory = false;
+        }
+    }
+
+    private static string NormalizePathKey(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+        try
+        {
+            return Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
+
+    /// <summary>
+    /// Apply remembered expansion onto the live tree (new-page UX only).
+    /// Does not collapse anything — only expands paths in the set.
+    /// </summary>
+    private void ApplyRememberedExpansionToLiveTree()
+    {
+        foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
+            ApplyRememberedExpansionRecursive(tvi);
+    }
+
+    private void ApplyRememberedExpansionRecursive(TreeViewItem node)
+    {
+        if (node.Tag is TreeItemViewModel vm && _rememberedExpandedPaths.Contains(vm.Item.FullPath))
+            node.IsExpanded = true;
+        foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
+            ApplyRememberedExpansionRecursive(child);
+    }
+
+    private static void UpdateTreeItemHeader(TreeViewItem tvi, string name)
+    {
+        if (tvi.Header is TextBlock tb)
+        {
+            if (!string.Equals(tb.Text, name, StringComparison.Ordinal))
+                tb.Text = name;
+            return;
+        }
+
+        if (tvi.Header is string s)
+        {
+            if (!string.Equals(s, name, StringComparison.Ordinal))
+                tvi.Header = name;
+            return;
+        }
+
+        // Legacy DockPanel+icon headers from older sessions — replace with name-only.
+        tvi.Header = new TextBlock
+        {
+            Text = name,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
     }
 
     private void EnsureAncestorsExpanded(string? pagePath)
@@ -531,20 +684,13 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private static void CollectExpandedRecursive(TreeViewItem node, HashSet<string> set)
     {
         if (node.Tag is TreeItemViewModel vm && node.IsExpanded)
-            set.Add(vm.Item.FullPath);
+            set.Add(NormalizePathKey(vm.Item.FullPath));
         foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
             CollectExpandedRecursive(child, set);
     }
 
     private static TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
     {
-        var icon = new TextBlock
-        {
-            Text = "📁",
-            FontSize = 16,
-            Margin = new Thickness(0, 0, 10, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
         var title = new TextBlock
         {
             Text = vm.Name,
@@ -553,14 +699,16 @@ public partial class NotesView : System.Windows.Controls.UserControl
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
-        var header = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(icon, Dock.Left);
-        header.Children.Add(icon);
-        header.Children.Add(title);
 
-        var item = new TreeViewItem { Header = header, Tag = vm };
-        if (expandedPaths != null && expandedPaths.Contains(vm.Item.FullPath))
-            item.IsExpanded = true;
+        var item = new TreeViewItem { Header = title, Tag = vm };
+        if (expandedPaths != null)
+        {
+            var pathKey = NormalizePathKey(vm.Item.FullPath);
+            if (!string.IsNullOrEmpty(pathKey) && expandedPaths.Contains(pathKey))
+                item.IsExpanded = true;
+            else if (expandedPaths.Contains(vm.Item.FullPath))
+                item.IsExpanded = true;
+        }
         foreach (var child in vm.Children)
             item.Items.Add(CreateTreeItem(child, expandedPaths));
         return item;
@@ -593,13 +741,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (string.Equals(nodePath, path, StringComparison.OrdinalIgnoreCase))
         {
             node.IsSelected = true;
-            // Never steal keyboard focus from the editor on automatic reselect.
             if (focusTree)
                 node.Focus();
             return true;
         }
         if (!PathIsUnderOrEqual(nodePath, path)) return false;
-        node.IsExpanded = true;
+        // Do not force-expand ancestors — respect user collapse during quiet refresh.
         foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
         {
             if (TrySelectUnder(child, path, focusTree))
@@ -610,12 +757,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void OnTreeItemExpanded(object sender, RoutedEventArgs e)
     {
+        if (_suppressTreeExpandMemory) return;
         if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
             _rememberedExpandedPaths.Add(vm.Item.FullPath);
     }
 
     private void OnTreeItemCollapsed(object sender, RoutedEventArgs e)
     {
+        if (_suppressTreeExpandMemory) return;
         if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
             _rememberedExpandedPaths.Remove(vm.Item.FullPath);
     }
@@ -833,6 +982,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (!InputDialog.TryShow("Enter page name:", "New Page", out var name) || string.IsNullOrWhiteSpace(name)) return;
         EnsureAncestorsExpanded(parentPath);
         _rememberedExpandedPaths.Add(Path.Combine(parentPath, name.Trim()));
+        ApplyRememberedExpansionToLiveTree();
         _vm.CreateFolder(parentPath, name.Trim());
         if (_vm.CurrentPagePath != null)
             _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);
@@ -873,6 +1023,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (!InputDialog.TryShow("Enter page name:", "New Page", out var name) || string.IsNullOrWhiteSpace(name)) return;
         EnsureAncestorsExpanded(parentPath);
         _rememberedExpandedPaths.Add(Path.Combine(parentPath, name.Trim()));
+        ApplyRememberedExpansionToLiveTree();
         _vm.CreateFolder(parentPath, name.Trim());
         if (_vm.CurrentPagePath != null)
             _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);

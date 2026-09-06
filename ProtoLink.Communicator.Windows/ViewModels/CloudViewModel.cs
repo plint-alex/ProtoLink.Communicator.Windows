@@ -48,7 +48,7 @@ public class CloudViewModel : ViewModelBase
             folderSynchronizer,
             _api,
             SyncMappings,
-            LoadCurrentAsync,
+            () => LoadCurrentAsync(quiet: true),
             s => StatusText = s,
             ex =>
             {
@@ -143,7 +143,10 @@ public class CloudViewModel : ViewModelBase
         if (ancestorSynced) return;
         SyncMappings.Add(new CloudSyncMapping { CloudFolderId = cloudFolderId, LocalPath = localPath.Trim(), CloudFolderName = cloudFolderName ?? "" });
         _syncStore.Save(SyncMappings);
+        StatusText = "Mapped — syncing into existing cloud folder…";
         _ = LoadCurrentAsync();
+        // Full reconcile into the existing CloudFolderId — never create a new root folder for the map.
+        _ = _mappedSync.RequestFullSyncAsync();
     }
 
     public void RemoveMapping(Guid cloudFolderId)
@@ -155,12 +158,12 @@ public class CloudViewModel : ViewModelBase
         _ = LoadCurrentAsync();
     }
 
-    /// <summary>Refresh cloud folder listing only.</summary>
+    /// <summary>Refresh cloud folder listing without clearing selection or flashing empty.</summary>
     public async Task RefreshFromRealtimeAsync()
     {
         if (!_authService.IsAuthenticated) return;
         if (CurrentFolderId.HasValue)
-            await LoadCurrentAsync();
+            await LoadCurrentAsync(quiet: true);
     }
 
     /// <summary>Full reconcile from SignalR <c>data_changed</c> (or coalesced after busy sync).</summary>
@@ -239,17 +242,30 @@ public class CloudViewModel : ViewModelBase
         await LoadCurrentAsync();
     }
 
-    public async Task LoadCurrentAsync()
+    private Guid? _listedFolderId;
+
+    public async Task LoadCurrentAsync(bool quiet = true)
     {
         if (!CurrentFolderId.HasValue) return;
-        SelectedItem = null;
-        Items.Clear();
-        StatusText = "Loading...";
+        var folderId = CurrentFolderId.Value;
+        var selectedId = SelectedItem?.Id;
+        var folderChanged = _listedFolderId != folderId;
+        if (folderChanged)
+        {
+            SelectedItem = null;
+            selectedId = null;
+        }
+
+        if (!quiet)
+            StatusText = "Loading...";
         try
         {
-            var list = await _api.GetEntitiesAsync(new[] { CurrentFolderId.Value }, includeValues: true);
+            var list = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
+            // User may have navigated away while the request was in flight.
+            if (CurrentFolderId != folderId) return;
+
             var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
-            var items = (list ?? new List<GetEntitiesResult>())
+            var fresh = (list ?? new List<GetEntitiesResult>())
                 .Select(e => new CloudItemViewModel
                 {
                     Id = e.Id,
@@ -260,16 +276,70 @@ public class CloudViewModel : ViewModelBase
                 .OrderByDescending(x => x.IsFolder)
                 .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            Items.Clear();
-            foreach (var item in items)
-                Items.Add(item);
-            StatusText = "Ready";
+
+            MergeListing(fresh, selectedId, reset: folderChanged);
+            _listedFolderId = folderId;
+            if (!quiet)
+                StatusText = "Ready";
         }
         catch (Exception ex)
         {
             ReportCaughtException(ex);
         }
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    /// <summary>
+    /// Update <see cref="Items"/> in place so ListBox does not flash empty and selection stays on the same row.
+    /// </summary>
+    private void MergeListing(List<CloudItemViewModel> fresh, Guid? selectedId, bool reset)
+    {
+        if (reset)
+            Items.Clear();
+
+        var freshIds = new HashSet<Guid>(fresh.Select(f => f.Id));
+        for (var i = Items.Count - 1; i >= 0; i--)
+        {
+            if (!freshIds.Contains(Items[i].Id))
+                Items.RemoveAt(i);
+        }
+
+        for (var target = 0; target < fresh.Count; target++)
+        {
+            var want = fresh[target];
+            var currentIndex = -1;
+            for (var i = 0; i < Items.Count; i++)
+            {
+                if (Items[i].Id == want.Id)
+                {
+                    currentIndex = i;
+                    break;
+                }
+            }
+
+            if (currentIndex < 0)
+            {
+                Items.Insert(target, want);
+                continue;
+            }
+
+            var existing = Items[currentIndex];
+            existing.Name = want.Name;
+            existing.IsFolder = want.IsFolder;
+            existing.IsSynced = want.IsSynced;
+            if (currentIndex != target)
+            {
+                Items.RemoveAt(currentIndex);
+                Items.Insert(target, existing);
+            }
+        }
+
+        if (selectedId.HasValue)
+        {
+            var sel = Items.FirstOrDefault(i => i.Id == selectedId.Value);
+            if (!ReferenceEquals(SelectedItem, sel))
+                SelectedItem = sel;
+        }
     }
 
     private void ReportCaughtException(Exception ex)
@@ -325,7 +395,7 @@ public class CloudViewModel : ViewModelBase
                     await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentFolder.Id }, nameTrim);
                 }
 
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(LoadCurrentAsync);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
             }
             catch (Exception ex)
             {
@@ -361,7 +431,7 @@ public class CloudViewModel : ViewModelBase
                     await UploadNewCloudFileAsync(targetFolder.Id, path);
                 }
 
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(LoadCurrentAsync);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
             }
             catch (Exception ex)
             {
@@ -417,7 +487,7 @@ public class CloudViewModel : ViewModelBase
                     await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { currentId }, nameTrim);
                 }
 
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(LoadCurrentAsync);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
             }
             catch (Exception ex)
             {
@@ -451,7 +521,7 @@ public class CloudViewModel : ViewModelBase
                     await UploadNewCloudFileAsync(currentId, path);
                 }
 
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(LoadCurrentAsync);
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
             }
             catch (Exception ex)
             {

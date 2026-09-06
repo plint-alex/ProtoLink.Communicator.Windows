@@ -1,9 +1,33 @@
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
-public class CloudItemViewModel
+public class CloudItemViewModel : ViewModelBase
 {
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public bool IsFolder { get; set; }
-    public bool IsSynced { get; set; }
+    private Guid _id;
+    private string _name = string.Empty;
+    private bool _isFolder;
+    private bool _isSynced;
+
+    public Guid Id
+    {
+        get => _id;
+        set { if (_id == value) return; _id = value; OnPropertyChanged(); }
+    }
+
+    public string Name
+    {
+        get => _name;
+        set { if (_name == value) return; _name = value; OnPropertyChanged(); }
+    }
+
+    public bool IsFolder
+    {
+        get => _isFolder;
+        set { if (_isFolder == value) return; _isFolder = value; OnPropertyChanged(); }
+    }
+
+    public bool IsSynced
+    {
+        get => _isSynced;
+        set { if (_isSynced == value) return; _isSynced = value; OnPropertyChanged(); }
+    }
 }

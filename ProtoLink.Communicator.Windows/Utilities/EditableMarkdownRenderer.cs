@@ -17,7 +17,7 @@ public class EditableMarkdownRenderer
 ul.checkbox-list{list-style:none;padding-left:0;}
 ul.checkbox-list li{padding:4px 0;display:flex;align-items:flex-start;}
 ul.checkbox-list li input[type="checkbox"]{margin-right:8px;margin-top:2px;cursor:pointer;flex-shrink:0;}
-ul.checkbox-list li label{cursor:pointer;flex:1;margin:0;}
+ul.checkbox-list li label{cursor:text;flex:1;margin:0;}
 ul.checkbox-list li:has(input:checked){text-decoration:line-through;opacity:0.6;}
 table{border-collapse:collapse;margin:0.5em 0;}
 td,th{border:1px solid #dfe1e6;padding:6px;}
@@ -57,6 +57,10 @@ while(d.firstChild)editor.appendChild(d.firstChild);
 editor.removeAttribute('data-content-base64');
 }catch(e){editor.innerHTML='<p><br></p>';editor.removeAttribute('data-content-base64');}
 }
+// Existing notes: allow editing label text without toggling via htmlFor.
+editor.querySelectorAll('ul.checkbox-list li label[for]').forEach(function(label){
+label.removeAttribute('for');
+});
 })();
 document.addEventListener('keydown',function(e){if(e.key==='Control')document.body.dataset.ctrlKey='true';});
 document.addEventListener('keyup',function(e){if(e.key==='Control')document.body.dataset.ctrlKey='false';});

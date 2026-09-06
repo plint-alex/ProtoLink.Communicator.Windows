@@ -59,17 +59,31 @@ public sealed class SyncEngine
 
     /// <summary>
     /// Upload local FS changes vs meta only (no remote walk / download).
-    /// Returns number of local structural/content ops applied.
+    /// Mappings with empty metadata are fully reconciled first (never blind-create remote entities).
+    /// Returns number of local structural/content ops applied from pure push passes.
     /// </summary>
     public async Task<int> PushLocalChangesAsync(
         IReadOnlyList<SyncMappingInfo> mappings,
         CancellationToken ct = default)
     {
         var applied = 0;
+        var needFull = new List<SyncMappingInfo>();
+        var ready = new List<SyncMappingInfo>();
         foreach (var mapping in mappings)
         {
-            ct.ThrowIfCancellationRequested();
             if (!Directory.Exists(mapping.LocalRootPath)) continue;
+            if (_store.GetAll(mapping.Id).Count == 0)
+                needFull.Add(mapping);
+            else
+                ready.Add(mapping);
+        }
+
+        if (needFull.Count > 0)
+            await ReconcileAllAsync(needFull, ct);
+
+        foreach (var mapping in ready)
+        {
+            ct.ThrowIfCancellationRequested();
             var dirty = new HashSet<string>(StringComparer.Ordinal);
             applied += await ApplyLocalPhaseAsync(
                 mapping, dirty, skipSizeUpdates: false, remoteInMapping: new List<RemoteLocated>(), ct);

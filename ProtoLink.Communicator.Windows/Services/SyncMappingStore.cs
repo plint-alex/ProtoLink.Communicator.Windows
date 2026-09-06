@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using ProtoLink.Communicator.Windows.Models;
@@ -7,6 +8,7 @@ namespace ProtoLink.Communicator.Windows.Services;
 
 public class SyncMappingStore : ISyncMappingStore
 {
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     private readonly string _filePath;
     private readonly ILogger<SyncMappingStore> _logger;
 
@@ -24,7 +26,7 @@ public class SyncMappingStore : ISyncMappingStore
         if (!File.Exists(_filePath)) return new List<CloudSyncMapping>();
         try
         {
-            var json = File.ReadAllText(_filePath);
+            var json = File.ReadAllText(_filePath, Utf8NoBom);
             var list = JsonConvert.DeserializeObject<List<CloudSyncMapping>>(json);
             return list ?? new List<CloudSyncMapping>();
         }
@@ -39,6 +41,6 @@ public class SyncMappingStore : ISyncMappingStore
     {
         var list = mappings.ToList();
         var json = JsonConvert.SerializeObject(list, Formatting.Indented);
-        File.WriteAllText(_filePath, json);
+        File.WriteAllText(_filePath, json, Utf8NoBom);
     }
 }

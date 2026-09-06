@@ -19,10 +19,11 @@ Cloud owns mapped folders: **FS ↔ local sync metadata ↔ server file entities
 | Trigger | Mode |
 |---------|------|
 | App start / login | **Full reconcile** (scan local + remote → upload / download / Conflict) |
+| **Map local folder** | **Full reconcile** into the **existing** cloud folder id (never creates a new mapped-root folder) |
 | SignalR `data_changed` | **Full reconcile** (same as start) |
 | Manual Sync | **Full reconcile** |
-| Periodic timer (**15s**) | **Local-only push** (no remote scan/download; upload when local ≠ meta) |
-| Note page saved | **Local-only push** |
+| Periodic timer (**15s**) | **Local-only push** (no remote scan/download; upload when local ≠ meta). If metadata for a mapping is empty, upgrades to **full reconcile** for that mapping first. |
+| Note page saved | **Local-only push** (same empty-meta guard) |
 | Force Upload / Force Download | Force overwrite (push also sends `data_changed`) |
 
 **Not triggers:** filesystem watchers, window Activate, WorkManager periodic jobs.
@@ -62,7 +63,7 @@ Conflicts throw `SyncConflictException` and surface in a popup. Resolve with **F
 
 Failed remote download throws `SyncException` (no silent skip).
 
-Local-only push does **not** download or Conflict-check remote; it uploads when local content differs from meta (and applies local adds/renames/removes against meta).
+Local-only push does **not** download or Conflict-check remote; it uploads when local content differs from meta (and applies local adds/renames/removes against meta). It **never** seeds a brand-new mapping from an empty metadata store — that path runs full reconcile first so existing remote children are adopted.
 
 ## Force repair
 

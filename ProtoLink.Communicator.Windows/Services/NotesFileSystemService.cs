@@ -9,16 +9,21 @@ public class NotesFileSystemService
     public FileSystemItem? BuildTree(string rootPath)
     {
         if (!Directory.Exists(rootPath)) return null;
-        var root = FileSystemItem.CreateFolder(rootPath);
+        var root = FileSystemItem.CreateFolder(Path.GetFullPath(rootPath));
         BuildRecursive(root);
         return root;
     }
 
     private void BuildRecursive(FileSystemItem folder)
     {
-        foreach (var dir in Directory.GetDirectories(folder.FullPath).OrderBy(Path.GetFileName))
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in Directory.GetDirectories(folder.FullPath).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         {
-            var child = FileSystemItem.CreateFolder(dir, folder);
+            string full;
+            try { full = Path.GetFullPath(dir); }
+            catch { full = dir; }
+            if (!seen.Add(full)) continue;
+            var child = FileSystemItem.CreateFolder(full, folder);
             BuildRecursive(child);
             folder.Children.Add(child);
         }
