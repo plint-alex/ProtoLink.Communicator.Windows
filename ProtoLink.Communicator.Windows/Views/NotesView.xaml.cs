@@ -848,9 +848,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
         try
         {
             _vm.CurrentPagePath = folderPath;
+            _vm.StatusText = "Loading…";
             var html = await _vm.LoadPageContentAsync(folderPath);
             if (NotesWebView.CoreWebView2 != null)
                 NotesWebView.CoreWebView2.NavigateToString(html);
+            _vm.StatusText = "Ready";
 
             AttachIndexWatcher(folderPath);
         }
@@ -1131,6 +1133,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             ErrorDetailDialog.Show("Insert link", ex);
         }
+        finally
+        {
+            FocusEditor();
+        }
     }
 
     private async void OnFormatCode(object sender, RoutedEventArgs e) => await RunFormatAsync(NotesWebFormatting.ApplyCodeBlockAsync);
@@ -1158,5 +1164,17 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             ErrorDetailDialog.Show("Formatting", ex);
         }
+        finally
+        {
+            FocusEditor();
+        }
     }
+
+    /// <summary>
+    /// Returns Windows keyboard focus to the WebView. The scripts call <c>editor.focus()</c>, but that only sets DOM
+    /// focus — while a WPF control holds keyboard focus, no key reaches Chromium and typing and Ctrl+Z silently do
+    /// nothing.
+    /// </summary>
+    private void FocusEditor() =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
 }

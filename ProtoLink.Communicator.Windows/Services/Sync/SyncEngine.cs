@@ -92,6 +92,16 @@ public sealed class SyncEngine
         return applied;
     }
 
+    /// <summary>Buffer a remote file in memory so the disk write stays short and ungated during transfer.</summary>
+    private async Task<byte[]?> DownloadBytesOrNullAsync(Guid remoteId, CancellationToken ct)
+    {
+        await using var stream = await _api.GetFileStreamOrNotFoundAsync(remoteId, ct);
+        if (stream == null) return null;
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms, ct);
+        return ms.ToArray();
+    }
+
     private Task EnrichRemoteSizesAsync(List<RemoteLocated> located, CancellationToken ct)
     {
         // OpenResty serves getFile as chunked (no Content-Length). Header-only probes still
@@ -134,21 +144,15 @@ public sealed class SyncEngine
             // Empty / tiny stubs: prefer remote when cloud likely has real content.
             if (localSize == 0L || (localSize < 64L && (located.Entry.SizeBytes ?? 0L) > localSize))
             {
-                await using var stream = await _api.GetFileStreamOrNotFoundAsync(meta.RemoteId, ct);
-                if (stream != null)
+                var stubBytes = await DownloadBytesOrNullAsync(meta.RemoteId, ct);
+                if (stubBytes is { Length: > 0 })
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                    await using (var fs = File.Create(full))
-                        await stream.CopyToAsync(fs, ct);
-                    var newLen = new FileInfo(full).Length;
-                    if (newLen > 0L)
-                    {
-                        meta.SizeBytes = newLen;
-                        meta.ContentHash = ContentHashUtil.Sha256HexFile(full);
-                        meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
-                        _store.Upsert(meta);
-                        dirty.Add(path);
-                    }
+                    await MappedFolderIoGate.WriteAllBytesAsync(full, stubBytes, ct);
+                    meta.SizeBytes = stubBytes.Length;
+                    meta.ContentHash = ContentHashUtil.Sha256Hex(stubBytes);
+                    meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
+                    _store.Upsert(meta);
+                    dirty.Add(path);
                 }
                 continue;
             }
@@ -158,16 +162,7 @@ public sealed class SyncEngine
             // Always download remote bytes and compare hashes. Never forge remoteHash from
             // meta or upload when remote content is unknown — that left devices on Test4
             // while cloud had Test5 (and the reverse overwrite).
-            byte[]? remoteBytes = null;
-            await using (var stream = await _api.GetFileStreamOrNotFoundAsync(meta.RemoteId, ct))
-            {
-                if (stream != null)
-                {
-                    using var ms = new MemoryStream();
-                    await stream.CopyToAsync(ms, ct);
-                    remoteBytes = ms.ToArray();
-                }
-            }
+            var remoteBytes = await DownloadBytesOrNullAsync(meta.RemoteId, ct);
             if (remoteBytes == null || remoteBytes.Length == 0)
             {
                 throw new SyncException(
@@ -188,7 +183,7 @@ public sealed class SyncEngine
                 {
                     var name = SyncPathUtil.NameOf(meta.RelativePath);
                     var len = new FileInfo(full).Length;
-                    await using var content = File.OpenRead(full);
+                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
                     await _api.AddFileAsync(meta.RemoteId, name, content, MimeTypes.GetMimeType(name));
                     meta.SizeBytes = len;
                     meta.ContentHash = localHash;
@@ -200,8 +195,7 @@ public sealed class SyncEngine
                 }
                 case SyncDirectionDecide.Action.Read:
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                    await File.WriteAllBytesAsync(full, remoteBytes, ct);
+                    await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                     meta.SizeBytes = remoteBytes.Length;
                     meta.ContentHash = remoteHash;
                     meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
@@ -256,25 +250,21 @@ public sealed class SyncEngine
                 var missing = !File.Exists(full);
                 // Always pull when missing; when present, download and keep remote if hashes differ
                 // (bootstrap has no meta baseline — prefer cloud so devices share one tree).
-                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                await using var stream = await _api.GetFileStreamOrNotFoundAsync(loc.Entry.Id, ct);
-                if (stream != null)
+                var remoteBytes = await DownloadBytesOrNullAsync(loc.Entry.Id, ct);
+                if (remoteBytes != null)
                 {
-                    using var ms = new MemoryStream();
-                    await stream.CopyToAsync(ms, ct);
-                    var remoteBytes = ms.ToArray();
                     if (remoteBytes.Length > 0)
                     {
                         if (missing)
                         {
-                            await File.WriteAllBytesAsync(full, remoteBytes, ct);
+                            await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                         }
                         else
                         {
                             var localHash = ContentHashUtil.Sha256HexFile(full);
                             var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
                             if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
-                                await File.WriteAllBytesAsync(full, remoteBytes, ct);
+                                await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                         }
                     }
                     else if (missing)
@@ -391,12 +381,10 @@ public sealed class SyncEngine
                     var localLooksStub = len == 0 || (len < 64 && remoteSize is > 0 && remoteSize > len);
                     if (localLooksStub)
                     {
-                        await using var cloud = await _api.GetFileStreamOrNotFoundAsync(existingRemote.Entry.Id, ct);
-                        if (cloud != null)
+                        var cloudBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
+                        if (cloudBytes != null)
                         {
-                            await using var fs = File.Create(full);
-                            await cloud.CopyToAsync(fs, ct);
-                            var written = new FileInfo(full).Length;
+                            await MappedFolderIoGate.WriteAllBytesAsync(full, cloudBytes, ct);
                             _store.Upsert(new SyncItemMeta
                             {
                                 MappingId = mapping.Id,
@@ -404,8 +392,8 @@ public sealed class SyncEngine
                                 ParentRemoteId = existingRemote.Entry.ParentId,
                                 RelativePath = path,
                                 IsFolder = false,
-                                SizeBytes = written,
-                                ContentHash = ContentHashUtil.Sha256HexFile(full),
+                                SizeBytes = cloudBytes.Length,
+                                ContentHash = ContentHashUtil.Sha256Hex(cloudBytes),
                                 RemoteUpdateTime = existingRemote.Entry.UpdateTime ?? DateTime.UtcNow
                             });
                             dirty.Add(path);
@@ -414,16 +402,7 @@ public sealed class SyncEngine
                         continue;
                     }
                     // Adopt existing remote id: converge by content hash (never upload solely because size is unknown).
-                    byte[]? remoteBytes = null;
-                    await using (var cloud = await _api.GetFileStreamOrNotFoundAsync(existingRemote.Entry.Id, ct))
-                    {
-                        if (cloud != null)
-                        {
-                            using var ms = new MemoryStream();
-                            await cloud.CopyToAsync(ms, ct);
-                            remoteBytes = ms.ToArray();
-                        }
-                    }
+                    var remoteBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
                     if (remoteBytes == null || remoteBytes.Length == 0)
                     {
                         throw new SyncException(
@@ -446,7 +425,7 @@ public sealed class SyncEngine
                     }
                     if (action == SyncDirectionDecide.Action.Write)
                     {
-                        await using var content = File.OpenRead(full);
+                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
                         await _api.AddFileAsync(existingRemote.Entry.Id, name, content, MimeTypes.GetMimeType(name));
                         _store.Upsert(new SyncItemMeta
                         {
@@ -464,7 +443,7 @@ public sealed class SyncEngine
                     else
                     {
                         if (action == SyncDirectionDecide.Action.Read)
-                            await File.WriteAllBytesAsync(full, remoteBytes, ct);
+                            await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                         _store.Upsert(new SyncItemMeta
                         {
                             MappingId = mapping.Id,
@@ -495,7 +474,7 @@ public sealed class SyncEngine
             {
                 if (new FileInfo(addFull).Length == 0) continue;
                 id = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, addName);
-                await using var content = File.OpenRead(addFull);
+                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
                 await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
             }
             _store.Upsert(new SyncItemMeta
@@ -533,7 +512,7 @@ public sealed class SyncEngine
             }
             var name = SyncPathUtil.NameOf(u.Meta.RelativePath);
             var full = ToFull(mapping.LocalRootPath, u.Meta.RelativePath);
-            await using var content2 = File.OpenRead(full);
+            await using var content2 = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
             await _api.AddFileAsync(u.Meta.RemoteId, name, content2, MimeTypes.GetMimeType(name));
             u.Meta.SizeBytes = u.NewSize;
             u.Meta.ContentHash = ContentHashUtil.Sha256HexFile(full);
@@ -587,31 +566,19 @@ public sealed class SyncEngine
                         if (ren.Meta.IsFolder)
                         {
                             if (Directory.Exists(fromFull))
-                            {
-                                Directory.CreateDirectory(Path.GetDirectoryName(toFull)!);
-                                if (Directory.Exists(toFull)) Directory.Delete(toFull, true);
-                                Directory.Move(fromFull, toFull);
-                            }
+                                await MappedFolderIoGate.MoveDirectoryAsync(fromFull, toFull);
                             else
                                 Directory.CreateDirectory(toFull);
                         }
+                        else if (File.Exists(fromFull))
+                        {
+                            await MappedFolderIoGate.MoveFileAsync(fromFull, toFull);
+                        }
                         else
                         {
-                            Directory.CreateDirectory(Path.GetDirectoryName(toFull)!);
-                            if (File.Exists(fromFull))
-                            {
-                                if (File.Exists(toFull)) File.Delete(toFull);
-                                File.Move(fromFull, toFull);
-                            }
-                            else
-                            {
-                                await using var stream = await _api.GetFileStreamOrNotFoundAsync(ren.Meta.RemoteId, ct);
-                                if (stream != null)
-                                {
-                                    await using var fs = File.Create(toFull);
-                                    await stream.CopyToAsync(fs, ct);
-                                }
-                            }
+                            var moved = await DownloadBytesOrNullAsync(ren.Meta.RemoteId, ct);
+                            if (moved != null)
+                                await MappedFolderIoGate.WriteAllBytesAsync(toFull, moved, ct);
                         }
                         _store.Delete(mapping.Id, ren.Meta.RelativePath);
                         _store.Upsert(new SyncItemMeta
@@ -631,15 +598,9 @@ public sealed class SyncEngine
                         var toFull = ToFull(mapping.LocalRootPath, ren.NewRelativePath);
                         Directory.CreateDirectory(Path.GetDirectoryName(toFull)!);
                         if (ren.Meta.IsFolder && Directory.Exists(fromFull))
-                        {
-                            if (Directory.Exists(toFull)) Directory.Delete(toFull, true);
-                            Directory.Move(fromFull, toFull);
-                        }
+                            await MappedFolderIoGate.MoveDirectoryAsync(fromFull, toFull);
                         else if (!ren.Meta.IsFolder && File.Exists(fromFull))
-                        {
-                            if (File.Exists(toFull)) File.Delete(toFull);
-                            File.Move(fromFull, toFull);
-                        }
+                            await MappedFolderIoGate.MoveFileAsync(fromFull, toFull);
                         _store.Delete(mapping.Id, ren.Meta.RelativePath);
                         _store.Upsert(new SyncItemMeta
                         {
@@ -674,10 +635,8 @@ public sealed class SyncEngine
                     }
                     else
                     {
-                        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                        await using var stream = await _api.GetFileStreamOrNotFoundAsync(add.Remote.Id, ct);
-                        await using var fs = File.Create(full);
-                        if (stream != null) await stream.CopyToAsync(fs, ct);
+                        var addBytes = await DownloadBytesOrNullAsync(add.Remote.Id, ct) ?? Array.Empty<byte>();
+                        await MappedFolderIoGate.WriteAllBytesAsync(full, addBytes, ct);
                         _store.Upsert(new SyncItemMeta
                         {
                             MappingId = mapping.Id,
@@ -685,8 +644,8 @@ public sealed class SyncEngine
                             ParentRemoteId = add.Remote.ParentId,
                             RelativePath = add.RelativePath,
                             IsFolder = false,
-                            SizeBytes = new FileInfo(full).Length,
-                            ContentHash = File.Exists(full) ? ContentHashUtil.Sha256HexFile(full) : "",
+                            SizeBytes = addBytes.Length,
+                            ContentHash = addBytes.Length > 0 ? ContentHashUtil.Sha256Hex(addBytes) : "",
                             RemoteUpdateTime = add.Remote.UpdateTime
                         });
                     }
@@ -697,8 +656,8 @@ public sealed class SyncEngine
                     if (rem.Meta.MappingId != mapping.Id) break;
                     if (cross.Any(x => x.Entry.Id == rem.Meta.RemoteId)) break;
                     var full = ToFull(mapping.LocalRootPath, rem.Meta.RelativePath);
-                    if (rem.Meta.IsFolder && Directory.Exists(full)) Directory.Delete(full, true);
-                    else if (!rem.Meta.IsFolder && File.Exists(full)) File.Delete(full);
+                    if (rem.Meta.IsFolder) await MappedFolderIoGate.DeleteDirectoryAsync(full);
+                    else await MappedFolderIoGate.DeleteFileAsync(full);
                     _store.Delete(mapping.Id, rem.Meta.RelativePath);
                     break;
                 }
@@ -709,11 +668,9 @@ public sealed class SyncEngine
                     if (dirty.Contains(SyncPathUtil.Normalize(upd.Meta.RelativePath))) break;
                     var full = ToFull(mapping.LocalRootPath, upd.Meta.RelativePath);
                     if (File.Exists(full) && new FileInfo(full).Length != upd.Meta.SizeBytes) break;
-                    await using var stream = await _api.GetFileStreamOrNotFoundAsync(upd.Remote.Id, ct);
-                    if (stream == null) break;
-                    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                    await using (var fs = File.Create(full))
-                        await stream.CopyToAsync(fs, ct);
+                    var updBytes = await DownloadBytesOrNullAsync(upd.Remote.Id, ct);
+                    if (updBytes == null) break;
+                    await MappedFolderIoGate.WriteAllBytesAsync(full, updBytes, ct);
                     _store.Upsert(new SyncItemMeta
                     {
                         MappingId = mapping.Id,
@@ -721,8 +678,8 @@ public sealed class SyncEngine
                         ParentRemoteId = upd.Meta.ParentRemoteId,
                         RelativePath = upd.Meta.RelativePath,
                         IsFolder = false,
-                        SizeBytes = new FileInfo(full).Length,
-                        ContentHash = ContentHashUtil.Sha256HexFile(full),
+                        SizeBytes = updBytes.Length,
+                        ContentHash = ContentHashUtil.Sha256Hex(updBytes),
                         RemoteUpdateTime = upd.Remote.UpdateTime ?? DateTime.UtcNow
                     });
                     break;
@@ -860,13 +817,13 @@ public sealed class SyncEngine
             if (existing != null)
             {
                 remoteId = existing.RemoteId;
-                await using var content = File.OpenRead(full);
+                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
                 await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
             }
             else
             {
                 remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
-                await using var content = File.OpenRead(full);
+                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
                 await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
             }
 
@@ -915,17 +872,13 @@ public sealed class SyncEngine
                 continue;
             }
 
-            await using var stream = await _api.GetFileStreamOrNotFoundAsync(loc.Entry.Id, ct);
-            if (stream == null)
+            var bytes = await DownloadBytesOrNullAsync(loc.Entry.Id, ct);
+            if (bytes == null)
                 throw new SyncException("Force download failed: remote file missing.", relativePath: path);
-
-            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            await using (var fs = File.Create(full))
-                await stream.CopyToAsync(fs, ct);
-            if (new FileInfo(full).Length == 0)
+            if (bytes.Length == 0)
                 throw new SyncException("Force download returned empty file.", relativePath: path);
 
-            var hash = ContentHashUtil.Sha256HexFile(full);
+            await MappedFolderIoGate.WriteAllBytesAsync(full, bytes, ct);
             _store.Upsert(new SyncItemMeta
             {
                 MappingId = mapping.Id,
@@ -933,8 +886,8 @@ public sealed class SyncEngine
                 ParentRemoteId = loc.Entry.ParentId,
                 RelativePath = path,
                 IsFolder = false,
-                SizeBytes = new FileInfo(full).Length,
-                ContentHash = hash,
+                SizeBytes = bytes.Length,
+                ContentHash = ContentHashUtil.Sha256Hex(bytes),
                 RemoteUpdateTime = loc.Entry.UpdateTime ?? DateTime.UtcNow
             });
         }

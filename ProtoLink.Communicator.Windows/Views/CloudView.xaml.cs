@@ -6,6 +6,8 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.ViewModels;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
 
 namespace ProtoLink.Communicator.Windows.Views;
 

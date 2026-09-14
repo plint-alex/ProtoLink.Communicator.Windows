@@ -24,6 +24,7 @@ public sealed class CloudMappedSyncCoordinator
     private readonly Action? _onSyncCompleted;
     private readonly Dispatcher _dispatcher;
     private CancellationTokenSource? _intervalCts;
+    private readonly SemaphoreSlim _syncMutex = new(1, 1);
     private int _syncActive;
     private int _deferredFullSync;
     private static readonly TimeSpan AutoSyncInterval = TimeSpan.FromSeconds(15);
@@ -185,8 +186,9 @@ public sealed class CloudMappedSyncCoordinator
 
     private async Task RunExclusiveAsync(Func<Task> work)
     {
-        // Same mutex as NotesFileService saves — sync and note write never overlap on disk.
-        await MappedFolderIoGate.Mutex.WaitAsync().ConfigureAwait(false);
+        // Only one sync at a time. Disk access is serialized per file by MappedFolderIoGate inside
+        // SyncEngine — holding that gate here blocked note loads for the whole sync (network included).
+        await _syncMutex.WaitAsync().ConfigureAwait(false);
         Interlocked.Exchange(ref _syncActive, 1);
         try
         {
@@ -197,7 +199,7 @@ public sealed class CloudMappedSyncCoordinator
         finally
         {
             Interlocked.Exchange(ref _syncActive, 0);
-            MappedFolderIoGate.Mutex.Release();
+            _syncMutex.Release();
         }
     }
 

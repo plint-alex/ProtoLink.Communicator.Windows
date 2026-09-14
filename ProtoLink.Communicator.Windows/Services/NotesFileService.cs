@@ -13,10 +13,13 @@ public class NotesFileService
         TimeSpan.FromMilliseconds(400)
     };
 
+    /// <summary>
+    /// Reads with shared access and without the write gate: opening a note must never queue
+    /// behind a running cloud sync, which left the editor blank until the sync finished.
+    /// </summary>
     public async Task<string> OpenFileAsync(string filePath)
     {
-        return await MappedFolderIoGate.RunAsync(async () =>
-            await ReadAllTextWithRetryAsync(filePath).ConfigureAwait(false)).ConfigureAwait(false);
+        return await ReadAllTextWithRetryAsync(filePath).ConfigureAwait(false);
     }
 
     public async Task SaveFileAsync(string filePath, string content)
@@ -32,7 +35,9 @@ public class NotesFileService
         {
             try
             {
-                return await File.ReadAllTextAsync(filePath, Encoding.UTF8).ConfigureAwait(false);
+                await using var stream = MappedFolderIoGate.OpenSharedRead(filePath);
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                return await reader.ReadToEndAsync().ConfigureAwait(false);
             }
             catch (IOException) when (attempt < IoRetryDelays.Length)
             {

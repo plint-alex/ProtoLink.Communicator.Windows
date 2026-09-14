@@ -73,6 +73,13 @@ Local-only push does **not** download or Conflict-check remote; it uploads when 
 **Windows:** Cloud tab → Synced folders (expanded) → Upload all / Download all.  
 **Android:** Settings → Mapped folders → Upload all / Download all (confirm dialog + status line).
 
+## Disk access while syncing
+
+`MappedFolderIoGate` serializes **writes** to files under mapped folders (note save vs sync write). It is taken per
+disk operation only — never across network calls — so opening a note never queues behind a running sync. Reads
+(note load, hashing) use shared access and no gate; a sync run is serialized against other syncs by the
+coordinator's own mutex, not by the disk gate.
+
 ## How an edit propagates
 
 1. User edits a note → Notes writes `index.html` to disk → local-only Cloud push (or within ~15s interval).

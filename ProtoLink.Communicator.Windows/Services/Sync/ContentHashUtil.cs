@@ -13,7 +13,8 @@ public static class ContentHashUtil
 
     public static string Sha256HexFile(string fullPath)
     {
-        using var stream = File.OpenRead(fullPath);
+        // Shared read: hashing runs outside the write gate and must not collide with a note save.
+        using var stream = MappedFolderIoGate.OpenSharedRead(fullPath);
         var hash = SHA256.HashData(stream);
         return Convert.ToHexString(hash).ToLowerInvariant();
     }

@@ -98,6 +98,30 @@ if(htmlClip)e.clipboardData.setData('text/html',htmlClip);
 e.preventDefault();
 }catch(err){}
 });
+// Tab walks table cells; Tab in the last cell appends a row, since contenteditable has no way to add one.
+editor.addEventListener('keydown',function(e){
+if(e.key!=='Tab')return;
+var sel=window.getSelection();
+if(!sel||!sel.rangeCount)return;
+var node=sel.getRangeAt(0).startContainer;
+if(node.nodeType!==Node.ELEMENT_NODE)node=node.parentNode;
+var cell=node&&node.closest?node.closest('td,th'):null;
+if(!cell||!editor.contains(cell))return;
+e.preventDefault();
+var cells=Array.prototype.slice.call(cell.closest('table').querySelectorAll('td,th'));
+var next=cells[cells.indexOf(cell)+(e.shiftKey?-1:1)];
+if(!next&&!e.shiftKey){
+var row=cell.closest('tr');
+var fresh=document.createElement('tr');
+for(var i=0;i<row.cells.length;i++){var c=document.createElement('td');c.innerHTML='<br>';fresh.appendChild(c);}
+row.parentNode.insertBefore(fresh,row.nextSibling);
+next=fresh.cells[0];
+editor.dispatchEvent(new Event('input',{bubbles:true}));
+}
+if(!next)return;
+var r=document.createRange();r.selectNodeContents(next);r.collapse(true);
+sel.removeAllRanges();sel.addRange(r);
+});
 window.getHtml=function(){return editor.innerHTML||'';};
 </script>
 </body>
