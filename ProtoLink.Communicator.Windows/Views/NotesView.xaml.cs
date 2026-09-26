@@ -396,6 +396,16 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         var core = NotesWebView.CoreWebView2;
         if (core == null) return;
+        // Force white canvas: WebView2 follows Windows dark mode when unset.
+        NotesWebView.DefaultBackgroundColor = System.Drawing.Color.White;
+        try
+        {
+            core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Light;
+        }
+        catch
+        {
+            // Older WebView2 runtimes may lack PreferredColorScheme.
+        }
         core.WebMessageReceived -= OnWebMessageReceived;
         core.NavigationStarting -= OnWebViewNavigationStarting;
         core.WebMessageReceived += OnWebMessageReceived;

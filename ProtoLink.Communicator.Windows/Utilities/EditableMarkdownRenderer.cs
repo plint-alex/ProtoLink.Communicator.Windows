@@ -27,9 +27,10 @@ td,th{border:1px solid #dfe1e6;padding:6px;}
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-html,body{height:100%;margin:0;}
+html{color-scheme:light;background:#ffffff;}
+html,body{height:100%;margin:0;background:#ffffff;color:#111111;}
 body{font-family:'Segoe UI',sans-serif;line-height:1.6;padding:20px;min-height:100%;box-sizing:border-box;}
-#editor{outline:none;min-height:100%;font-size:14px;padding:20px;box-sizing:border-box;}
+#editor{outline:none;min-height:100%;font-size:14px;padding:20px;box-sizing:border-box;background:#ffffff;color:#111111;}
 #editor:focus{outline:2px solid #0066cc;}
 h1,h2,h3{margin-top:1em;margin-bottom:0.5em;}
 p{margin:0.5em 0;}
