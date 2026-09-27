@@ -167,34 +167,68 @@
                          ItemContainerStyle="{StaticResource ChatListBoxItemStyle}">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Grid Margin="4,2" MaxWidth="520">
-                                <Grid.Style>
-                                    <Style TargetType="Grid">
-                                        <Setter Property="HorizontalAlignment" Value="Left"/>
-                                        <Setter Property="Margin" Value="4,2,56,2"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsFromMe}" Value="True">
-                                                <Setter Property="HorizontalAlignment" Value="Right"/>
-                                                <Setter Property="Margin" Value="56,2,4,2"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Border CornerRadius="12" Padding="10,8">
+                            <Grid>
+                                <!-- Date chip (Today / Yesterday / d MMMM yyyy), Android parity -->
+                                <Border HorizontalAlignment="Center"
+                                        Margin="0,8,0,4"
+                                        Padding="12,4"
+                                        CornerRadius="12"
+                                        Background="{DynamicResource ChatDateChipBackgroundBrush}">
                                     <Border.Style>
                                         <Style TargetType="Border">
-                                            <Setter Property="Background" Value="{DynamicResource ChatBubbleIncomingBrush}"/>
+                                            <Setter Property="Visibility" Value="Collapsed"/>
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsFromMe}" Value="True">
-                                                    <Setter Property="Background" Value="{DynamicResource ChatBubbleOutgoingBrush}"/>
+                                                <DataTrigger Binding="{Binding IsDateSeparator}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock Text="{Binding Text}"
-                                               TextWrapping="Wrap"
-                                               Foreground="{DynamicResource ChatBubbleTextBrush}"/>
+                                    <TextBlock Text="{Binding DayLabel}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ChatDateChipForegroundBrush}"/>
                                 </Border>
+
+                                <!-- Message bubble -->
+                                <Grid Margin="4,2" MaxWidth="520">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="HorizontalAlignment" Value="Left"/>
+                                            <Setter Property="Margin" Value="4,2,56,2"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsDateSeparator}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsFromMe}" Value="True">
+                                                    <Setter Property="HorizontalAlignment" Value="Right"/>
+                                                    <Setter Property="Margin" Value="56,2,4,2"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Border CornerRadius="12" Padding="10,8">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="{DynamicResource ChatBubbleIncomingBrush}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFromMe}" Value="True">
+                                                        <Setter Property="Background" Value="{DynamicResource ChatBubbleOutgoingBrush}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Text}"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource ChatBubbleTextBrush}"/>
+                                            <TextBlock Text="{Binding TimeLabel}"
+                                                       FontSize="11"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Foreground="{DynamicResource ChatBubbleTimeBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -228,17 +262,14 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
                              Grid.Column="0" Margin="0,0,8,0" AcceptsReturn="True" MinHeight="36"
                              VerticalContentAlignment="Center"
                              Padding="10,6"/>
                     <Button Content="Send" Command="{Binding SendCommand}" Grid.Column="1"
-                            MinWidth="64" Padding="12,6" Margin="0,0,6,0"
+                            MinWidth="64" Padding="12,6"
                             Background="#FF2AABEE" Foreground="White" BorderThickness="0"/>
-                    <Button Content="Receive" Command="{Binding ReceiveCommand}" Grid.Column="2"
-                            MinWidth="64" Padding="12,6"/>
                 </Grid>
             </Border>
         </Grid>

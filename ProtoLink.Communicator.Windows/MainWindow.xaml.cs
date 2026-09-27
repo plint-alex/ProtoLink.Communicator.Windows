@@ -259,6 +259,17 @@ public partial class MainWindow : Window
 
     private void OnRealtimeRefreshRequested(string? commandType)
     {
+        // message_sent: refresh open chat immediately and do not wait behind cloud/notes work.
+        if (IsMessageSentCommand(commandType) && _messengerViewModel != null)
+        {
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                try { await _messengerViewModel.RefreshMessagesFromRealtimeAsync(); }
+                catch (Exception ex) { _logger.LogWarning(ex, "message_sent chat refresh failed"); }
+            });
+            return;
+        }
+
         // Never drop a live update: if a refresh is already running, queue one more pass.
         if (System.Threading.Interlocked.CompareExchange(ref _realtimeRefreshBusy, 1, 0) != 0)
         {
@@ -303,6 +314,9 @@ public partial class MainWindow : Window
 
     private static bool IsCloudDataChangedCommand(string? commandType) =>
         string.Equals(commandType, "data_changed", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMessageSentCommand(string? commandType) =>
+        string.Equals(commandType, "message_sent", StringComparison.OrdinalIgnoreCase);
 
     private async Task EnsureRealtimeConnectedAsync()
     {

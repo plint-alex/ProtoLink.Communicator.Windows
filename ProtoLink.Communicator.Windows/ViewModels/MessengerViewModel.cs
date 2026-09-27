@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Windows.Input;
+using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
@@ -25,6 +27,9 @@ public class MessengerViewModel : ViewModelBase
     private readonly Dictionary<Guid, List<MessageViewModel>> _cachedMessages = new();
     private readonly HashSet<Guid> _loadedContacts = new();
     private readonly Dictionary<Guid, string> _userLoginCache = new();
+    private DispatcherTimer? _chatPollTimer;
+    private int _loadMessagesBusy;
+    private int _loadMessagesQueued;
 
     public MessengerViewModel(IAuthService authService, HttpClient httpClient)
     {
@@ -34,7 +39,6 @@ public class MessengerViewModel : ViewModelBase
         Contacts = new ObservableCollection<Contact>();
         Messages = new ObservableCollection<MessageViewModel>();
         SendCommand = new RelayCommand(async _ => await SendMessageAsync(), _ => SelectedContact != null && !string.IsNullOrWhiteSpace(MessageText));
-        ReceiveCommand = new RelayCommand(async _ => await LoadMessagesAsync(), _ => SelectedContact != null);
         RefreshContactsCommand = new RelayCommand(async _ => await LoadContactsAsync());
         BackToContactsCommand = new RelayCommand(_ => SelectedContact = null, _ => SelectedContact != null);
 
@@ -77,20 +81,22 @@ public class MessengerViewModel : ViewModelBase
             CommandManager.InvalidateRequerySuggested();
             if (value != null)
             {
-                // Only skip API load when we already completed LoadMessagesAsync for this contact.
-                // (A stale empty cache from a failed optimistic send would otherwise block loading forever.)
-                if (_loadedContacts.Contains(value.Id) && _cachedMessages.TryGetValue(value.Id, out var cached))
+                // Show cache immediately, then always refresh from API.
+                // Skipping reload left Android/other-device sends invisible until app restart.
+                if (_cachedMessages.TryGetValue(value.Id, out var cached))
                     ShowMessages(cached);
-                else
-                    _ = LoadMessagesAsync();
+                _ = LoadMessagesAsync();
+                StartChatPoll();
             }
             else
+            {
+                StopChatPoll();
                 Messages.Clear();
+            }
         }
     }
     public string MessageText { get => _messageText; set { _messageText = value; OnPropertyChanged(); } }
     public ICommand SendCommand { get; }
-    public ICommand ReceiveCommand { get; }
     public ICommand RefreshContactsCommand { get; }
     public ICommand BackToContactsCommand { get; }
 
@@ -113,20 +119,89 @@ public class MessengerViewModel : ViewModelBase
             await LoadMessagesAsync();
     }
 
+    /// <summary>Fast path for <c>message_sent</c>: reload open chat only (no contacts/cloud).</summary>
+    public Task RefreshMessagesFromRealtimeAsync() => LoadMessagesAsync();
+
+    private void StartChatPoll()
+    {
+        StopChatPoll();
+        _chatPollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _chatPollTimer.Tick += OnChatPollTick;
+        _chatPollTimer.Start();
+    }
+
+    private void StopChatPoll()
+    {
+        if (_chatPollTimer == null) return;
+        _chatPollTimer.Tick -= OnChatPollTick;
+        _chatPollTimer.Stop();
+        _chatPollTimer = null;
+    }
+
+    private async void OnChatPollTick(object? sender, EventArgs e)
+    {
+        if (SelectedContact == null) return;
+        await LoadMessagesAsync();
+    }
+
     private void ShowMessages(IReadOnlyList<MessageViewModel> messages)
     {
+        var withDates = WithDateHeaders(messages);
+        if (MessagesLookSame(Messages, withDates)) return;
         Messages.Clear();
-        foreach (var m in messages.OrderBy(x => x.Timestamp))
-        {
-            if (m.IsDateSeparator) continue;
-            m.RefreshLabels();
+        foreach (var m in withDates)
             Messages.Add(m);
+    }
+
+    private static List<MessageViewModel> WithDateHeaders(IEnumerable<MessageViewModel> messages)
+    {
+        var result = new List<MessageViewModel>();
+        string? lastDay = null;
+        foreach (var m in messages.Where(x => !x.IsDateSeparator).OrderBy(x => x.Timestamp).ThenBy(x => x.EntityId))
+        {
+            m.RefreshLabels();
+            var day = m.DayLabel;
+            if (!string.IsNullOrEmpty(day) && !string.Equals(day, lastDay, StringComparison.Ordinal))
+            {
+                result.Add(MessageViewModel.DateHeader(day));
+                lastDay = day;
+            }
+            result.Add(m);
         }
+        return result;
+    }
+
+    private static bool MessagesLookSame(IReadOnlyList<MessageViewModel> current, IReadOnlyList<MessageViewModel> next)
+    {
+        if (current.Count != next.Count) return false;
+        for (var i = 0; i < next.Count; i++)
+        {
+            var a = current[i];
+            var b = next[i];
+            if (a.IsDateSeparator != b.IsDateSeparator || a.IsFromMe != b.IsFromMe || a.Timestamp != b.Timestamp ||
+                a.EntityId != b.EntityId ||
+                !string.Equals(a.Text, b.Text, StringComparison.Ordinal) ||
+                !string.Equals(a.DayLabel, b.DayLabel, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
     }
 
     private void AppendMessageToChat(MessageViewModel message)
     {
         message.RefreshLabels();
+        var day = message.DayLabel;
+        string? lastDay = null;
+        for (var i = Messages.Count - 1; i >= 0; i--)
+        {
+            if (!string.IsNullOrEmpty(Messages[i].DayLabel))
+            {
+                lastDay = Messages[i].DayLabel;
+                break;
+            }
+        }
+        if (!string.IsNullOrEmpty(day) && !string.Equals(day, lastDay, StringComparison.Ordinal))
+            Messages.Add(MessageViewModel.DateHeader(day));
         Messages.Add(message);
     }
 
@@ -431,6 +506,32 @@ public class MessengerViewModel : ViewModelBase
 
     private async Task LoadMessagesAsync()
     {
+        // Coalesce overlapping polls/SignalR/select loads: keep at most one in-flight + one queued.
+        if (System.Threading.Interlocked.CompareExchange(ref _loadMessagesBusy, 1, 0) != 0)
+        {
+            System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 1);
+            return;
+        }
+
+        try
+        {
+            do
+            {
+                System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0);
+                await LoadMessagesCoreAsync();
+            }
+            while (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1);
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _loadMessagesBusy, 0);
+            if (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1)
+                _ = LoadMessagesAsync();
+        }
+    }
+
+    private async Task LoadMessagesCoreAsync()
+    {
         if (SelectedContact == null || _authService.CurrentToken == null) return;
         var myUserId = _authService.CurrentToken.UserId;
         var partnerUserId = SelectedContact.Id;
@@ -449,6 +550,8 @@ public class MessengerViewModel : ViewModelBase
         if (!response.IsSuccessStatusCode) return;
         var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
         if (all == null) return;
+        // Contact may have changed while the request was in flight.
+        if (SelectedContact?.Id != partnerUserId) return;
 
         var sent = new List<GetEntitiesResult>();
         var received = new List<GetEntitiesResult>();
@@ -463,13 +566,18 @@ public class MessengerViewModel : ViewModelBase
                     var s = ev.Value?.ToString();
                     if (s != null)
                     {
-                        if (s.StartsWith("sender:")) sender = s.Substring(7);
-                        else if (s.StartsWith("receiver:")) receiver = s.Substring(9);
+                        if (s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase)) sender = s.Substring(7);
+                        else if (s.StartsWith("receiver:", StringComparison.OrdinalIgnoreCase)) receiver = s.Substring(9);
                     }
                 }
             }
-            if (sender == myStr && receiver == partnerStr) sent.Add(msg);
-            else if (sender == partnerStr && receiver == myStr) received.Add(msg);
+            // Android may store GUIDs with different casing than Guid.ToString().
+            if (string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(receiver, partnerStr, StringComparison.OrdinalIgnoreCase))
+                sent.Add(msg);
+            else if (string.Equals(sender, partnerStr, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(receiver, myStr, StringComparison.OrdinalIgnoreCase))
+                received.Add(msg);
         }
 
         var list = new List<MessageViewModel>();
@@ -481,7 +589,11 @@ public class MessengerViewModel : ViewModelBase
         foreach (var msg in sent) { var vm = ParseMessage(msg, true, myLogin); if (vm != null) list.Add(vm); }
         foreach (var msg in received) { var vm = ParseMessage(msg, false, partnerLogin); if (vm != null) list.Add(vm); }
 
-        _cachedMessages[partnerUserId] = list.OrderBy(x => x.Timestamp).ToList();
+        if (SelectedContact?.Id != partnerUserId) return;
+        _cachedMessages[partnerUserId] = list
+            .OrderBy(x => x.Timestamp)
+            .ThenBy(x => x.EntityId)
+            .ToList();
         _loadedContacts.Add(partnerUserId);
         ShowMessages(_cachedMessages[partnerUserId]);
     }
@@ -490,7 +602,7 @@ public class MessengerViewModel : ViewModelBase
     {
         if (message.Values == null) return null;
         var text = "";
-        var date = DateTime.MinValue;
+        var dateFromValue = DateTime.MinValue;
         foreach (var val in message.Values)
         {
             if (val is EntityValue ev)
@@ -498,16 +610,94 @@ public class MessengerViewModel : ViewModelBase
                 if (ev.Type == "StringValue")
                 {
                     var s = ev.Value?.ToString() ?? "";
-                    if (!s.StartsWith("sender:") && !s.StartsWith("receiver:")) text = s;
+                    if (s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase) ||
+                        s.StartsWith("receiver:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    text = s;
                 }
                 else if (ev.Type == "DateTimeValue" && ev.Value != null)
                 {
-                    var ds = ev.Value.ToString();
-                    if (ds != null) DateTime.TryParse(ds, out date);
+                    dateFromValue = ParseMessageTimestamp(ev.Value);
                 }
             }
         }
-        return new MessageViewModel { Text = text, Timestamp = date, IsFromMe = isFromMe, SenderName = senderName };
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // Prefer entity CreationTime: server stores full precision (seconds + milliseconds).
+        // DateTime string values are often culture-formatted without fractional seconds.
+        var stamp = NormalizeUtc(message.CreationTime);
+        if (stamp == default)
+            stamp = dateFromValue;
+        else if (dateFromValue != default)
+        {
+            // Keep the more precise instant when both exist (CreationTime usually wins on ticks).
+            var createdTicks = stamp.Ticks;
+            var valueTicks = NormalizeUtc(dateFromValue).Ticks;
+            stamp = createdTicks >= valueTicks ? stamp : NormalizeUtc(dateFromValue);
+            // If they match to the second but CreationTime has ms, always keep CreationTime.
+            if (Math.Abs(createdTicks - valueTicks) < TimeSpan.TicksPerSecond)
+                stamp = NormalizeUtc(message.CreationTime);
+        }
+
+        return new MessageViewModel
+        {
+            EntityId = message.Id,
+            Text = text,
+            Timestamp = stamp,
+            IsFromMe = isFromMe,
+            SenderName = senderName
+        };
+    }
+
+    private static DateTime ParseMessageTimestamp(object raw)
+    {
+        switch (raw)
+        {
+            case DateTime dt:
+                return NormalizeUtc(dt);
+            case DateTimeOffset dto:
+                return dto.UtcDateTime;
+            case JsonElement je when je.ValueKind == JsonValueKind.String:
+            {
+                var s = je.GetString();
+                if (string.IsNullOrWhiteSpace(s)) return default;
+                if (DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out var dto2))
+                    return dto2.UtcDateTime;
+                if (DateTime.TryParse(s, CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out var dt2))
+                    return NormalizeUtc(dt2);
+                if (DateTime.TryParse(s, CultureInfo.CurrentCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt3))
+                    return NormalizeUtc(dt3);
+                return default;
+            }
+            case JsonElement je when je.ValueKind == JsonValueKind.Number:
+                // Unix ms if large enough, otherwise ignore.
+                if (je.TryGetInt64(out var n) && n > 1_000_000_000_000L)
+                    return DateTimeOffset.FromUnixTimeMilliseconds(n).UtcDateTime;
+                return default;
+            default:
+            {
+                var s = raw.ToString();
+                if (string.IsNullOrWhiteSpace(s)) return default;
+                if (DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out var dto))
+                    return dto.UtcDateTime;
+                return default;
+            }
+        }
+    }
+
+    private static DateTime NormalizeUtc(DateTime dt)
+    {
+        if (dt == default) return default;
+        return dt.Kind switch
+        {
+            DateTimeKind.Utc => dt,
+            DateTimeKind.Local => dt.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+        };
     }
 }
 
@@ -529,6 +719,7 @@ public class Contact
 
 public class MessageViewModel
 {
+    public Guid EntityId { get; set; }
     public string Text { get; set; } = string.Empty;
     public string SenderName { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
