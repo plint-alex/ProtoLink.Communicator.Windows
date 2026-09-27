@@ -42,6 +42,7 @@ public partial class MainWindow : Window
         _authService = new AuthService(_httpClient, _tokenService, App.LoggerFactory.CreateLogger<AuthService>());
         _realtime.RefreshRequested += OnRealtimeRefreshRequested;
         ShowMessengerContent();
+        UpdateAuthGate();
         _syncStore = new SyncMappingStore(App.LoggerFactory.CreateLogger<SyncMappingStore>());
         var cloudHandler = CreateAuthHandler();
         cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
@@ -74,7 +75,14 @@ public partial class MainWindow : Window
 
     private void Window_Activated(object sender, EventArgs e)
     {
-        // Cloud sync is interval-only; do not sync on focus.
+        if (_messengerViewModel != null)
+            _messengerViewModel.IsAppForeground = true;
+    }
+
+    private void Window_Deactivated(object sender, EventArgs e)
+    {
+        if (_messengerViewModel != null)
+            _messengerViewModel.IsAppForeground = false;
     }
 
     private void SetDeveloperToolsVisible(bool visible)
@@ -115,6 +123,7 @@ public partial class MainWindow : Window
             {
                 CloseSettingsPanel();
                 RebuildCloudTab();
+                UpdateAuthGate();
                 if (_tabToolbarPanel != null)
                     UpdateTabToolbar(_tabToolbarPanel);
             }
@@ -214,6 +223,41 @@ public partial class MainWindow : Window
         SettingsPanel.Visibility = Visibility.Collapsed;
         MainTabControl.Visibility = Visibility.Visible;
         ShowMessengerContent();
+        UpdateAuthGate();
+    }
+
+    private void UpdateAuthGate()
+    {
+        if (_authService.IsAuthenticated)
+        {
+            AuthFlowPanel.Children.Clear();
+            AuthFlowPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MainTabControl.Visibility = Visibility.Collapsed;
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        AuthFlowPanel.Visibility = Visibility.Visible;
+        if (AuthFlowPanel.Children.Count == 0)
+        {
+            var vm = new AuthFlowViewModel(_authService);
+            vm.OnLoginSuccess += () =>
+            {
+                AuthFlowPanel.Children.Clear();
+                AuthFlowPanel.Visibility = Visibility.Collapsed;
+                MainTabControl.Visibility = Visibility.Visible;
+                RebuildCloudTab();
+                ShowMessengerContent();
+                _ = EnsureRealtimeConnectedAsync();
+            };
+            vm.OnOpenSettings += () => Settings_Click(this, new RoutedEventArgs());
+            AuthFlowPanel.Children.Add(new AuthFlowView
+            {
+                DataContext = vm,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+                VerticalAlignment = System.Windows.VerticalAlignment.Stretch
+            });
+        }
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -224,6 +268,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        // While logged out, settings gear opens API/theme settings; keep auth gate underneath after close.
         if (SettingsPanel.Children.Count == 0)
         {
             var settings = _settingsService.LoadSettings();
@@ -244,6 +289,7 @@ public partial class MainWindow : Window
                 _httpClient = new HttpClient(new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) }) { BaseAddress = new Uri(updated.ApiBaseAddress) };
                 _notesViewModel.ReloadFromSettings();
                 ShowMessengerContent();
+                UpdateAuthGate();
             };
             SettingsPanel.Children.Add(new SettingsView
             {
@@ -254,18 +300,19 @@ public partial class MainWindow : Window
         }
         // Instagram-style: Settings replaces the main tabs (full width).
         MainTabControl.Visibility = Visibility.Collapsed;
+        AuthFlowPanel.Visibility = Visibility.Collapsed;
         SettingsPanel.Visibility = Visibility.Visible;
     }
 
-    private void OnRealtimeRefreshRequested(string? commandType)
+    private void OnRealtimeRefreshRequested(string? commandType, System.Text.Json.JsonElement? parameters)
     {
-        // message_sent: refresh open chat immediately and do not wait behind cloud/notes work.
-        if (IsMessageSentCommand(commandType) && _messengerViewModel != null)
+        // Messenger realtime: message_sent / message_read — fast path, include sound/unread/ticks.
+        if ((IsMessageSentCommand(commandType) || IsMessageReadCommand(commandType)) && _messengerViewModel != null)
         {
             _ = Dispatcher.InvokeAsync(async () =>
             {
-                try { await _messengerViewModel.RefreshMessagesFromRealtimeAsync(); }
-                catch (Exception ex) { _logger.LogWarning(ex, "message_sent chat refresh failed"); }
+                try { await _messengerViewModel.HandleRealtimeCommandAsync(commandType, parameters); }
+                catch (Exception ex) { _logger.LogWarning(ex, "messenger realtime failed ({CommandType})", commandType); }
             });
             return;
         }
@@ -307,7 +354,7 @@ public partial class MainWindow : Window
             {
                 System.Threading.Interlocked.Exchange(ref _realtimeRefreshBusy, 0);
                 if (System.Threading.Interlocked.Exchange(ref _realtimeRefreshPending, 0) == 1)
-                    OnRealtimeRefreshRequested("queued");
+                    OnRealtimeRefreshRequested("queued", null);
             }
         });
     }
@@ -317,6 +364,9 @@ public partial class MainWindow : Window
 
     private static bool IsMessageSentCommand(string? commandType) =>
         string.Equals(commandType, "message_sent", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMessageReadCommand(string? commandType) =>
+        string.Equals(commandType, "message_read", StringComparison.OrdinalIgnoreCase);
 
     private async Task EnsureRealtimeConnectedAsync()
     {
@@ -354,6 +404,7 @@ public partial class MainWindow : Window
         handler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
         var client = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         var vm = new MessengerViewModel(_authService, client);
+        vm.UnreadChanged += count => TaskbarUnreadBadge.Apply(this, count);
         _messengerViewModel = vm;
         MessengerTabContent.Children.Add(new MessengerView { DataContext = vm });
         _ = EnsureRealtimeConnectedAsync();

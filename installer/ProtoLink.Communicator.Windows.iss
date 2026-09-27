@@ -9,7 +9,7 @@
 ;   uninstall.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 
 #define MyAppName "ProtoLink Communicator"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "ProtoLink"
 #define MyAppExeName "ProtoLink.Communicator.Windows.exe"
 #define MyAppId "{{B8D4F0A2-5C3E-4F9B-8D2A-7E6F9B3C4D5E}"

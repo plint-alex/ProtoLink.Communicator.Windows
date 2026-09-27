@@ -60,6 +60,34 @@ public class AuthService : IAuthService
         }
     }
 
+    public async Task<RegisterResult> RegisterAsync(string email, string password, string lang)
+    {
+        try
+        {
+            var langQuery = string.IsNullOrWhiteSpace(lang) ? "en-US" : lang.Trim();
+            var contract = new RegisterContract { Email = email.Trim(), Password = password };
+            var response = await _httpClient.PostAsJsonAsync(
+                $"api/Authentication/register?lang={Uri.EscapeDataString(langQuery)}",
+                contract);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<RegisterResult>(responseContent)
+                         ?? new RegisterResult { Success = false, Error = "Unknown error" };
+
+            if (!response.IsSuccessStatusCode && result.Success)
+            {
+                result.Success = false;
+                result.Error ??= responseContent;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Register failed for {Email}", email);
+            return new RegisterResult { Success = false, Error = ex.Message };
+        }
+    }
+
     public async Task<bool> RefreshTokenAsync()
     {
         // Prefer in-memory token; fall back to disk (AuthHandler may call us after LoadToken).

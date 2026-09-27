@@ -12,7 +12,7 @@ using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
-public class MessengerViewModel : ViewModelBase
+public partial class MessengerViewModel : ViewModelBase
 {
     private readonly IAuthService _authService;
     private readonly HttpClient _httpClient;
@@ -82,7 +82,6 @@ public class MessengerViewModel : ViewModelBase
             if (value != null)
             {
                 // Show cache immediately, then always refresh from API.
-                // Skipping reload left Android/other-device sends invisible until app restart.
                 if (_cachedMessages.TryGetValue(value.Id, out var cached))
                     ShowMessages(cached);
                 _ = LoadMessagesAsync();
@@ -121,6 +120,9 @@ public class MessengerViewModel : ViewModelBase
 
     /// <summary>Fast path for <c>message_sent</c>: reload open chat only (no contacts/cloud).</summary>
     public Task RefreshMessagesFromRealtimeAsync() => LoadMessagesAsync();
+
+    /// <summary>Legacy entry used when parameters are unavailable.</summary>
+    public Task RefreshMessagesFromRealtimeAsync(string? _) => LoadMessagesAsync();
 
     private void StartChatPoll()
     {
@@ -179,7 +181,7 @@ public class MessengerViewModel : ViewModelBase
             var a = current[i];
             var b = next[i];
             if (a.IsDateSeparator != b.IsDateSeparator || a.IsFromMe != b.IsFromMe || a.Timestamp != b.Timestamp ||
-                a.EntityId != b.EntityId ||
+                a.EntityId != b.EntityId || a.DeliveryStatus != b.DeliveryStatus ||
                 !string.Equals(a.Text, b.Text, StringComparison.Ordinal) ||
                 !string.Equals(a.DayLabel, b.DayLabel, StringComparison.Ordinal))
                 return false;
@@ -230,6 +232,7 @@ public class MessengerViewModel : ViewModelBase
     {
         if (_authService.CurrentToken == null) return;
         await LoadContactsAsync();
+        await RefreshUnreadFromServerAsync();
     }
 
     private async Task LoadContactsAsync()
@@ -443,7 +446,14 @@ public class MessengerViewModel : ViewModelBase
         var now = DateTime.UtcNow;
         var text = MessageText;
 
-        var optimistic = new MessageViewModel { Text = text, Timestamp = now, IsFromMe = true, SenderName = await GetUserLoginAsync(myUserId) };
+        var optimistic = new MessageViewModel
+        {
+            Text = text,
+            Timestamp = now,
+            IsFromMe = true,
+            SenderName = await GetUserLoginAsync(myUserId),
+            DeliveryStatus = MessageDeliveryStatus.Sending
+        };
         if (!_cachedMessages.ContainsKey(partnerUserId)) _cachedMessages[partnerUserId] = new List<MessageViewModel>();
         _cachedMessages[partnerUserId].Add(optimistic);
         AppendMessageToChat(optimistic);
@@ -482,6 +492,15 @@ public class MessengerViewModel : ViewModelBase
             MessageText = text;
             return;
         }
+
+        try
+        {
+            var created = await addMsg.Content.ReadFromJsonAsync<JsonElement>();
+            if (created.TryGetProperty("id", out var idEl) && idEl.TryGetGuid(out var newId))
+                optimistic.EntityId = newId;
+        }
+        catch { /* keep local id empty */ }
+        optimistic.DeliveryStatus = MessageDeliveryStatus.Sent;
 
         // Real-time: notify peer and other devices of the same user.
         var payload = new { senderId = myUserId.ToString(), messageText = text, timestamp = now };
@@ -596,6 +615,7 @@ public class MessengerViewModel : ViewModelBase
             .ToList();
         _loadedContacts.Add(partnerUserId);
         ShowMessages(_cachedMessages[partnerUserId]);
+        await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
     }
 
     private static MessageViewModel? ParseMessage(GetEntitiesResult message, bool isFromMe, string senderName)
@@ -603,6 +623,7 @@ public class MessengerViewModel : ViewModelBase
         if (message.Values == null) return null;
         var text = "";
         var dateFromValue = DateTime.MinValue;
+        var isRead = false;
         foreach (var val in message.Values)
         {
             if (val is EntityValue ev)
@@ -612,6 +633,13 @@ public class MessengerViewModel : ViewModelBase
                     var s = ev.Value?.ToString() ?? "";
                     if (s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase) ||
                         s.StartsWith("receiver:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (s.Equals("status:read", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isRead = true;
+                        continue;
+                    }
+                    if (s.StartsWith("status:", StringComparison.OrdinalIgnoreCase))
                         continue;
                     text = s;
                 }
@@ -645,7 +673,10 @@ public class MessengerViewModel : ViewModelBase
             Text = text,
             Timestamp = stamp,
             IsFromMe = isFromMe,
-            SenderName = senderName
+            SenderName = senderName,
+            DeliveryStatus = isFromMe
+                ? (isRead ? MessageDeliveryStatus.Read : MessageDeliveryStatus.Sent)
+                : MessageDeliveryStatus.Sent
         };
     }
 
@@ -701,10 +732,27 @@ public class MessengerViewModel : ViewModelBase
     }
 }
 
-public class Contact
+public class Contact : ViewModelBase
 {
+    private int _unreadCount;
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
+
+    public int UnreadCount
+    {
+        get => _unreadCount;
+        set
+        {
+            if (_unreadCount == value) return;
+            _unreadCount = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasUnread));
+            OnPropertyChanged(nameof(UnreadLabel));
+        }
+    }
+
+    public bool HasUnread => UnreadCount > 0;
+    public string UnreadLabel => UnreadCount > 99 ? "99+" : UnreadCount.ToString();
 
     public string Initial
     {
@@ -717,8 +765,16 @@ public class Contact
     }
 }
 
-public class MessageViewModel
+public enum MessageDeliveryStatus
 {
+    Sending,
+    Sent,
+    Read
+}
+
+public class MessageViewModel : ViewModelBase
+{
+    private MessageDeliveryStatus _deliveryStatus = MessageDeliveryStatus.Sent;
     public Guid EntityId { get; set; }
     public string Text { get; set; } = string.Empty;
     public string SenderName { get; set; } = string.Empty;
@@ -727,6 +783,27 @@ public class MessageViewModel
     public bool IsDateSeparator { get; set; }
     public string TimeLabel { get; set; } = string.Empty;
     public string DayLabel { get; set; } = string.Empty;
+
+    public MessageDeliveryStatus DeliveryStatus
+    {
+        get => _deliveryStatus;
+        set
+        {
+            if (_deliveryStatus == value) return;
+            _deliveryStatus = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TicksText));
+            OnPropertyChanged(nameof(ShowTicks));
+        }
+    }
+
+    public bool ShowTicks => IsFromMe && !IsDateSeparator;
+    public string TicksText => DeliveryStatus switch
+    {
+        MessageDeliveryStatus.Sending => "◌",
+        MessageDeliveryStatus.Read => "✓✓",
+        _ => "✓"
+    };
 
     public static MessageViewModel DateHeader(string label) => new()
     {

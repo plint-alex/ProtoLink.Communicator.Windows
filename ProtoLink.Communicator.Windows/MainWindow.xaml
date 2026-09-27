@@ -6,11 +6,15 @@
         xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
         PreviewKeyDown="Window_PreviewKeyDown"
         Activated="Window_Activated"
+        Deactivated="Window_Deactivated"
         mc:Ignorable="d"
         Title="ProtoLink Communicator" Height="640" Width="900"
         Background="{DynamicResource WindowBackground}"
         Foreground="{DynamicResource ForegroundBrush}"
         Icon="pack://application:,,,/ProtoLink.Communicator.Windows;component/Assets/icon.png">
+    <Window.TaskbarItemInfo>
+        <TaskbarItemInfo/>
+    </Window.TaskbarItemInfo>
     <Window.Resources>
         <!-- Instagram-style top chrome: tabs + actions; Settings opens as full-width page instead of overlay -->
         <Style TargetType="TabControl" x:Key="TabControlWithSettingsButton">
@@ -70,6 +74,9 @@
             </TabControl>
             <!-- Settings: full-width page instead of the tab strip -->
             <Grid x:Name="SettingsPanel" Visibility="Collapsed" Background="{DynamicResource SettingsOverlayBackground}"
+                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+            <!-- Auth gate when logged out -->
+            <Grid x:Name="AuthFlowPanel" Visibility="Collapsed" Background="{DynamicResource WindowBackground}"
                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
         </Grid>
         <GridSplitter x:Name="DevToolsSplitter"

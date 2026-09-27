@@ -13,7 +13,8 @@ public sealed class SignalRService : IAsyncDisposable
     private string _hubUrl = "";
     private Func<Task<string?>>? _accessTokenProvider;
 
-    public event Action<string?>? RefreshRequested;
+    /// <summary>commandType, optional parameters object from CommandMessage.</summary>
+    public event Action<string?, JsonElement?>? RefreshRequested;
 
     public bool IsConnected =>
         _connection?.State == HubConnectionState.Connected;
@@ -38,7 +39,7 @@ public sealed class SignalRService : IAsyncDisposable
         {
             try { await _connection.InvokeAsync("SubscribeToCommands"); }
             catch { /* ignore */ }
-            RefreshRequested?.Invoke("reconnected");
+            RefreshRequested?.Invoke("reconnected", null);
         };
 
         try
@@ -56,6 +57,7 @@ public sealed class SignalRService : IAsyncDisposable
     private void OnReceiveCommand(JsonElement payload)
     {
         string? commandType = null;
+        JsonElement? parameters = null;
         try
         {
             if (payload.ValueKind == JsonValueKind.String)
@@ -65,11 +67,14 @@ public sealed class SignalRService : IAsyncDisposable
                 if (payload.TryGetProperty("commandType", out var ct) ||
                     payload.TryGetProperty("CommandType", out ct))
                     commandType = ct.GetString();
+                if (payload.TryGetProperty("parameters", out var p) ||
+                    payload.TryGetProperty("Parameters", out p))
+                    parameters = p;
             }
         }
         catch { /* treat as generic refresh */ }
 
-        RefreshRequested?.Invoke(commandType);
+        RefreshRequested?.Invoke(commandType, parameters);
     }
 
     public async Task DisconnectAsync()
