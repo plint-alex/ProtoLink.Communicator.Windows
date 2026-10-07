@@ -33,6 +33,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private readonly HashSet<string> _rememberedExpandedPaths = new(StringComparer.OrdinalIgnoreCase);
     private bool _treeEventsHooked;
     private bool _suppressTreeExpandMemory;
+    private bool _suppressHeadingCombo;
 
     public NotesView()
     {
@@ -155,29 +156,95 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 _vm?.RefreshTree();
         }
         TryStartWebViewInit();
-        _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
+        QueueReloadOpenPageFromDiskIfClean();
     }
 
-    /// <summary>Refresh open note from disk when tab is shown and editor is clean.</summary>
-    private async Task ReloadOpenPageFromDiskIfCleanAsync()
+    /// <summary>After mapped cloud sync finished — refresh open note if editor is clean.</summary>
+    public void NotifyMappedSyncCompleted() => QueueReloadOpenPageFromDiskIfClean();
+
+    private void QueueReloadOpenPageFromDiskIfClean() =>
+        _ = ObserveUiTaskAsync(ReloadOpenPageFromDiskIfCleanAsync);
+
+    /// <summary>
+    /// WebView2 / WPF controls must only be touched on the dispatcher. Disk IO uses
+    /// ConfigureAwait(false), so UI work after awaits is always marshaled explicitly.
+    /// </summary>
+    private Task RunOnUiAsync(Action action)
     {
-        if (_isInternalSave || _isLoading || _vm?.CurrentPagePath == null) return;
-        if (_vm.HasUnsavedWork) return;
-        var core = NotesWebView.CoreWebView2;
-        if (core == null) return;
+        if (Dispatcher.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+        return Dispatcher.InvokeAsync(action).Task;
+    }
+
+    private async Task ObserveUiTaskAsync(Func<Task> work)
+    {
         try
         {
-            var diskInner = await _vm.ReadDiskInnerHtmlAsync(_vm.CurrentPagePath);
-            if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal))
-                return;
+            await work().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Observed so TaskScheduler.UnobservedTaskException is not raised.
+        }
+    }
 
-            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
+    /// <summary>Refresh open note from disk when tab is shown / after sync and editor is clean.</summary>
+    private async Task ReloadOpenPageFromDiskIfCleanAsync()
+    {
+        string? path = null;
+        var skip = false;
+        await RunOnUiAsync(() =>
+        {
+            if (_isInternalSave || _isLoading || _vm?.CurrentPagePath == null || _vm.HasUnsavedWork
+                || NotesWebView.CoreWebView2 == null)
+            {
+                skip = true;
+                return;
+            }
+            path = _vm.CurrentPagePath;
+        }).ConfigureAwait(false);
+        if (skip || path == null || _vm == null) return;
+
+        string diskInner;
+        try
+        {
+            diskInner = await _vm.ReadDiskInnerHtmlAsync(path).ConfigureAwait(false);
+        }
+        catch
+        {
+            return;
+        }
+
+        var keepFocus = false;
+        var shouldReload = false;
+        await RunOnUiAsync(() =>
+        {
+            if (_isInternalSave || _isLoading || _vm == null || _vm.HasUnsavedWork) return;
+            if (!string.Equals(_vm.CurrentPagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+            if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal)) return;
+            if (NotesWebView.CoreWebView2 == null) return;
+            keepFocus = NotesWebView.IsKeyboardFocusWithin;
             _isLoading = true;
-            var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-            core.NavigateToString(html);
-            _vm.StatusText = "Reloaded";
-            if (keepFocus)
-                _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+            shouldReload = true;
+        }).ConfigureAwait(false);
+        if (!shouldReload) return;
+
+        try
+        {
+            var html = await _vm.LoadPageContentAsync(path).ConfigureAwait(false);
+            await RunOnUiAsync(() =>
+            {
+                var core = NotesWebView.CoreWebView2;
+                if (core == null || _vm == null) return;
+                if (!string.Equals(_vm.CurrentPagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+                core.NavigateToString(html);
+                _vm.StatusText = "Reloaded";
+                if (keepFocus)
+                    _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+            }).ConfigureAwait(false);
         }
         catch
         {
@@ -185,7 +252,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
         finally
         {
-            _isLoading = false;
+            await RunOnUiAsync(() => _isLoading = false).ConfigureAwait(false);
         }
     }
 
@@ -313,6 +380,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private async Task InitWebViewAsync()
     {
+        // WebView2 CreateAsync/EnsureCoreWebView2Async require the WPF STA thread.
+        // Never call them after ConfigureAwait(false) — that yields RPC_E_CHANGED_MODE (0x80010106).
+        if (!Dispatcher.CheckAccess())
+        {
+            await Dispatcher.InvokeAsync(InitWebViewAsync).Task.Unwrap().ConfigureAwait(true);
+            return;
+        }
+
         try
         {
             // Let layout finish; creating the controller with a zero-size / hidden HWND
@@ -379,6 +454,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private async Task EnsureCoreWebView2WithRetryAsync(CoreWebView2Environment env)
     {
+        // Caller must already be on the UI dispatcher (STA).
         try
         {
             await NotesWebView.EnsureCoreWebView2Async(env);
@@ -435,6 +511,24 @@ public partial class NotesView : System.Windows.Controls.UserControl
             return;
         }
 
+        if (type == "selectionState")
+        {
+            var bold = root.TryGetProperty("bold", out var b) && b.GetBoolean();
+            var italic = root.TryGetProperty("italic", out var i) && i.GetBoolean();
+            var underline = root.TryGetProperty("underline", out var u) && u.GetBoolean();
+            var strike = root.TryGetProperty("strike", out var s) && s.GetBoolean();
+            var checkbox = root.TryGetProperty("checkbox", out var cb) && cb.GetBoolean();
+            var block = root.TryGetProperty("block", out var blockEl) ? blockEl.GetString() ?? "" : "";
+            Dispatcher.BeginInvoke(new Action(() => ApplySelectionState(bold, italic, underline, strike, checkbox, block)));
+            return;
+        }
+
+        if (type == "requestLink")
+        {
+            Dispatcher.BeginInvoke(new Action(() => OnFormatInsertLink(this, new RoutedEventArgs())));
+            return;
+        }
+
         if (type != "openLink" || !root.TryGetProperty("url", out var urlEl))
             return;
         var url = urlEl.GetString();
@@ -459,6 +553,46 @@ public partial class NotesView : System.Windows.Controls.UserControl
             else
                 Dispatcher.BeginInvoke(new Action(Show));
         }
+    }
+
+    private void ApplySelectionState(bool bold, bool italic, bool underline, bool strike, bool checkbox, string block)
+    {
+        SetToggleActive(FmtBoldBtn, bold);
+        SetToggleActive(FmtItalicBtn, italic);
+        SetToggleActive(FmtUnderlineBtn, underline);
+        SetToggleActive(FmtStrikeBtn, strike);
+        SetToggleActive(FmtCheckboxBtn, checkbox);
+
+        var tag = block switch
+        {
+            "h1" => "h1",
+            "h2" => "h2",
+            "h3" => "h3",
+            _ => ""
+        };
+        _suppressHeadingCombo = true;
+        try
+        {
+            foreach (ComboBoxItem item in HeadingCombo.Items)
+            {
+                if (string.Equals(item.Tag?.ToString() ?? "", tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    HeadingCombo.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _suppressHeadingCombo = false;
+        }
+    }
+
+    private void SetToggleActive(System.Windows.Controls.Button btn, bool active)
+    {
+        btn.Background = active
+            ? (System.Windows.Media.Brush)FindResource("NotesToolbarButtonActiveBrush")
+            : System.Windows.Media.Brushes.Transparent;
     }
 
     private async Task OnContentChangedFromEditorAsync()
@@ -805,38 +939,68 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _indexWatcher = null;
     }
 
-    private void OnIndexFileDeleted() => _ = Dispatcher.InvokeAsync(OnIndexFileDeletedAsync);
+    private void OnIndexFileDeleted() => _ = ObserveUiTaskAsync(OnIndexFileDeletedAsync);
 
     private async Task OnIndexFileDeletedAsync()
     {
-        if (_vm == null) return;
-        if (_isInternalSave) return;
-        var path = _vm.CurrentPagePath;
-        if (string.IsNullOrEmpty(path)) return;
-        var indexPath = _vm.GetWatchedIndexPath(path);
-        if (Directory.Exists(path) && File.Exists(indexPath))
-            return;
-
-        if (_vm.HasUnsavedWork)
+        string? path = null;
+        var hasUnsaved = false;
+        var noop = false;
+        await RunOnUiAsync(() =>
         {
-            await _vm.RestoreDeletedPageFromUnsavedAsync();
-            var core = NotesWebView.CoreWebView2;
-            if (core != null && _vm.CurrentPagePath != null)
+            if (_vm == null || _isInternalSave)
             {
-                var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-                core.NavigateToString(html);
+                noop = true;
+                return;
             }
-            StopIndexWatcher();
-            if (_vm.CurrentPagePath != null)
-                AttachIndexWatcher(_vm.CurrentPagePath);
+            path = _vm.CurrentPagePath;
+            if (string.IsNullOrEmpty(path))
+            {
+                noop = true;
+                return;
+            }
+            var indexPath = _vm.GetWatchedIndexPath(path);
+            if (Directory.Exists(path) && File.Exists(indexPath))
+            {
+                noop = true;
+                return;
+            }
+            hasUnsaved = _vm.HasUnsavedWork;
+        }).ConfigureAwait(false);
+        if (noop || path == null || _vm == null) return;
+
+        if (hasUnsaved)
+        {
+            await _vm.RestoreDeletedPageFromUnsavedAsync().ConfigureAwait(false);
+            string? html = null;
+            string? currentPath = null;
+            await RunOnUiAsync(() =>
+            {
+                currentPath = _vm.CurrentPagePath;
+            }).ConfigureAwait(false);
+            if (currentPath != null)
+                html = await _vm.LoadPageContentAsync(currentPath).ConfigureAwait(false);
+
+            await RunOnUiAsync(() =>
+            {
+                var core = NotesWebView.CoreWebView2;
+                if (core != null && html != null && _vm.CurrentPagePath != null)
+                    core.NavigateToString(html);
+                StopIndexWatcher();
+                if (_vm.CurrentPagePath != null)
+                    AttachIndexWatcher(_vm.CurrentPagePath);
+            }).ConfigureAwait(false);
         }
         else
         {
-            _vm.CancelPendingSave();
-            _vm.CurrentPagePath = null;
-            StopIndexWatcher();
-            NotesWebView.CoreWebView2?.NavigateToString("about:blank");
-            _vm.RefreshTree();
+            await RunOnUiAsync(() =>
+            {
+                _vm.CancelPendingSave();
+                _vm.CurrentPagePath = null;
+                StopIndexWatcher();
+                NotesWebView.CoreWebView2?.NavigateToString("about:blank");
+                _vm.RefreshTree();
+            }).ConfigureAwait(false);
         }
     }
 
@@ -844,79 +1008,115 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         if (_vm == null || !Directory.Exists(folderPath)) return;
 
-        var samePage = string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase);
-        if (samePage && !forceReload && NotesWebView.CoreWebView2 != null)
+        var skipLoad = false;
+        await RunOnUiAsync(() =>
         {
-            AttachIndexWatcher(folderPath);
-            return;
-        }
+            var samePage = string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase);
+            if (samePage && !forceReload && NotesWebView.CoreWebView2 != null)
+            {
+                AttachIndexWatcher(folderPath);
+                skipLoad = true;
+                return;
+            }
 
-        StopIndexWatcher();
-        _vm.CancelPendingSave();
-        _suppressExternalReloadPrompt = false;
-        _isLoading = true;
-        try
-        {
+            StopIndexWatcher();
+            _vm.CancelPendingSave();
+            _suppressExternalReloadPrompt = false;
+            _isLoading = true;
             _vm.CurrentPagePath = folderPath;
             _vm.StatusText = "Loading…";
-            var html = await _vm.LoadPageContentAsync(folderPath);
-            if (NotesWebView.CoreWebView2 != null)
-                NotesWebView.CoreWebView2.NavigateToString(html);
-            _vm.StatusText = "Ready";
+        }).ConfigureAwait(false);
+        if (skipLoad) return;
 
-            AttachIndexWatcher(folderPath);
+        try
+        {
+            var html = await _vm.LoadPageContentAsync(folderPath).ConfigureAwait(false);
+            await RunOnUiAsync(() =>
+            {
+                if (NotesWebView.CoreWebView2 != null)
+                    NotesWebView.CoreWebView2.NavigateToString(html);
+                _vm.StatusText = "Ready";
+                AttachIndexWatcher(folderPath);
+            }).ConfigureAwait(false);
         }
         finally
         {
-            _isLoading = false;
+            await RunOnUiAsync(() => _isLoading = false).ConfigureAwait(false);
         }
     }
 
-    private void OnIndexFileChanged()
-    {
-        _ = Dispatcher.InvokeAsync(OnIndexFileChangedAsync);
-    }
+    private void OnIndexFileChanged() => _ = ObserveUiTaskAsync(OnIndexFileChangedAsync);
 
     private async Task OnIndexFileChangedAsync()
     {
-        if (_isInternalSave || _isLoading || _vm?.CurrentPagePath == null)
-            return;
-        if (_suppressExternalReloadPrompt)
-            return;
-        var core = NotesWebView.CoreWebView2;
-        if (core == null) return;
+        string? path = null;
+        var skip = false;
+        var hasUnsaved = false;
+        await RunOnUiAsync(() =>
+        {
+            if (_isInternalSave || _isLoading || _vm?.CurrentPagePath == null || _suppressExternalReloadPrompt
+                || NotesWebView.CoreWebView2 == null)
+            {
+                skip = true;
+                return;
+            }
+            path = _vm.CurrentPagePath;
+            hasUnsaved = _vm.HasUnsavedWork;
+        }).ConfigureAwait(false);
+        if (skip || path == null || _vm == null) return;
 
-        if (!_vm.HasUnsavedWork)
+        if (!hasUnsaved)
         {
             try
             {
-                var diskInner = await _vm.ReadDiskInnerHtmlAsync(_vm.CurrentPagePath);
-                if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal))
-                    return;
+                var diskInner = await _vm.ReadDiskInnerHtmlAsync(path).ConfigureAwait(false);
+                var unchanged = false;
+                await RunOnUiAsync(() =>
+                {
+                    unchanged = string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal);
+                }).ConfigureAwait(false);
+                if (unchanged) return;
             }
             catch
             {
                 // Fall through to reload attempt.
             }
 
-            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
-            _isLoading = true;
+            var keepFocus = false;
+            var shouldReload = false;
+            await RunOnUiAsync(() =>
+            {
+                if (_isInternalSave || _isLoading || _vm == null || _vm.HasUnsavedWork) return;
+                if (!string.Equals(_vm.CurrentPagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+                if (NotesWebView.CoreWebView2 == null) return;
+                keepFocus = NotesWebView.IsKeyboardFocusWithin;
+                _isLoading = true;
+                shouldReload = true;
+            }).ConfigureAwait(false);
+            if (!shouldReload) return;
+
             try
             {
-                var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-                core.NavigateToString(html);
-                _vm.StatusText = "Reloaded";
-                if (keepFocus)
-                    _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+                var html = await _vm.LoadPageContentAsync(path).ConfigureAwait(false);
+                await RunOnUiAsync(() =>
+                {
+                    var core = NotesWebView.CoreWebView2;
+                    if (core == null || _vm == null) return;
+                    if (!string.Equals(_vm.CurrentPagePath, path, StringComparison.OrdinalIgnoreCase)) return;
+                    core.NavigateToString(html);
+                    _vm.StatusText = "Reloaded";
+                    if (keepFocus)
+                        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+                }).ConfigureAwait(false);
             }
             finally
             {
-                _isLoading = false;
+                await RunOnUiAsync(() => _isLoading = false).ConfigureAwait(false);
             }
             return;
         }
 
-        ShowExternalChangeConflict();
+        await RunOnUiAsync(ShowExternalChangeConflict).ConfigureAwait(false);
     }
 
     private void ShowExternalChangeConflict()
@@ -952,25 +1152,35 @@ public partial class NotesView : System.Windows.Controls.UserControl
     }
 
     private void OnExternalReloadRequested(object? sender, EventArgs e) =>
-        _ = Dispatcher.InvokeAsync(ExecuteExternalReloadAsync);
+        _ = ObserveUiTaskAsync(ExecuteExternalReloadAsync);
 
     private async Task ExecuteExternalReloadAsync()
     {
-        if (_vm?.CurrentPagePath == null) return;
-        var core = NotesWebView.CoreWebView2;
-        if (core == null) return;
-        _vm.CancelPendingSave();
-        _suppressExternalReloadPrompt = false;
-        _isLoading = true;
+        string? path = null;
+        await RunOnUiAsync(() =>
+        {
+            if (_vm?.CurrentPagePath == null || NotesWebView.CoreWebView2 == null) return;
+            path = _vm.CurrentPagePath;
+            _vm.CancelPendingSave();
+            _suppressExternalReloadPrompt = false;
+            _isLoading = true;
+        }).ConfigureAwait(false);
+        if (path == null || _vm == null) return;
+
         try
         {
-            var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-            core.NavigateToString(html);
-            _vm.StatusText = "Reloaded from disk";
+            var html = await _vm.LoadPageContentAsync(path).ConfigureAwait(false);
+            await RunOnUiAsync(() =>
+            {
+                var core = NotesWebView.CoreWebView2;
+                if (core == null) return;
+                core.NavigateToString(html);
+                _vm.StatusText = "Reloaded from disk";
+            }).ConfigureAwait(false);
         }
         finally
         {
-            _isLoading = false;
+            await RunOnUiAsync(() => _isLoading = false).ConfigureAwait(false);
         }
     }
 
@@ -1115,13 +1325,13 @@ public partial class NotesView : System.Windows.Controls.UserControl
         NotesTreeContextMenu.Tag = null;
     }
 
-    private async void OnFormatBold(object sender, RoutedEventArgs e) => await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "bold"));
+    private async void OnFormatBold(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("bold");
 
-    private async void OnFormatItalic(object sender, RoutedEventArgs e) => await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "italic"));
+    private async void OnFormatItalic(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("italic");
 
-    private async void OnFormatUnderline(object sender, RoutedEventArgs e) => await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "underline"));
+    private async void OnFormatUnderline(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("underline");
 
-    private async void OnFormatStrikethrough(object sender, RoutedEventArgs e) => await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "strikeThrough"));
+    private async void OnFormatStrikethrough(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("strikeThrough");
 
     private async void OnFormatBulletList(object sender, RoutedEventArgs e) =>
         await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "insertUnorderedList"));
@@ -1131,13 +1341,17 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private async void OnFormatCheckboxList(object sender, RoutedEventArgs e) => await RunFormatAsync(NotesWebFormatting.ApplyCheckboxListAsync);
 
+    private async void OnFormatIndent(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("indent");
+
+    private async void OnFormatOutdent(object sender, RoutedEventArgs e) => await RunEditorCommandAsync("outdent");
+
     private async void OnFormatInsertLink(object sender, RoutedEventArgs e)
     {
         if (NotesWebView.CoreWebView2 == null) return;
         if (!InputDialog.TryShow("Enter URL:", "Insert Link", "https://", out var url) || string.IsNullOrWhiteSpace(url)) return;
         try
         {
-            await NotesWebFormatting.InsertLinkAsync(NotesWebView.CoreWebView2, url.Trim());
+            await NotesWebFormatting.InsertLinkViaEditorAsync(NotesWebView.CoreWebView2, url.Trim());
         }
         catch (Exception ex)
         {
@@ -1155,11 +1369,29 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private async void OnHeadingComboSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_notesWebViewReady) return;
+        if (_suppressHeadingCombo || !_notesWebViewReady) return;
         if (HeadingCombo.SelectedItem is not ComboBoxItem item) return;
         var tag = item.Tag?.ToString() ?? "";
         var blockTag = string.IsNullOrEmpty(tag) ? "p" : tag;
-        await RunFormatAsync(c => NotesWebFormatting.ApplyFormatBlockAsync(c, blockTag));
+        await RunEditorCommandAsync(blockTag);
+    }
+
+    private async Task RunEditorCommandAsync(string command)
+    {
+        var core = NotesWebView.CoreWebView2;
+        if (core == null) return;
+        try
+        {
+            await NotesWebFormatting.ApplyEditorApiAsync(core, command);
+        }
+        catch (Exception ex)
+        {
+            ErrorDetailDialog.Show("Formatting", ex);
+        }
+        finally
+        {
+            FocusEditor();
+        }
     }
 
     private async Task RunFormatAsync(Func<CoreWebView2, Task> action)

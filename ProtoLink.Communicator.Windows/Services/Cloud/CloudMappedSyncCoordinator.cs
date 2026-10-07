@@ -122,7 +122,7 @@ public sealed class CloudMappedSyncCoordinator
             await _dispatcher.InvokeAsync(() => _reloadCurrentFolderAsync());
             if (ok)
                 await NotifyDataChangedAsync();
-            _onSyncCompleted?.Invoke();
+            NotifySyncCompleted();
         }));
     }
 
@@ -137,7 +137,7 @@ public sealed class CloudMappedSyncCoordinator
                 _syncFullErrorReporter,
                 _onAuthRequired);
             await _dispatcher.InvokeAsync(() => _reloadCurrentFolderAsync());
-            _onSyncCompleted?.Invoke();
+            NotifySyncCompleted();
         }));
     }
 
@@ -180,8 +180,7 @@ public sealed class CloudMappedSyncCoordinator
             if (notifyIfUploaded && applied > 0)
                 await NotifyDataChangedAsync();
 
-            try { _onSyncCompleted?.Invoke(); }
-            catch { /* ignore */ }
+            NotifySyncCompleted();
         });
 
     private async Task RunExclusiveAsync(Func<Task> work)
@@ -218,8 +217,7 @@ public sealed class CloudMappedSyncCoordinator
         else
             await _dispatcher.InvokeAsync(_reloadCurrentFolderAsync);
 
-        try { _onSyncCompleted?.Invoke(); }
-        catch { /* ignore notifier errors */ }
+        NotifySyncCompleted();
     }
 
     private async Task SynchronizeFolderBodyAsync(Guid folderId, string localPath)
@@ -239,8 +237,27 @@ public sealed class CloudMappedSyncCoordinator
         else
             await _dispatcher.InvokeAsync(_reloadCurrentFolderAsync);
 
-        try { _onSyncCompleted?.Invoke(); }
-        catch { /* ignore */ }
+        NotifySyncCompleted();
+    }
+
+    private void NotifySyncCompleted()
+    {
+        if (_onSyncCompleted == null) return;
+        try
+        {
+            if (_dispatcher.CheckAccess())
+                _onSyncCompleted();
+            else
+                _ = _dispatcher.InvokeAsync(() =>
+                {
+                    try { _onSyncCompleted(); }
+                    catch { /* ignore notifier errors */ }
+                });
+        }
+        catch
+        {
+            // ignore notifier errors
+        }
     }
 
     private async Task NotifyDataChangedAsync()

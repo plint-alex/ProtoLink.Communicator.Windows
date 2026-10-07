@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <Resource Include="Assets\icon.png" />
+    <EmbeddedResource Include="NotesEditor\notes-editor.js" LogicalName="ProtoLink.NotesEditor.notes-editor.js" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.3" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.3" />

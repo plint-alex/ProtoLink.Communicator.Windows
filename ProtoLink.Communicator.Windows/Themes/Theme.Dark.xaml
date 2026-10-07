@@ -32,6 +32,7 @@
     <SolidColorBrush x:Key="NotesToolbarBackground" Color="#FF121212"/>
     <SolidColorBrush x:Key="NotesToolbarSeparatorBrush" Color="#FF262626"/>
     <SolidColorBrush x:Key="NotesToolbarButtonHoverBrush" Color="#14FFFFFF"/>
+    <SolidColorBrush x:Key="NotesToolbarButtonActiveBrush" Color="#332AABEE"/>
 
     <Style TargetType="TabItem">
         <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>

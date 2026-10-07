@@ -152,6 +152,7 @@ public partial class MainWindow : Window
             () =>
             {
                 _notesViewModel?.RefreshTree();
+                _notesView.NotifyMappedSyncCompleted();
             });
         CloudTabContent.Children.Add(new CloudView { DataContext = _cloudViewModel });
     }

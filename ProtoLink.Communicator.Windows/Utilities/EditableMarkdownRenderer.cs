@@ -1,3 +1,5 @@
+using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -5,6 +7,8 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 
 public class EditableMarkdownRenderer
 {
+    private static readonly Lazy<string> EditorScript = new(LoadEditorScript);
+
     public string CreateEditableHtml(string htmlContent)
     {
         var html = htmlContent ?? string.Empty;
@@ -16,12 +20,16 @@ public class EditableMarkdownRenderer
         const string extraStyles = """
 ul.checkbox-list{list-style:none;padding-left:0;}
 ul.checkbox-list li{padding:4px 0;display:flex;align-items:flex-start;}
-ul.checkbox-list li input[type="checkbox"]{margin-right:8px;margin-top:2px;cursor:pointer;flex-shrink:0;}
+ul.checkbox-list li input[type="checkbox"]{margin-right:8px;margin-top:2px;cursor:pointer;flex-shrink:0;width:16px;height:16px;}
 ul.checkbox-list li label{cursor:text;flex:1;margin:0;}
 ul.checkbox-list li:has(input:checked){text-decoration:line-through;opacity:0.6;}
 table{border-collapse:collapse;margin:0.5em 0;}
 td,th{border:1px solid #dfe1e6;padding:6px;}
+pre,code{font-family:Consolas,'Courier New',monospace;background:#f4f5f7;border-radius:3px;}
+pre{padding:8px 12px;overflow:auto;}
+code{padding:1px 4px;}
 """;
+        var script = EditorScript.Value;
         var doc = $$"""
 <!DOCTYPE html>
 <html>
@@ -29,9 +37,9 @@ td,th{border:1px solid #dfe1e6;padding:6px;}
 <style>
 html{color-scheme:light;background:#ffffff;}
 html,body{height:100%;margin:0;background:#ffffff;color:#111111;}
-body{font-family:'Segoe UI',sans-serif;line-height:1.6;padding:20px;min-height:100%;box-sizing:border-box;}
-#editor{outline:none;min-height:100%;font-size:14px;padding:20px;box-sizing:border-box;background:#ffffff;color:#111111;}
-#editor:focus{outline:2px solid #0066cc;}
+body{font-family:'Segoe UI',sans-serif;line-height:1.6;padding:12px 16px;min-height:100%;box-sizing:border-box;}
+#editor{outline:none;min-height:100%;font-size:15px;padding:8px 4px 48px;box-sizing:border-box;background:#ffffff;color:#111111;}
+#editor:focus{outline:none;}
 h1,h2,h3{margin-top:1em;margin-bottom:0.5em;}
 p{margin:0.5em 0;}
 ul,ol{padding-left:2em;}
@@ -44,91 +52,22 @@ body[data-ctrl-key="true"] a{cursor:pointer;}
 <body>
 <div id="editor" contenteditable="true" data-content-base64="{{base64}}"></div>
 <script>
-(function(){
-var editor=document.getElementById('editor');
-var base64=editor.getAttribute('data-content-base64');
-if(base64){
-try{
-var bin=atob(base64);
-var bytes=new Uint8Array(bin.length);
-for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-var html=new TextDecoder('utf-8').decode(bytes);
-var d=document.createElement('div');d.innerHTML=html;
-while(d.firstChild)editor.appendChild(d.firstChild);
-editor.removeAttribute('data-content-base64');
-}catch(e){editor.innerHTML='<p><br></p>';editor.removeAttribute('data-content-base64');}
-}
-// Existing notes: allow editing label text without toggling via htmlFor.
-editor.querySelectorAll('ul.checkbox-list li label[for]').forEach(function(label){
-label.removeAttribute('for');
-});
-})();
-document.addEventListener('keydown',function(e){if(e.key==='Control')document.body.dataset.ctrlKey='true';});
-document.addEventListener('keyup',function(e){if(e.key==='Control')document.body.dataset.ctrlKey='false';});
-document.addEventListener('click',function(e){
-var a=e.target&&e.target.closest?e.target.closest('a'):null;
-if(e.ctrlKey&&a&&a.href&&(a.href.startsWith('http://')||a.href.startsWith('https://'))){
-e.preventDefault();e.stopPropagation();
-if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(JSON.stringify({type:'openLink',url:a.href}));
-}
-},true);
-editor.addEventListener('input',function(){clearTimeout(window._noteT);window._noteT=setTimeout(function(){
-if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(JSON.stringify({type:'contentChanged'}));
-},300);});
-editor.addEventListener('copy',function(e){
-var sel=window.getSelection();
-if(!sel||!sel.rangeCount||sel.isCollapsed)return;
-var range=sel.getRangeAt(0);
-if(!editor.contains(range.commonAncestorContainer))return;
-try{
-var htmlDiv=document.createElement('div');
-htmlDiv.appendChild(range.cloneContents());
-var htmlClip=htmlDiv.innerHTML;
-var host=document.createElement('div');
-host.setAttribute('aria-hidden','true');
-host.style.cssText='position:fixed;left:-10000px;top:0;width:10000px;min-height:1px;opacity:0;pointer-events:none;';
-host.appendChild(range.cloneContents());
-document.body.appendChild(host);
-var plain=(host.innerText||'').replace(/\r\n?/g,'\n');
-var prevPlain;
-do{prevPlain=plain;plain=plain.replace(/(\S)(?:\n\s*){2,}(\S)/g,'$1\n$2');}while(plain!==prevPlain);
-plain=plain.replace(/^\n+/,'').replace(/\n+$/,'');
-document.body.removeChild(host);
-e.clipboardData.setData('text/plain',plain);
-if(htmlClip)e.clipboardData.setData('text/html',htmlClip);
-e.preventDefault();
-}catch(err){}
-});
-// Tab walks table cells; Tab in the last cell appends a row, since contenteditable has no way to add one.
-editor.addEventListener('keydown',function(e){
-if(e.key!=='Tab')return;
-var sel=window.getSelection();
-if(!sel||!sel.rangeCount)return;
-var node=sel.getRangeAt(0).startContainer;
-if(node.nodeType!==Node.ELEMENT_NODE)node=node.parentNode;
-var cell=node&&node.closest?node.closest('td,th'):null;
-if(!cell||!editor.contains(cell))return;
-e.preventDefault();
-var cells=Array.prototype.slice.call(cell.closest('table').querySelectorAll('td,th'));
-var next=cells[cells.indexOf(cell)+(e.shiftKey?-1:1)];
-if(!next&&!e.shiftKey){
-var row=cell.closest('tr');
-var fresh=document.createElement('tr');
-for(var i=0;i<row.cells.length;i++){var c=document.createElement('td');c.innerHTML='<br>';fresh.appendChild(c);}
-row.parentNode.insertBefore(fresh,row.nextSibling);
-next=fresh.cells[0];
-editor.dispatchEvent(new Event('input',{bubbles:true}));
-}
-if(!next)return;
-var r=document.createRange();r.selectNodeContents(next);r.collapse(true);
-sel.removeAllRanges();sel.addRange(r);
-});
-window.getHtml=function(){return editor.innerHTML||'';};
+{{script}}
 </script>
 </body>
 </html>
 """;
         return doc.Replace("/*__NOTE_EXTRA_STYLES__*/", extraStyles.Trim(), StringComparison.Ordinal);
+    }
+
+    private static string LoadEditorScript()
+    {
+        var asm = Assembly.GetExecutingAssembly();
+        const string name = "ProtoLink.NotesEditor.notes-editor.js";
+        using var stream = asm.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException("Missing embedded resource: " + name);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
     }
 
     private static string CleanupEscapedContent(string content)

@@ -4,6 +4,18 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 
 public static class NotesWebFormatting
 {
+    public static Task ApplyEditorApiAsync(CoreWebView2 core, string command)
+    {
+        var c = command.Replace("\\", "\\\\").Replace("'", "\\'");
+        return core.ExecuteScriptAsync($@"(function(){{if(window.notesEditor)window.notesEditor.apply('{c}');}})();");
+    }
+
+    public static Task InsertLinkViaEditorAsync(CoreWebView2 core, string url)
+    {
+        var safe = url.Replace("\\", "\\\\").Replace("'", "\\'");
+        return core.ExecuteScriptAsync($@"(function(){{if(window.notesEditor)window.notesEditor.insertLink('{safe}');}})();");
+    }
+
     public static Task ApplyCommandAsync(CoreWebView2 core, string command)
     {
         var c = command.Replace("\\", "\\\\").Replace("'", "\\'");
@@ -27,110 +39,14 @@ selection.addRange(newRange);
 }}else{{
 document.execCommand('{c}',false,null);
 }}
+if(window.notesEditor&&window.notesEditor.getState){{ /* keep */ }}
 }})();";
         return core.ExecuteScriptAsync(script);
     }
 
-    public static Task ApplyCheckboxListAsync(CoreWebView2 core)
-    {
-        const string script = """
-(function() {
-    const editor = document.getElementById('editor');
-    if (!editor) return;
-    editor.focus();
-    const selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        let listItem = range.commonAncestorContainer;
-        while (listItem && listItem.nodeType !== Node.ELEMENT_NODE) {
-            listItem = listItem.parentNode;
-        }
-        while (listItem && listItem.tagName !== 'LI' && listItem.tagName !== 'UL' && listItem.tagName !== 'OL') {
-            listItem = listItem.parentNode;
-        }
-        if (listItem && listItem.tagName === 'LI') {
-            const ul = listItem.closest('ul, ol');
-            if (ul) {
-                ul.className = 'checkbox-list';
-                const items = ul.querySelectorAll('li');
-                items.forEach(li => {
-                    const text = li.textContent.trim();
-                    li.innerHTML = '';
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    const label = document.createElement('label');
-                    // No htmlFor — click/edit text without toggling the checkbox.
-                    label.textContent = text;
-                    li.appendChild(checkbox);
-                    li.appendChild(label);
-                });
-                return;
-            }
-        }
-        const ul = document.createElement('ul');
-        ul.className = 'checkbox-list';
-        const selectedText = selection.toString().trim();
-        const lines = selectedText ? selectedText.split(/\r?\n/) : [''];
-        lines.forEach((line, index) => {
-            if (line.trim() === '' && index === 0 && lines.length === 1) {
-                line = 'Item';
-            }
-            if (line.trim() !== '') {
-                const li = document.createElement('li');
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                const label = document.createElement('label');
-                label.textContent = line.trim();
-                li.appendChild(checkbox);
-                li.appendChild(label);
-                ul.appendChild(li);
-            }
-        });
-        if (ul.children.length === 0) {
-            const li = document.createElement('li');
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            const label = document.createElement('label');
-            label.textContent = 'Item';
-            li.appendChild(checkbox);
-            li.appendChild(label);
-            ul.appendChild(li);
-        }
-        range.deleteContents();
-        range.insertNode(ul);
-        const firstLabel = ul.querySelector('label');
-        if (firstLabel) {
-            const newRange = document.createRange();
-            newRange.selectNodeContents(firstLabel);
-            newRange.collapse(false);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-        }
-    } else {
-        const range = document.createRange();
-        range.selectNodeContents(editor);
-        range.collapse(false);
-        const ul = document.createElement('ul');
-        ul.className = 'checkbox-list';
-        const li = document.createElement('li');
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        const label = document.createElement('label');
-        label.textContent = 'Item';
-        li.appendChild(checkbox);
-        li.appendChild(label);
-        ul.appendChild(li);
-        range.insertNode(ul);
-        const newRange = document.createRange();
-        newRange.selectNodeContents(label);
-        newRange.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-    }
-})();
-""";
-        return core.ExecuteScriptAsync(script);
-    }
+    public static Task ApplyCheckboxListAsync(CoreWebView2 core) =>
+        ApplyEditorApiAsync(core, "checkboxList");
+
 
     public static Task InsertLinkAsync(CoreWebView2 core, string url)
     {
