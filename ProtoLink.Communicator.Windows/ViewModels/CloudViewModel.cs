@@ -9,6 +9,7 @@ using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Services.Sync;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -58,6 +59,8 @@ public class CloudViewModel : ViewModelBase
                     _onAuthRequired?.Invoke();
                     return;
                 }
+                if (TryHandleSyncConflict(ex))
+                    return;
                 _syncFullErrorReporter?.Invoke(ex);
             },
             System.Windows.Application.Current.Dispatcher,
@@ -204,6 +207,63 @@ public class CloudViewModel : ViewModelBase
             return Task.CompletedTask;
         _mappedSync.StartForcePull(mapping);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Sync conflict dialog: Yes = take server, No = keep local (upload), Cancel = dismiss.
+    /// </summary>
+    private bool TryHandleSyncConflict(Exception ex)
+    {
+        var conflict = FindConflict(ex);
+        if (conflict == null || string.IsNullOrWhiteSpace(conflict.RelativePath))
+            return false;
+
+        var path = conflict.RelativePath!;
+        var mapping = SyncMappings.FirstOrDefault(m =>
+                !string.IsNullOrEmpty(conflict.MappingId) &&
+                m.CloudFolderId.ToString("N").Equals(conflict.MappingId, StringComparison.OrdinalIgnoreCase))
+            ?? (SyncMappings.Count == 1 ? SyncMappings[0] : null);
+        if (mapping == null)
+            return false;
+
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null)
+            return false;
+
+        void ShowDialog()
+        {
+            var result = System.Windows.MessageBox.Show(
+                "This file differs on this PC and on the server:\n\n" +
+                path +
+                "\n\nYes — take from server (overwrite PC)\n" +
+                "No — keep local (upload PC version to server)\n" +
+                "Cancel — leave unresolved (sync stays stopped)",
+                "Sync conflict",
+                System.Windows.MessageBoxButton.YesNoCancel,
+                System.Windows.MessageBoxImage.Warning);
+            if (result == System.Windows.MessageBoxResult.Cancel)
+            {
+                StatusText = $"Sync conflict unresolved: {path}";
+                return;
+            }
+            var takeServer = result == System.Windows.MessageBoxResult.Yes;
+            StatusText = takeServer ? $"Taking server: {path}" : $"Uploading local: {path}";
+            _mappedSync.StartResolveConflict(mapping, path, takeServer);
+        }
+
+        // BeginInvoke so the sync worker can release its mutex before resolve runs.
+        dispatcher.BeginInvoke(new Action(ShowDialog));
+        return true;
+    }
+
+    private static SyncConflictException? FindConflict(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is SyncConflictException c)
+                return c;
+        }
+        return null;
     }
 
     public async Task SyncAllMappingsOnStartupAsync()

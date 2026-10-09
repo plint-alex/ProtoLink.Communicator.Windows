@@ -217,7 +217,8 @@ public sealed class SyncEngine
                         localHash,
                         remoteHash,
                         meta.ContentHash,
-                        "Local and remote both differ from sync baseline (or baseline is empty). Use Force Upload or Force Download.");
+                        "Local and remote both differ from sync baseline (or baseline is empty).",
+                        mapping.Id);
             }
         }
     }
@@ -421,7 +422,8 @@ public sealed class SyncEngine
                             localHash,
                             remoteHash,
                             null,
-                            "Local add collides with different remote content. Use Force Upload or Force Download.");
+                            "Local add collides with different remote content.",
+                            mapping.Id);
                     }
                     if (action == SyncDirectionDecide.Action.Write)
                     {
@@ -769,6 +771,82 @@ public sealed class SyncEngine
         return _store.GetAll(mapping.Id)
             .FirstOrDefault(i => SyncPathUtil.Normalize(i.RelativePath) == SyncPathUtil.Normalize(parentPath))
             ?.RemoteId;
+    }
+
+    /// <summary>Overwrite server with one local file; meta follows local.</summary>
+    public async Task ForcePushPathAsync(SyncMappingInfo mapping, string relativePath, CancellationToken ct = default)
+    {
+        var path = SyncPathUtil.Normalize(relativePath);
+        var full = ToFull(mapping.LocalRootPath, path);
+        if (!File.Exists(full))
+            throw new SyncException("Local file missing for conflict resolve.", relativePath: path);
+
+        var parentPath = SyncPathUtil.ParentOf(path);
+        var parentId = ResolveParentId(mapping, parentPath) ?? mapping.CloudFolderId;
+        var name = SyncPathUtil.NameOf(path);
+        var existing = _store.GetAll(mapping.Id)
+            .FirstOrDefault(i => SyncPathUtil.Normalize(i.RelativePath) == path && !i.IsFolder);
+        var hash = ContentHashUtil.Sha256HexFile(full);
+        var len = new FileInfo(full).Length;
+        Guid remoteId;
+        if (existing != null)
+        {
+            remoteId = existing.RemoteId;
+            await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+            await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+        }
+        else
+        {
+            remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
+            await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+            await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+        }
+
+        _store.Upsert(new SyncItemMeta
+        {
+            MappingId = mapping.Id,
+            RemoteId = remoteId,
+            ParentRemoteId = existing?.ParentRemoteId ?? parentId,
+            RelativePath = path,
+            IsFolder = false,
+            SizeBytes = len,
+            ContentHash = hash,
+            RemoteUpdateTime = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>Overwrite one local file from server; meta follows remote.</summary>
+    public async Task ForcePullPathAsync(SyncMappingInfo mapping, string relativePath, CancellationToken ct = default)
+    {
+        var path = SyncPathUtil.Normalize(relativePath);
+        var located = new List<RemoteLocated>();
+        await WalkRemoteAsync(mapping.CloudFolderId, mapping.Id, "", located, ct);
+        var loc = located.FirstOrDefault(l =>
+            SyncPathUtil.Normalize(l.RelativePath) == path && !l.Entry.IsFolder)
+            ?? throw new SyncException("Remote file missing for conflict resolve.", relativePath: path);
+
+        var bytes = await DownloadBytesOrNullAsync(loc.Entry.Id, ct);
+        if (bytes == null)
+            throw new SyncException("Force download failed: remote file missing.", relativePath: path);
+        if (bytes.Length == 0)
+            throw new SyncException("Force download returned empty file.", relativePath: path);
+
+        var full = ToFull(mapping.LocalRootPath, path);
+        var parentDir = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(parentDir))
+            Directory.CreateDirectory(parentDir);
+        await MappedFolderIoGate.WriteAllBytesAsync(full, bytes, ct);
+        _store.Upsert(new SyncItemMeta
+        {
+            MappingId = mapping.Id,
+            RemoteId = loc.Entry.Id,
+            ParentRemoteId = loc.Entry.ParentId,
+            RelativePath = path,
+            IsFolder = false,
+            SizeBytes = bytes.Length,
+            ContentHash = ContentHashUtil.Sha256Hex(bytes),
+            RemoteUpdateTime = loc.Entry.UpdateTime ?? DateTime.UtcNow
+        });
     }
 
     /// <summary>Overwrite server with all local files for a mapping; meta follows local.</summary>

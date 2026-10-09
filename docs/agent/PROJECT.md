@@ -35,6 +35,7 @@ tools\Publish.ps1
 
 - Notes ≈ offline FS; Cloud владеет reconcile FS ↔ meta ↔ server.
 - Full reconcile: start/login, map folder, SignalR `data_changed`, manual Sync.
+- Sync conflict → диалог на файл: Take from server / Keep local (upload); затем resume full sync. Bulk Upload all / Download all без изменений.
 - Local-only push: таймер 15s + save note; пустая meta → upgrade to full.
 - После успешного local push с upload — SignalR `data_changed`; full sync сам `data_changed` не шлёт.
 - Один sync за раз; busy + `data_changed` → coalesce один full после.
@@ -61,6 +62,8 @@ tools\Publish.ps1
 
 ## История (кратко)
 
+- 2026-10-09 — sync conflict UI: Take from server / Keep local per file; resume full sync (`SyncConflictException` + mappingId)
+- 2026-10-08 — messenger chat poll: catch transient HttpRequestException/IO/Socket (connection reset) in LoadMessagesAsync so poll does not show UNHANDLED UI EXCEPTION
 - 2026-10-07 — notes editor: Enter mid-item splits text into new checkbox; Ctrl+1; multi-line → checklist; contenteditable checkbox click; AutomationProperties on toolbar; vend `shared/notes-editor` + `run-tests.mjs` (15) / `wishlist-smoke.mjs`
 - 2026-10-07 — notes editor ТЗ + per-line ☐ toggle; WebView2 STA / selectionState JsonDocument fix
 - 2026-10-06 — notes editor: shared JS (paste sanitize, checklist keys, shortcuts); toolbar active state + indent

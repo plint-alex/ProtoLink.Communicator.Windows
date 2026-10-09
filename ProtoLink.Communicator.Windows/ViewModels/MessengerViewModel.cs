@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -142,8 +144,15 @@ public partial class MessengerViewModel : ViewModelBase
 
     private async void OnChatPollTick(object? sender, EventArgs e)
     {
-        if (SelectedContact == null) return;
-        await LoadMessagesAsync();
+        try
+        {
+            if (SelectedContact == null) return;
+            await LoadMessagesAsync();
+        }
+        catch (Exception)
+        {
+            // async void Tick: never let transient/network failures become UNHANDLED UI EXCEPTION
+        }
     }
 
     private void ShowMessages(IReadOnlyList<MessageViewModel> messages)
@@ -537,7 +546,14 @@ public partial class MessengerViewModel : ViewModelBase
             do
             {
                 System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0);
-                await LoadMessagesCoreAsync();
+                try
+                {
+                    await LoadMessagesCoreAsync();
+                }
+                catch (Exception ex) when (IsTransientNetworkFailure(ex))
+                {
+                    // VPN/Wi‑Fi blip, server reset, etc. Keep cached messages; next poll retries.
+                }
             }
             while (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1);
         }
@@ -547,6 +563,27 @@ public partial class MessengerViewModel : ViewModelBase
             if (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1)
                 _ = LoadMessagesAsync();
         }
+    }
+
+    /// <summary>
+    /// Connection resets / timeouts during chat poll must not surface as UNHANDLED UI EXCEPTION.
+    /// </summary>
+    private static bool IsTransientNetworkFailure(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+        {
+            switch (e)
+            {
+                case HttpRequestException:
+                case IOException:
+                case SocketException:
+                case TaskCanceledException:
+                case OperationCanceledException:
+                case TimeoutException:
+                    return true;
+            }
+        }
+        return false;
     }
 
     private async Task LoadMessagesCoreAsync()

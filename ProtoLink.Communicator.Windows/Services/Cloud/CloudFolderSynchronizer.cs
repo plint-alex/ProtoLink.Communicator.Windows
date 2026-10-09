@@ -201,6 +201,64 @@ public class CloudFolderSynchronizer
         }
     }
 
+    public async Task<bool> ForcePushPathAsync(
+        CloudSyncMapping mapping,
+        string relativePath,
+        Action<string> reportStatus,
+        Action<Exception>? reportFullError,
+        Action? onAuthRequired = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            reportStatus($"Uploading local: {relativePath}");
+            await _engine.ForcePushPathAsync(ToMappingInfo(mapping), relativePath, cancellationToken);
+            reportStatus($"Uploaded local: {relativePath}");
+            return true;
+        }
+        catch (Exception ex) when (IsAuthFailure(ex))
+        {
+            reportStatus("Please log in.");
+            onAuthRequired?.Invoke();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            reportStatus("Conflict upload error: " + ex.Message);
+            reportFullError?.Invoke(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> ForcePullPathAsync(
+        CloudSyncMapping mapping,
+        string relativePath,
+        Action<string> reportStatus,
+        Action<Exception>? reportFullError,
+        Action? onAuthRequired = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            reportStatus($"Taking server: {relativePath}");
+            await _engine.ForcePullPathAsync(ToMappingInfo(mapping), relativePath, cancellationToken);
+            reportStatus($"Took server: {relativePath}");
+            return true;
+        }
+        catch (Exception ex) when (IsAuthFailure(ex))
+        {
+            reportStatus("Please log in.");
+            onAuthRequired?.Invoke();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            reportStatus("Conflict download error: " + ex.Message);
+            reportFullError?.Invoke(ex);
+            return false;
+        }
+    }
+
     private static SyncMappingInfo ToMappingInfo(CloudSyncMapping m) => new()
     {
         Id = m.CloudFolderId.ToString("N"),

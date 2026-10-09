@@ -141,6 +141,30 @@ public sealed class CloudMappedSyncCoordinator
         }));
     }
 
+    /// <summary>Resolve one conflicted path, then resume full sync.</summary>
+    public void StartResolveConflict(CloudSyncMapping mapping, string relativePath, bool takeServer)
+    {
+        _ = Task.Run(() => RunExclusiveAsync(async () =>
+        {
+            if (!EnsureAuthenticatedForSync()) return;
+            var ok = takeServer
+                ? await _folderSynchronizer.ForcePullPathAsync(
+                    mapping, relativePath,
+                    s => _dispatcher.InvokeAsync(() => _setStatus(s)),
+                    _syncFullErrorReporter, _onAuthRequired)
+                : await _folderSynchronizer.ForcePushPathAsync(
+                    mapping, relativePath,
+                    s => _dispatcher.InvokeAsync(() => _setStatus(s)),
+                    _syncFullErrorReporter, _onAuthRequired);
+            await _dispatcher.InvokeAsync(() => _reloadCurrentFolderAsync());
+            if (ok && !takeServer)
+                await NotifyDataChangedAsync();
+            NotifySyncCompleted();
+            if (ok)
+                await RequestFullSyncAsync();
+        }));
+    }
+
     /// <summary>Full reconcile (startup / SignalR). If busy, coalesce one deferred full after current finishes.</summary>
     public Task SynchronizeAllMappedAsync() => RequestFullSyncAsync();
 

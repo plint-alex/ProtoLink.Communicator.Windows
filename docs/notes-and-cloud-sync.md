@@ -59,7 +59,8 @@ Server stores file bytes + entity `UpdateTime` — **no** mirrored content-hash 
 | empty meta and local ≠ remote | **Conflict** |
 | both ≠ meta | **Conflict** |
 
-Conflicts throw `SyncConflictException` and surface in a popup. Resolve with **Force Upload** or **Force Download**.
+Conflicts throw `SyncConflictException` and surface a **choice dialog** for that file:
+**Take from server** (overwrite local) or **Keep local** (upload to server). After resolve, full sync resumes (may hit another conflicted file). Whole-folder **Force Upload / Force Download** remains available for bulk repair.
 
 Failed remote download throws `SyncException` (no silent skip).
 

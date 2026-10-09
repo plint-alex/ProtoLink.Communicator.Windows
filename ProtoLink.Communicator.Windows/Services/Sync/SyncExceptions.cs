@@ -40,13 +40,17 @@ public class SyncException : Exception
 
 public sealed class SyncConflictException : SyncException
 {
+    public string? MappingId { get; }
+
     public SyncConflictException(
         string relativePath,
         string localHash,
         string remoteHash,
         string? metaHash,
-        string reason)
+        string reason,
+        string? mappingId = null)
         : base(reason, relativePath, localHash, remoteHash, metaHash)
     {
+        MappingId = mappingId;
     }
 }
