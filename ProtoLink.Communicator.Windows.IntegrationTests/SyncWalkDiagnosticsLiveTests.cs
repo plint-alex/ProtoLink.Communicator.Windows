@@ -11,12 +11,13 @@ using Xunit.Abstractions;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Live")]
 public class SyncWalkDiagnosticsLiveTests
 {
     private readonly ITestOutputHelper _output;
     public SyncWalkDiagnosticsLiveTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task Diagnose_WalkRemote_AndClassifyCounts()
     {
         var appData = Path.Combine(
@@ -26,9 +27,6 @@ public class SyncWalkDiagnosticsLiveTests
             await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
             IntegrationTestHttp.JsonOptions)!;
         var notesId = Guid.Parse("bcd7a62e-42a8-4cb9-95a7-7893b4c92752");
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient();
         IntegrationTestHttp.ConfigureClient(http);

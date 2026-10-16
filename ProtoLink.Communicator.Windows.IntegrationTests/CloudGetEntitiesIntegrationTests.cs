@@ -12,6 +12,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Mirrors <see cref="Services.CloudFolderSynchronizer"/> and <see cref="ViewModels.CloudViewModel"/> GetEntities usage (cloud folder + includeValues).
 /// </summary>
 [Trait("Category", "Integration")]
+[Trait("Category", "Live")]
 [Trait("Area", "Cloud")]
 public sealed class CloudGetEntitiesIntegrationTests : IAsyncLifetime
 {

@@ -50,7 +50,15 @@ if (-not $WindowsSetupPath) {
     $WindowsSetupPath = Join-Path $RepoRoot "artifacts\ProtoLink.Communicator.Windows-Setup.exe"
 }
 if (-not $IdsFile) {
-    $IdsFile = "D:\- Projects\ProtoLink.ViewEditor\communicator\ids.generated.json"
+    $IdsFile = $env:PROTOLINK_VIEWEDITOR_IDS
+}
+if (-not $IdsFile) {
+    $sibling = Join-Path (Split-Path $RepoRoot -Parent) "ProtoLink.ViewEditor\communicator\ids.generated.json"
+    if (Test-Path $sibling) {
+        $IdsFile = $sibling
+    } else {
+        $IdsFile = "D:\- Projects\ProtoLink.ViewEditor\communicator\ids.generated.json"
+    }
 }
 
 $NameSlot = "00010003-0000-0000-0000-000000000000"

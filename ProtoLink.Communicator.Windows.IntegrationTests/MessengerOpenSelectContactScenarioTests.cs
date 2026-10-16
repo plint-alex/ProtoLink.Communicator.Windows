@@ -14,6 +14,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Historical slowness was dominated by API <c>GetEntities</c> with <c>IncludeValues</c>: one DB round-trip per entity (N+1).
 /// </summary>
 [Trait("Category", "Integration")]
+[Trait("Category", "Live")]
 [Trait("Scenario", "MessengerPerformance")]
 public sealed class MessengerOpenSelectContactScenarioTests : IAsyncLifetime
 {

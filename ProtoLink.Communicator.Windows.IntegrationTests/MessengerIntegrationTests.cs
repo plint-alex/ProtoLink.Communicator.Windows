@@ -11,6 +11,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// End-to-end messenger API checks (login, contacts, send, load messages) matching MessengerViewModel behavior.
 /// </summary>
 [Trait("Category", "Integration")]
+[Trait("Category", "Live")]
 public sealed class MessengerIntegrationTests : IAsyncLifetime
 {
     private HttpClient _client = null!;

@@ -13,9 +13,6 @@
 			"path": "../Protolink.Deploy"
 		},
 		{
-			"path": "../AutomationAPI"
-		},
-		{
 			"path": "../ProtoLink.ViewEditor"
 		},
 		{
@@ -23,6 +20,9 @@
 		},
 		{
 			"path": "../ProtoLink.Communicator.Android"
+		},
+		{
+			"path": "../AgentTeam"
 		}
 	],
 	"settings": {}

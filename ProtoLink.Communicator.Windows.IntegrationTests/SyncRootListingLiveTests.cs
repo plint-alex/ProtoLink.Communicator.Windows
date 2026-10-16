@@ -10,12 +10,13 @@ using Xunit.Abstractions;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Live")]
 public class SyncRootListingLiveTests
 {
     private readonly ITestOutputHelper _output;
     public SyncRootListingLiveTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task List_MyNotesFolder_TopLevel_Children()
     {
         var appData = Path.Combine(
@@ -24,9 +25,6 @@ public class SyncRootListingLiveTests
         var settings = JsonSerializer.Deserialize<AppSettings>(
             await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
             IntegrationTestHttp.JsonOptions)!;
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient();
         IntegrationTestHttp.ConfigureClient(http);

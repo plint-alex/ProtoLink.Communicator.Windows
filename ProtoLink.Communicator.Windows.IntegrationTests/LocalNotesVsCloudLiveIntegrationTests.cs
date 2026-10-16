@@ -20,13 +20,14 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Default path: Films/index.html under mapped MyNotesFolder.
 /// Override with PROTOLINK_COMPARE_REL_PATH (e.g. notes/index.html).
 /// </summary>
+[Trait("Category", "Live")]
 public class LocalNotesVsCloudLiveIntegrationTests
 {
     private readonly ITestOutputHelper _output;
 
     public LocalNotesVsCloudLiveIntegrationTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task Films_IndexHtml_LocalMatchesServer_UsingCommunicatorConfig()
     {
         var appData = Path.Combine(
@@ -43,10 +44,7 @@ public class LocalNotesVsCloudLiveIntegrationTests
 
         var settings = JsonSerializer.Deserialize<AppSettings>(await File.ReadAllTextAsync(settingsPath), IntegrationTestHttp.JsonOptions)
                        ?? throw new InvalidOperationException("settings.json empty");
-        var apiBase = (Environment.GetEnvironmentVariable("PROTOLINK_API_BASE")
-                       ?? settings.ApiBaseAddress
-                       ?? "https://protolink.ru/").TrimEnd('/') + "/";
-        Environment.SetEnvironmentVariable("PROTOLINK_API_BASE", apiBase.TrimEnd('/'));
+        var apiBase = IntegrationTestHttp.GetBaseUrl();
 
         var mappings = JsonSerializer.Deserialize<List<CloudSyncMapping>>(await File.ReadAllTextAsync(mappingsPath), IntegrationTestHttp.JsonOptions)
                        ?? new List<CloudSyncMapping>();

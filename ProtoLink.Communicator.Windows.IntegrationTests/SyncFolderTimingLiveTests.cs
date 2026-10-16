@@ -11,12 +11,13 @@ using Xunit.Abstractions;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Live")]
 public class SyncFolderTimingLiveTests
 {
     private readonly ITestOutputHelper _output;
     public SyncFolderTimingLiveTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task Time_Each_TopLevel_Child_Listing()
     {
         var appData = Path.Combine(
@@ -25,9 +26,6 @@ public class SyncFolderTimingLiveTests
         var settings = JsonSerializer.Deserialize<AppSettings>(
             await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
             IntegrationTestHttp.JsonOptions)!;
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
         IntegrationTestHttp.ConfigureClient(http);
@@ -90,7 +88,7 @@ public class SyncFolderTimingLiveTests
         Assert.True(File.Exists(logPath));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task Reconcile_OnlyFilmsMapping_Fast()
     {
         // Temporary mapping: only Films folder as cloud root → local Films dir
@@ -103,9 +101,6 @@ public class SyncFolderTimingLiveTests
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ProtoLinkCommunicator", "settings.json")),
             IntegrationTestHttp.JsonOptions)!;
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         IntegrationTestHttp.ConfigureClient(http);

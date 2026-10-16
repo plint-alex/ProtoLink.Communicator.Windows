@@ -7,16 +7,18 @@ using Xunit.Abstractions;
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
 /// <summary>
-/// Live SyncEngine E2E against PROTOLINK_API_BASE (default http://protolink.ru).
+/// Live SyncEngine E2E against PROTOLINK_API_BASE (required; never defaults to protolink.ru).
 /// Device A mutates FS; Device B + API must converge. Requires PROTOLINK_TEST_PASSWORD.
+/// Production hosts also require PROTOLINK_ALLOW_PROD_TESTS=1.
 /// </summary>
+[Trait("Category", "Live")]
 public class SyncEngineE2EIntegrationTests
 {
     private readonly ITestOutputHelper _output;
 
     public SyncEngineE2EIntegrationTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task AddFile_DeviceA_AppearsOnApiAndDeviceB()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -41,7 +43,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(0, await h.CountSyntheticCloudFilesAsync(pageFolder.Id));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task ChangeContent_DeviceA_PropagatesToDeviceB_SingleRemoteFile()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -70,7 +72,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(0, await h.CountSyntheticCloudFilesAsync(pageFolder.Id));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task ChangeContent_SameSize_DeviceA_PropagatesToDeviceB()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -89,7 +91,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal("v2!!", h.ReadRelativeFile(h.DeviceBRoot, "notes/page/index.html"));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task RenameFile_DeviceA_PropagatesToDeviceBAndApi()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -119,7 +121,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(0, await h.CountSyntheticCloudFilesAsync(pageFolder.Id));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task MoveFile_DeviceA_PropagatesToDeviceBAndApi()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -154,7 +156,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal("readme.html", files[0].DisplayName, ignoreCase: true);
     }
 
-    [Fact]
+    [LiveFact]
     public async Task RenameFolder_DeviceA_PropagatesToDeviceBAndApi()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -185,7 +187,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal("index.html", files[0].DisplayName, ignoreCase: true);
     }
 
-    [Fact]
+    [LiveFact]
     public async Task AddThenDelete_DeviceA_RemovesFromApiAndDeviceB()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -206,7 +208,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(0, await h.CountCloudFilesAsync(pageFolder!.Id));
     }
 
-    [Fact]
+    [LiveFact]
     public async Task IdempotentResync_DoesNotCreateTrash()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -233,7 +235,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(0, synth2);
     }
 
-    [Fact]
+    [LiveFact]
     public async Task TrashProbe_NamelessRemotePlusLocalFile_DocumentsSyntheticGrowth()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -284,7 +286,7 @@ public class SyncEngineE2EIntegrationTests
         }
     }
 
-    [Fact]
+    [LiveFact]
     public async Task EmptyLocalStub_Heals_WhenRemoteHasNoSize()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();
@@ -316,7 +318,7 @@ public class SyncEngineE2EIntegrationTests
         Assert.Equal(healed.SizeBytes, new FileInfo(Path.Combine(h.DeviceBRoot, "films", "index.html")).Length);
     }
 
-    [Fact]
+    [LiveFact]
     public async Task LocalEdit_Writes_WhenRemoteHasNoSize()
     {
         await using var h = await SyncTestHarness.TryCreateAsync();

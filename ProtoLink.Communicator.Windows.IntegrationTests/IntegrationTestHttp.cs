@@ -8,8 +8,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// <summary>Shared base URL, JSON options, timeouts, and failure diagnostics for remote integration tests.</summary>
 internal static class IntegrationTestHttp
 {
-    internal static string GetBaseUrl() =>
-        (Environment.GetEnvironmentVariable("PROTOLINK_API_BASE") ?? "http://protolink.ru").TrimEnd('/') + "/";
+    internal static string GetBaseUrl() => LiveApiTarget.RequireBaseUrl();
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {

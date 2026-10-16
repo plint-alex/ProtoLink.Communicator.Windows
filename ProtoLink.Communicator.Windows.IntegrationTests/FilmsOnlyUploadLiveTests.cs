@@ -14,12 +14,13 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Live Films-only: if local≠cloud (empty ContentHash / same size), upload via SyncDirectionDecide path
 /// then assert cloud matches local — without walking the whole mapped tree.
 /// </summary>
+[Trait("Category", "Live")]
 public class FilmsOnlyUploadLiveTests
 {
     private readonly ITestOutputHelper _output;
     public FilmsOnlyUploadLiveTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task Films_EmptyHashSameSize_UploadsLocalToCloud()
     {
         var appData = Path.Combine(
@@ -28,9 +29,6 @@ public class FilmsOnlyUploadLiveTests
         var settings = JsonSerializer.Deserialize<AppSettings>(
             await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
             IntegrationTestHttp.JsonOptions)!;
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient();
         IntegrationTestHttp.ConfigureClient(http);

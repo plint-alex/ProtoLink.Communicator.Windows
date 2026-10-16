@@ -24,6 +24,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// dotnet test --filter "FullyQualifiedName~CloudSyntheticTrashCleanup"
 /// </code>
 /// </summary>
+[Trait("Category", "Live")]
 public class CloudSyntheticTrashCleanupIntegrationTests
 {
     private readonly ITestOutputHelper _output;

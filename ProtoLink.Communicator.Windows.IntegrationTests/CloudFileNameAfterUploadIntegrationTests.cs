@@ -14,6 +14,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// API regression: NAME_TYPE must survive AddFile version bump.
 /// When broken, GetEntities shows synthetic file-{guid} (the Films trash pattern).
 /// </summary>
+[Trait("Category", "Live")]
 public class CloudFileNameAfterUploadIntegrationTests
 {
     private readonly ITestOutputHelper _output;

@@ -10,6 +10,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Live round-trip: login → create CloudFolder → AddEntity file → DeleteEntity.
 /// Skips without PROTOLINK_TEST_PASSWORD. Does not duplicate messenger tests.
 /// </summary>
+[Trait("Category", "Live")]
 public class CloudSyncRoundtripIntegrationTests
 {
     private readonly ITestOutputHelper _output;

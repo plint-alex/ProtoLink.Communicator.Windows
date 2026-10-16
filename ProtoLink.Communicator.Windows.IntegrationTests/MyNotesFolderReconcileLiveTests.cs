@@ -11,12 +11,13 @@ using Xunit.Abstractions;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Live")]
 public class MyNotesFolderReconcileLiveTests
 {
     private readonly ITestOutputHelper _output;
     public MyNotesFolderReconcileLiveTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task ReconcileMyNotesFolder_CompletesUnderTwoMinutes_AndSeedsHashes()
     {
         var appData = Path.Combine(
@@ -32,10 +33,6 @@ public class MyNotesFolderReconcileLiveTests
             string.Equals(Path.GetFullPath(m.LocalPath).TrimEnd('\\'),
                 Path.GetFullPath(settings.NotesRootPath!).TrimEnd('\\'),
                 StringComparison.OrdinalIgnoreCase));
-
-        Environment.SetEnvironmentVariable(
-            "PROTOLINK_API_BASE",
-            (settings.ApiBaseAddress ?? "https://protolink.ru/").TrimEnd('/'));
 
         using var http = new HttpClient();
         IntegrationTestHttp.ConfigureClient(http);
