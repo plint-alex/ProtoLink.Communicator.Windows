@@ -66,20 +66,29 @@ public partial class App : System.Windows.Application
 
         try
         {
-            var logger = LoggerFactory.CreateLogger<App>();
-            logger.LogError(ex, "Unhandled AppDomain exception. IsTerminating={IsTerminating}", e.IsTerminating);
+            var logger = LoggerFactory?.CreateLogger<App>();
+            logger?.LogError(ex, "Unhandled AppDomain exception. IsTerminating={IsTerminating}", e.IsTerminating);
 
             if (ApiExceptionHelper.IndicatesUnauthorizedHttp(ex))
                 return;
 
+            // WPF C++/CLI (DirectWriteForwarder / System.Printing) and similar native modules can
+            // throw DllNotFoundException while CRT type-info tears down on process exit. Showing a
+            // dialog then is the "Background error" the user sees on File/Exit — log only.
+            if (ProcessExitExceptionHelper.IsBenignNativeUnloadDuringProcessExit(ex, e.IsTerminating))
+            {
+                logger?.LogWarning(ex, "Ignoring benign native unload exception during process exit");
+                return;
+            }
+
             var text = BuildExceptionText("UNHANDLED APPDOMAIN EXCEPTION", ex, includeIsTerminating: e.IsTerminating);
 
             // Ensure we show the dialog on the UI thread if possible
-            if (Current?.Dispatcher != null)
+            if (Current?.Dispatcher != null && !e.IsTerminating)
             {
                 Current.Dispatcher.BeginInvoke(new Action(() => ErrorDetailDialog.Show("Background error", text)));
             }
-            else
+            else if (!e.IsTerminating)
             {
                 System.Windows.MessageBox.Show(
                     $"An unhandled background exception occurred:\n\n{text}",
@@ -90,11 +99,14 @@ public partial class App : System.Windows.Application
         }
         catch
         {
-            System.Windows.MessageBox.Show(
-                $"An unhandled background exception occurred:\n\n{ex}",
-                "Background error",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            if (!e.IsTerminating)
+            {
+                System.Windows.MessageBox.Show(
+                    $"An unhandled background exception occurred:\n\n{ex}",
+                    "Background error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
         }
     }
 

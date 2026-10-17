@@ -86,6 +86,26 @@ public partial class MainWindow : Window
             _messengerViewModel.IsAppForeground = false;
     }
 
+    private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        try
+        {
+            _cloudViewModel?.StopAutoSync();
+            _notesView?.ShutdownForAppExit();
+            foreach (var child in CloudTabContent.Children)
+            {
+                if (child is CloudView cloud)
+                    cloud.ShutdownForAppExit();
+            }
+            _ = _realtime.DisconnectAsync();
+            TaskbarUnreadBadge.Apply(this, 0);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Shutdown cleanup failed");
+        }
+    }
+
     private void SetDeveloperToolsVisible(bool visible)
     {
         _developerToolsOpen = visible;

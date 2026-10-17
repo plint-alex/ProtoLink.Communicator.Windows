@@ -43,6 +43,21 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e) => UnhookViewModel();
 
+    /// <summary>Release PDF WebView2 before process exit so native unload is orderly.</summary>
+    public void ShutdownForAppExit()
+    {
+        _pdfWebViewReady = false;
+        _pdfNavigatedPath = null;
+        try
+        {
+            PdfPreviewWebView.Dispose();
+        }
+        catch
+        {
+            // Best-effort: browser process may already be gone during shutdown.
+        }
+    }
+
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         UnhookViewModel();

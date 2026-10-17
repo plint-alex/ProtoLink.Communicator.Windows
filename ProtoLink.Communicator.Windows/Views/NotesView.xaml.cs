@@ -254,6 +254,23 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
     }
 
+    /// <summary>Release WebView2 / watchers before process exit so native unload is orderly.</summary>
+    public void ShutdownForAppExit()
+    {
+        StopIndexWatcher();
+        StopRootWatcher();
+        _notesWebViewReady = false;
+        _webViewInitStarted = false;
+        try
+        {
+            NotesWebView.Dispose();
+        }
+        catch
+        {
+            // Best-effort: browser process may already be gone during shutdown.
+        }
+    }
+
     /// <summary>Refresh open note from disk when tab is shown and editor is clean.</summary>
     private async Task ReloadOpenPageFromDiskIfCleanAsync()
     {
