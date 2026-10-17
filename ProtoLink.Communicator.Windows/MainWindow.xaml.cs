@@ -208,7 +208,7 @@ public partial class MainWindow : Window
             var uploadBtn = new System.Windows.Controls.Button { Content = "Upload", Height = h, Padding = pad, Margin = margin };
             uploadBtn.Click += (s, e) => _cloudViewModel.UploadCommand.Execute(null);
             var downloadBtn = new System.Windows.Controls.Button { Content = "Download", Height = h, Padding = pad, Command = _cloudViewModel.DownloadCommand };
-            var openWebBtn = new System.Windows.Controls.Button { Content = "Open in browser", Height = h, Padding = pad, Margin = margin, Command = _cloudViewModel.OpenWebExplorerCommand };
+            var openWebBtn = new System.Windows.Controls.Button { Content = "Open in browser", Height = h, Padding = pad, Margin = margin, Command = _cloudViewModel.OpenInBrowserCommand };
             toolbarPanel.Children.Add(refreshBtn);
             toolbarPanel.Children.Add(newFolderBtn);
             toolbarPanel.Children.Add(uploadBtn);

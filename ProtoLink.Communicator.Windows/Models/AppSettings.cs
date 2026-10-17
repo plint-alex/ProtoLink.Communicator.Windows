@@ -1,3 +1,5 @@
+using ProtoLink.Communicator.Windows.Navigation;
+
 namespace ProtoLink.Communicator.Windows.Models;
 
 public class AppSettings
@@ -6,7 +8,9 @@ public class AppSettings
     public string Theme { get; set; } = "Light";
 
     public string ApiBaseAddress { get; set; } = "http://localhost:5000/";
-    /// <summary>Public site root for “Open in browser” on the Cloud tab (entity URL is appended).</summary>
-    public string PublicSiteBaseUrl { get; set; } = "https://protolink.ru/";
+    /// <summary>Public site root for entity links (Copy link / Open in browser); the entity id is appended.</summary>
+    public string PublicSiteBaseUrl { get; set; } = EntityLinks.DefaultPublicSiteBaseUrl;
+    /// <summary>App UI language (e.g. <c>ru-RU</c>); appended to entity links as <c>?lang=</c> only when set.</summary>
+    public string? UiLanguage { get; set; }
     public string? NotesRootPath { get; set; }
 }

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -21,7 +22,9 @@ public class CloudViewModel : ViewModelBase
     private readonly ISyncMappingStore _syncStore;
     private readonly Action<Exception>? _syncFullErrorReporter;
     private readonly Action? _onAuthRequired;
-    private Guid? _currentFolderId;
+    private readonly NavigationHistory<Guid> _history = new();
+    private readonly Dictionary<Guid, CloudLocation> _locations = new();
+    private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
 
@@ -69,49 +72,61 @@ public class CloudViewModel : ViewModelBase
                 try { onAfterMappedSync?.Invoke(); } catch { /* ignore */ }
             });
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());
-        NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => _currentFolderId.HasValue);
-        UploadCommand = new RelayCommand(_ => Upload(), _ => _currentFolderId.HasValue);
+        NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => ListedFolderId.HasValue);
+        UploadCommand = new RelayCommand(_ => Upload(), _ => ListedFolderId.HasValue);
         DeleteCommand = new RelayCommand(async p => await DeleteAsync((CloudItemViewModel)p!), p => p is CloudItemViewModel);
-        UpCommand = new RelayCommand(_ => GoUp(), _ => CanGoUp);
-        NavigateToBreadcrumbCommand = new RelayCommand(p => NavigateToBreadcrumb((int)p!));
-        OpenCommand = new RelayCommand(p => OpenItem((CloudItemViewModel)p!), p => p is CloudItemViewModel);
+        BackCommand = new RelayCommand(async _ => await GoBackAsync(), _ => _history.CanGoBack);
+        NavigateToBreadcrumbCommand = new RelayCommand(async p => await NavigateToBreadcrumbAsync((int)p!));
+        OpenCommand = new RelayCommand(async p => await OpenItemAsync((CloudItemViewModel)p!), p => p is CloudItemViewModel);
         NewSubfolderCommand = new RelayCommand(p => NewSubfolder((CloudItemViewModel)p!), p => p is CloudItemViewModel item && item.IsFolder);
         UploadHereCommand = new RelayCommand(p => UploadHere((CloudItemViewModel)p!), p => p is CloudItemViewModel item && item.IsFolder);
         DownloadCommand = new RelayCommand(
             _ => { if (SelectedItem != null && !SelectedItem.IsFolder) _ = DownloadAsync(SelectedItem); },
             _ => SelectedItem != null && !SelectedItem.IsFolder);
-        OpenWebExplorerCommand = new RelayCommand(_ => OpenWebExplorerInBrowser(), _ => _currentFolderId.HasValue);
+        CopyLinkCommand = new RelayCommand(p => CopyLink(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
+        OpenInBrowserCommand = new RelayCommand(p => OpenInBrowser(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
+        _history.Changed += CommandManager.InvalidateRequerySuggested;
     }
 
     public ObservableCollection<CloudItemViewModel> Items { get; }
     public ObservableCollection<CloudBreadcrumbEntry> BreadcrumbPath { get; }
     public ObservableCollection<CloudSyncMapping> SyncMappings { get; }
-    public bool CanGoUp => BreadcrumbPath.Count > 1;
     public bool IsEmpty => Items.Count == 0;
-    public Guid? CurrentFolderId
+
+    /// <summary>Open entity (folder or file). Not the same as <see cref="SelectedItem"/>.</summary>
+    public CloudEntityRef? CurrentEntity
     {
-        get => _currentFolderId;
+        get => _currentEntity;
         private set
         {
-            _currentFolderId = value;
+            _currentEntity = value;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(CanGoUp));
             CommandManager.InvalidateRequerySuggested();
         }
     }
+
+    /// <summary>Folder whose children the list shows: the open folder, or the open file's parent.</summary>
+    public Guid? ListedFolderId => CurrentEntity is null ? null : CurrentEntity.IsFolder ? CurrentEntity.Id : CurrentEntity.ParentId;
+
+    /// <summary>Written by the view on scroll; stored in history so Back restores it.</summary>
+    public double ListScrollOffset { get; set; }
+    public event Action<double>? ListScrollRestoreRequested;
+
     public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
     public ICommand RefreshCommand { get; }
     public ICommand NewFolderCommand { get; }
     public ICommand UploadCommand { get; }
     public ICommand DeleteCommand { get; }
-    public ICommand UpCommand { get; }
+    public ICommand BackCommand { get; }
     public ICommand NavigateToBreadcrumbCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand NewSubfolderCommand { get; }
     public ICommand UploadHereCommand { get; }
     public ICommand DownloadCommand { get; }
-    public ICommand OpenWebExplorerCommand { get; }
-    public event Action<Guid, string>? NavigateToFolder;
+    /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
+    public ICommand CopyLinkCommand { get; }
+    /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
+    public ICommand OpenInBrowserCommand { get; }
 
     public CloudItemViewModel? SelectedItem
     {
@@ -162,7 +177,7 @@ public class CloudViewModel : ViewModelBase
     public async Task RefreshFromRealtimeAsync()
     {
         if (!_authService.IsAuthenticated) return;
-        if (CurrentFolderId.HasValue)
+        if (ListedFolderId.HasValue)
             await LoadCurrentAsync(quiet: true);
     }
 
@@ -226,35 +241,25 @@ public class CloudViewModel : ViewModelBase
         if (_authService.CurrentToken == null) return;
         var userId = _authService.CurrentToken.UserId;
         var list = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false);
-        var root = list?.FirstOrDefault(e => e.Code == CloudEntityCodes.CloudRoot);
-        if (root != null)
-        {
-            CurrentFolderId = root.Id;
-            BreadcrumbPath.Clear();
-            BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = 0, Id = root.Id, Name = "Cloud" });
-            await LoadCurrentAsync();
-            return;
-        }
-        var newRootId = await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { userId });
-        CurrentFolderId = newRootId;
-        BreadcrumbPath.Clear();
-        BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = 0, Id = newRootId, Name = "Cloud" });
-        await LoadCurrentAsync();
+        var rootId = list?.FirstOrDefault(e => e.Code == CloudEntityCodes.CloudRoot)?.Id
+            ?? await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { userId });
+        _history.Clear();
+        _locations.Clear();
+        await OpenAsync(
+            new CloudEntityRef(rootId, CloudEntityKind.Folder, "Cloud", null),
+            new[] { new CloudBreadcrumbEntry { Id = rootId, Name = "Cloud" } },
+            pushHistory: false);
     }
 
     private Guid? _listedFolderId;
 
-    public async Task LoadCurrentAsync(bool quiet = true)
+    public async Task LoadCurrentAsync(bool quiet = true, Guid? restoreSelectionId = null)
     {
-        if (!CurrentFolderId.HasValue) return;
-        var folderId = CurrentFolderId.Value;
-        var selectedId = SelectedItem?.Id;
+        if (ListedFolderId is not { } folderId) return;
         var folderChanged = _listedFolderId != folderId;
         if (folderChanged)
-        {
             SelectedItem = null;
-            selectedId = null;
-        }
+        var selectedId = restoreSelectionId ?? SelectedItem?.Id;
 
         if (!quiet)
             StatusText = "Loading...";
@@ -262,7 +267,7 @@ public class CloudViewModel : ViewModelBase
         {
             var list = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
             // User may have navigated away while the request was in flight.
-            if (CurrentFolderId != folderId) return;
+            if (ListedFolderId != folderId) return;
 
             var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
             var fresh = (list ?? new List<GetEntitiesResult>())
@@ -353,22 +358,68 @@ public class CloudViewModel : ViewModelBase
             StatusText = "Error: " + ex.Message;
     }
 
-    public async Task NavigateToAsync(Guid folderId, string folderName)
+    /// <summary>Breadcrumb trail of the listed folder at the time an entity was opened; Back restores it.</summary>
+    private sealed record CloudLocation(CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb);
+
+    private async Task OpenAsync(
+        CloudEntityRef target,
+        IEnumerable<CloudBreadcrumbEntry> breadcrumb,
+        bool pushHistory = true,
+        Guid? restoreSelectionId = null,
+        double? restoreScrollOffset = null)
     {
-        if (BreadcrumbPath.Count > 0 && BreadcrumbPath[BreadcrumbPath.Count - 1].Id == folderId)
-            return;
-        BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = BreadcrumbPath.Count, Id = folderId, Name = folderName });
-        CurrentFolderId = folderId;
-        OnPropertyChanged(nameof(CanGoUp));
-        await LoadCurrentAsync();
+        if (pushHistory && CurrentEntity != null)
+            _history.Push(new NavigationEntry<Guid>(CurrentEntity.Id, ListScrollOffset, SelectedItem?.Id ?? Guid.Empty));
+
+        var trail = breadcrumb.Select((b, i) => new CloudBreadcrumbEntry { Index = i, Id = b.Id, Name = b.Name }).ToList();
+        _locations[target.Id] = new CloudLocation(target, trail);
+        if (!BreadcrumbPath.Select(b => b.Id).SequenceEqual(trail.Select(b => b.Id)))
+        {
+            BreadcrumbPath.Clear();
+            foreach (var b in trail)
+                BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = b.Index, Id = b.Id, Name = b.Name });
+        }
+
+        CurrentEntity = target;
+        await LoadCurrentAsync(quiet: true, restoreSelectionId);
+        if (restoreScrollOffset is { } offset)
+            ListScrollRestoreRequested?.Invoke(offset);
     }
 
-    private void OpenItem(CloudItemViewModel item)
+    private async Task OpenItemAsync(CloudItemViewModel item)
     {
-        if (item.IsFolder)
-            NavigateToFolder?.Invoke(item.Id, item.Name);
-        else
-            _ = DownloadAsync(item);
+        if (ListedFolderId is not { } parentId || CurrentEntity?.Id == item.Id) return;
+        var kind = item.IsFolder ? CloudEntityKind.Folder : CloudEntityKind.File;
+        var trail = item.IsFolder
+            ? BreadcrumbPath.Append(new CloudBreadcrumbEntry { Id = item.Id, Name = item.Name })
+            : BreadcrumbPath;
+        await OpenAsync(new CloudEntityRef(item.Id, kind, item.Name, parentId), trail.ToList());
+    }
+
+    private async Task NavigateToBreadcrumbAsync(int index)
+    {
+        if (index < 0 || index >= BreadcrumbPath.Count) return;
+        var entry = BreadcrumbPath[index];
+        if (CurrentEntity?.Id == entry.Id) return;
+        var parentId = index > 0 ? BreadcrumbPath[index - 1].Id : (Guid?)null;
+        await OpenAsync(
+            new CloudEntityRef(entry.Id, CloudEntityKind.Folder, entry.Name, parentId),
+            BreadcrumbPath.Take(index + 1).ToList());
+    }
+
+    private async Task GoBackAsync()
+    {
+        while (_history.TryPop(out var entry))
+        {
+            if (!_locations.TryGetValue(entry.Key, out var location)) continue;
+            await OpenAsync(
+                location.Entity,
+                location.Breadcrumb,
+                pushHistory: false,
+                restoreSelectionId: entry.SelectedKey == Guid.Empty ? null : entry.SelectedKey,
+                restoreScrollOffset: entry.ListScrollOffset);
+            return;
+        }
     }
 
     private void NewSubfolder(CloudItemViewModel parentFolder)
@@ -376,7 +427,7 @@ public class CloudViewModel : ViewModelBase
         if (!parentFolder.IsFolder) return;
         if (!Dialogs.InputDialog.TryShow("Folder name:", "New subfolder", out var name) || string.IsNullOrWhiteSpace(name)) return;
         var nameTrim = name.Trim();
-        var currentId = CurrentFolderId!.Value;
+        var currentId = ListedFolderId!.Value;
         var parentName = parentFolder.Name;
         var breadcrumbSnapshot = BreadcrumbPath.ToList();
         var mappingsSnapshot = SyncMappings.ToList();
@@ -410,7 +461,7 @@ public class CloudViewModel : ViewModelBase
         var dlg = new Microsoft.Win32.OpenFileDialog();
         if (dlg.ShowDialog() != true) return;
         var path = dlg.FileName;
-        var currentId = CurrentFolderId!.Value;
+        var currentId = ListedFolderId!.Value;
         var targetName = targetFolder.Name;
         var breadcrumbSnapshot = BreadcrumbPath.ToList();
         var mappingsSnapshot = SyncMappings.ToList();
@@ -440,37 +491,11 @@ public class CloudViewModel : ViewModelBase
         });
     }
 
-    private void GoUp()
-    {
-        if (BreadcrumbPath.Count <= 1) return;
-        BreadcrumbPath.RemoveAt(BreadcrumbPath.Count - 1);
-        var last = BreadcrumbPath[BreadcrumbPath.Count - 1];
-        CurrentFolderId = last.Id;
-        for (var i = 0; i < BreadcrumbPath.Count; i++)
-            BreadcrumbPath[i].Index = i;
-        OnPropertyChanged(nameof(CanGoUp));
-        _ = LoadCurrentAsync();
-    }
-
-    private void NavigateToBreadcrumb(int index)
-    {
-        if (index < 0 || index >= BreadcrumbPath.Count) return;
-        while (BreadcrumbPath.Count > index + 1)
-            BreadcrumbPath.RemoveAt(BreadcrumbPath.Count - 1);
-        var entry = BreadcrumbPath[index];
-        CurrentFolderId = entry.Id;
-        for (var i = 0; i < BreadcrumbPath.Count; i++)
-            BreadcrumbPath[i].Index = i;
-        OnPropertyChanged(nameof(CanGoUp));
-        _ = LoadCurrentAsync();
-    }
-
     private void NewFolder()
     {
-        if (!CurrentFolderId.HasValue) return;
+        if (ListedFolderId is not { } currentId) return;
         if (!Dialogs.InputDialog.TryShow("Folder name:", "New folder", out var name) || string.IsNullOrWhiteSpace(name)) return;
         var nameTrim = name.Trim();
-        var currentId = CurrentFolderId.Value;
         var breadcrumbSnapshot = BreadcrumbPath.ToList();
         var mappingsSnapshot = SyncMappings.ToList();
         _ = Task.Run(async () =>
@@ -498,11 +523,10 @@ public class CloudViewModel : ViewModelBase
 
     private void Upload()
     {
-        if (!CurrentFolderId.HasValue) return;
+        if (ListedFolderId is not { } currentId) return;
         var dlg = new Microsoft.Win32.OpenFileDialog();
         if (dlg.ShowDialog() != true) return;
         var path = dlg.FileName;
-        var currentId = CurrentFolderId.Value;
         var breadcrumbSnapshot = BreadcrumbPath.ToList();
         var mappingsSnapshot = SyncMappings.ToList();
         _ = Task.Run(async () =>
@@ -566,6 +590,9 @@ public class CloudViewModel : ViewModelBase
 
                 CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);
                 Items.Remove(item);
+                _locations.Remove(item.Id);
+                if (CurrentEntity?.Id == item.Id && ListedFolderId is { } listedId && _locations.TryGetValue(listedId, out var folder))
+                    CurrentEntity = folder.Entity;
             }
             finally
             {
@@ -595,7 +622,7 @@ public class CloudViewModel : ViewModelBase
 
     public async Task DownloadAsync(CloudItemViewModel item)
     {
-        if (item.IsFolder) { NavigateToFolder?.Invoke(item.Id, item.Name); return; }
+        if (item.IsFolder) return;
         try
         {
             var stream = await _api.GetFileStreamAsync(item.Id);
@@ -607,14 +634,34 @@ public class CloudViewModel : ViewModelBase
         }
     }
 
-    private void OpenWebExplorerInBrowser()
+    private Guid? LinkTargetId(object? parameter) => parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+
+    private string BuildLink(Guid entityId)
     {
-        if (!_currentFolderId.HasValue) return;
-        var baseUrl = (_settingsService.LoadSettings().PublicSiteBaseUrl ?? "https://protolink.ru/").TrimEnd('/');
-        var url = $"{baseUrl}/{_currentFolderId.Value:D}?lang=ru-RU";
+        var settings = _settingsService.LoadSettings();
+        return EntityLinks.Build(settings.PublicSiteBaseUrl, entityId, settings.UiLanguage);
+    }
+
+    private void CopyLink(Guid? entityId)
+    {
+        if (entityId is not { } id) return;
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            System.Windows.Clipboard.SetText(BuildLink(id));
+            StatusText = "Link copied";
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Could not copy link: " + ex.Message;
+        }
+    }
+
+    private void OpenInBrowser(Guid? entityId)
+    {
+        if (entityId is not { } id) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = BuildLink(id), UseShellExecute = true });
         }
         catch (Exception ex)
         {
