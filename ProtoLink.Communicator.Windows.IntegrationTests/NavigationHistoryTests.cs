@@ -33,14 +33,17 @@ public class NavigationHistoryTests
     [Fact]
     public void BackIsHistoryNotParent_BreadcrumbNavigationPushes()
     {
-        // AT-C3: root → A → A/B → breadcrumb "A" → Back lands on A/B, not root.
+        // AT-N6 / AT-C3: root → A → A/B → breadcrumb jump to A pushes A/B; Back returns to A/B (not root).
         var history = new NavigationHistory<string>();
-        history.Push(new("root"));
-        history.Push(new("A"));
-        history.Push(new("A/B"));
+        history.Push(new("root"));   // left root for A
+        history.Push(new("A"));      // left A for A/B
+        history.Push(new("A/B"));    // breadcrumb to A: push the location being left
 
-        Assert.True(history.TryPop(out var back));
-        Assert.Equal("A/B", back.Key);
+        Assert.True(history.TryPop(out var afterBreadcrumb));
+        Assert.Equal("A/B", afterBreadcrumb.Key);
+        Assert.True(history.TryPop(out var previous));
+        Assert.Equal("A", previous.Key);
+        Assert.NotEqual("root", previous.Key);
     }
 
     [Fact]

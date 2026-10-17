@@ -5,7 +5,7 @@ using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
-/// <summary>AT-N5 smoke: resolver is pure/offline (tester owns fuller fixtures).</summary>
+/// <summary>AT-N5: note-id resolver — mappings + SyncItemMeta fixtures; SyncPathUtil normalisation.</summary>
 [Trait("Category", "Offline")]
 public class NoteRemoteIdResolverTests
 {
@@ -129,6 +129,82 @@ public class NoteRemoteIdResolverTests
             };
 
             Assert.Equal(NoteRemoteId, _resolver.ResolveFrom(note, mappings, items));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
+    [Fact]
+    public void BackslashAndMixedCaseMeta_NormalisedViaSyncPathUtil()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-note-sep-" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "Films", "SubPage");
+        Directory.CreateDirectory(note);
+        try
+        {
+            var mappingId = MappingCloudId.ToString("N");
+            var mappings = new[]
+            {
+                new SyncMappingInfo
+                {
+                    Id = mappingId,
+                    CloudFolderId = MappingCloudId,
+                    LocalRootPath = root
+                }
+            };
+            var items = new[]
+            {
+                new SyncItemMeta
+                {
+                    MappingId = mappingId,
+                    RemoteId = NoteRemoteId,
+                    RelativePath = @"Films\SubPage",
+                    IsFolder = true
+                }
+            };
+
+            Assert.Equal(NoteRemoteId, _resolver.ResolveFrom(note, mappings, items));
+            Assert.Equal(
+                SyncPathUtil.Normalize(@"Films\SubPage"),
+                SyncPathUtil.Normalize("films/subpage"));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
+    [Fact]
+    public void MappingRootFolder_EmptyRelative_ReturnsRemoteId()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-note-root-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var mappingId = MappingCloudId.ToString("N");
+            var mappings = new[]
+            {
+                new SyncMappingInfo
+                {
+                    Id = mappingId,
+                    CloudFolderId = MappingCloudId,
+                    LocalRootPath = root
+                }
+            };
+            var items = new[]
+            {
+                new SyncItemMeta
+                {
+                    MappingId = mappingId,
+                    RemoteId = NoteRemoteId,
+                    RelativePath = "",
+                    IsFolder = true
+                }
+            };
+
+            Assert.Equal(NoteRemoteId, _resolver.ResolveFrom(root, mappings, items));
         }
         finally
         {
