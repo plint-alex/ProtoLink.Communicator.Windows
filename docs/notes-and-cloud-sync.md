@@ -5,7 +5,8 @@
 ### Notes (mostly offline)
 
 - Notes primarily **reads and writes the local filesystem** (Windows folder / Android SAF tree).
-- Notes must not show cloud-aware status.
+- Notes must not show **sync status** (no badges, no sync progress in the Notes tab).
+- **Exception (decision E2):** Copy link / Open in browser may reflect **link availability** only — enabled when the open note folder has a synced Cloud entity id (`SyncItemMeta.RemoteId` for that folder under a mapped root), otherwise disabled with “Not in Cloud yet”. The id is re-resolved after each sync completes without reopening the note. No other cloud-aware chrome in Notes.
 - When the open page’s file changes on disk, Notes reloads:
   - **Windows:** `NotesIndexFileWatcher` + reload when Notes tab activates (if editor is clean)
   - **Android:** disk hash poller (~1.5s) on the open note URI

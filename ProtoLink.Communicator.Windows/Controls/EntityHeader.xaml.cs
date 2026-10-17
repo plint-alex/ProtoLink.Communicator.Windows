@@ -25,6 +25,10 @@ public partial class EntityHeader : System.Windows.Controls.UserControl
     public static readonly DependencyProperty ShowCopyLinkProperty =
         DependencyProperty.Register(nameof(ShowCopyLink), typeof(bool), typeof(EntityHeader), new PropertyMetadata(true));
 
+    public static readonly DependencyProperty CopyLinkToolTipProperty =
+        DependencyProperty.Register(nameof(CopyLinkToolTip), typeof(string), typeof(EntityHeader),
+            new PropertyMetadata("Copy link (Ctrl+Shift+C)"));
+
     public static readonly DependencyProperty ShowMoreMenuProperty =
         DependencyProperty.Register(nameof(ShowMoreMenu), typeof(bool), typeof(EntityHeader), new PropertyMetadata(true));
 
@@ -74,6 +78,13 @@ public partial class EntityHeader : System.Windows.Controls.UserControl
     {
         get => (bool)GetValue(ShowCopyLinkProperty);
         set => SetValue(ShowCopyLinkProperty, value);
+    }
+
+    /// <summary>Notes uses "Not in Cloud yet" when Copy link is disabled (E2).</summary>
+    public string CopyLinkToolTip
+    {
+        get => (string)GetValue(CopyLinkToolTipProperty);
+        set => SetValue(CopyLinkToolTipProperty, value);
     }
 
     public bool ShowMoreMenu

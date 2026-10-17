@@ -12,14 +12,14 @@ using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
 
 namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class NotesView : System.Windows.Controls.UserControl
 {
-    private const double CompactBreakpoint = 600;
-    private bool _isCompactLayout;
-    private bool _showEditorInCompact;
+    private const double CompactBreakpoint = 700;
     private bool _isLoading;
     private bool _isInternalSave;
     private bool _suppressExternalReloadPrompt;
@@ -33,25 +33,56 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private readonly HashSet<string> _rememberedExpandedPaths = new(StringComparer.OrdinalIgnoreCase);
     private bool _treeEventsHooked;
     private bool _suppressTreeExpandMemory;
+    private GridLength _treeColumnWidth = new(320);
 
     public NotesView()
     {
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        DataContextChanged += OnDataContextChanged;
         IsVisibleChanged += OnNotesVisibilityChanged;
         NotesWebView.SizeChanged += OnNotesWebViewSizeChanged;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _vm = DataContext as NotesViewModel;
-        EnsureNotesEventHandlers();
+        HookViewModel(DataContext as NotesViewModel);
         // Always repaint: TabControl SelectedContent unloads this view when leaving the Notes tab,
         // so async TreeRefreshed can be missed while unhooked / Items can be empty on return.
         PopulateTree();
         StartRootWatcher();
         ApplyResponsiveLayout();
+        RebuildEntityMoreMenu();
+    }
+
+    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        // Do not unhook on tab unload path — only when DataContext truly changes.
+        if (ReferenceEquals(e.OldValue, e.NewValue)) return;
+        if (e.OldValue is NotesViewModel oldVm && _treeEventsHooked && ReferenceEquals(_vm, oldVm))
+        {
+            oldVm.TreeRefreshed -= PopulateTree;
+            oldVm.RequestNewFolder -= OnRequestNewFolder;
+            oldVm.InternalNoteWriteStarting -= OnInternalNoteWriteStarting;
+            oldVm.InternalNoteWriteCompleted -= OnInternalNoteWriteCompleted;
+            oldVm.NotesPagePathChanged -= OnNotesPagePathChanged;
+            oldVm.NotesRootPathChanged -= OnNotesRootPathChanged;
+            oldVm.ContentSaved -= OnContentSaved;
+            oldVm.NavigateToNoteRequested -= OnNavigateToNoteRequested;
+            oldVm.ReturnToListRequested -= OnReturnToListRequested;
+            oldVm.PropertyChanged -= OnViewModelPropertyChanged;
+            _treeEventsHooked = false;
+            _vm = null;
+        }
+        HookViewModel(e.NewValue as NotesViewModel);
+        RebuildEntityMoreMenu();
+    }
+
+    private void HookViewModel(NotesViewModel? vm)
+    {
+        _vm = vm;
+        EnsureNotesEventHandlers();
     }
 
     private void EnsureNotesEventHandlers()
@@ -64,8 +95,28 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _vm.NotesPagePathChanged += OnNotesPagePathChanged;
         _vm.NotesRootPathChanged += OnNotesRootPathChanged;
         _vm.ContentSaved += OnContentSaved;
+        _vm.NavigateToNoteRequested += OnNavigateToNoteRequested;
+        _vm.ReturnToListRequested += OnReturnToListRequested;
+        _vm.PropertyChanged += OnViewModelPropertyChanged;
         _treeEventsHooked = true;
     }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(NotesViewModel.HasCloudLink)
+            or nameof(NotesViewModel.HasOpenPage)
+            or nameof(NotesViewModel.CurrentRemoteId))
+            RebuildEntityMoreMenu();
+
+        if (e.PropertyName is nameof(NotesViewModel.IsCompactLayout)
+            or nameof(NotesViewModel.ShowEditorInCompact))
+            ApplyColumnLayout();
+    }
+
+    private void OnNavigateToNoteRequested(string path) =>
+        _ = NavigateToAsync(path, forceReload: false, fromHistory: true);
+
+    private void OnReturnToListRequested() => ApplyColumnLayout();
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -73,56 +124,101 @@ public partial class NotesView : System.Windows.Controls.UserControl
         ApplyResponsiveLayout();
     }
 
-    private void OnNotesBackClick(object sender, RoutedEventArgs e)
-    {
-        _showEditorInCompact = false;
-        ApplyColumnLayout();
-    }
-
     private void ApplyResponsiveLayout()
     {
-        _isCompactLayout = ActualWidth > 0 && ActualWidth < CompactBreakpoint;
-        if (!_isCompactLayout)
-            _showEditorInCompact = false;
-        else if (_vm?.HasOpenPage == true && !_showEditorInCompact)
-        {
-            // Keep list until user opens a note in compact mode.
-        }
+        if (_vm == null) return;
+        _vm.IsCompactLayout = ActualWidth > 0 && ActualWidth < CompactBreakpoint;
         ApplyColumnLayout();
     }
 
     private void ApplyColumnLayout()
     {
-        if (_isCompactLayout)
+        if (_vm == null) return;
+
+        if (_vm.IsCompactLayout)
         {
-            var showEditor = _showEditorInCompact && _vm?.HasOpenPage == true;
+            if (TreeColumn.Width.Value > 0)
+                _treeColumnWidth = TreeColumn.Width;
+
+            PaneSplitter.Visibility = Visibility.Collapsed;
+            SplitterColumn.Width = new GridLength(0);
+
+            var showEditor = _vm.ShowEditorInCompact && _vm.HasOpenPage;
             if (showEditor)
             {
                 TreeColumn.Width = new GridLength(0);
+                TreeColumn.MinWidth = 0;
                 EditorColumn.Width = new GridLength(1, GridUnitType.Star);
                 TreePane.Visibility = Visibility.Collapsed;
                 EditorPane.Visibility = Visibility.Visible;
-                EditorBackButton.Visibility = Visibility.Visible;
             }
             else
             {
+                TreeColumn.MinWidth = 0;
+                TreeColumn.MaxWidth = double.PositiveInfinity;
                 TreeColumn.Width = new GridLength(1, GridUnitType.Star);
                 EditorColumn.Width = new GridLength(0);
                 TreePane.Visibility = Visibility.Visible;
                 EditorPane.Visibility = Visibility.Collapsed;
-                EditorBackButton.Visibility = Visibility.Collapsed;
             }
-            NotesBackButton.Visibility = Visibility.Collapsed;
         }
         else
         {
-            TreeColumn.Width = new GridLength(280);
+            TreeColumn.MinWidth = 280;
+            TreeColumn.MaxWidth = 420;
+            TreeColumn.Width = _treeColumnWidth.Value > 0 ? _treeColumnWidth : new GridLength(320);
+            SplitterColumn.Width = new GridLength(4);
             EditorColumn.Width = new GridLength(1, GridUnitType.Star);
+            PaneSplitter.Visibility = Visibility.Visible;
             TreePane.Visibility = Visibility.Visible;
             EditorPane.Visibility = Visibility.Visible;
-            EditorBackButton.Visibility = Visibility.Collapsed;
-            NotesBackButton.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void RebuildEntityMoreMenu()
+    {
+        if (_vm == null || EntityHeaderControl == null)
+            return;
+
+        var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Open in browser",
+            Command = _vm.OpenInBrowserCommand
+        });
+        EntityHeaderControl.MoreMenu = menu;
+        EntityHeaderControl.ShowMoreMenu = true;
+    }
+
+    private void OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (_vm == null) return;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Left && Keyboard.Modifiers == ModifierKeys.Alt)
+        {
+            if (_vm.BackCommand.CanExecute(null))
+                _vm.BackCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (key == Key.Escape && _vm.IsCompactLayout && _vm.ShowEditorInCompact)
+        {
+            _vm.ReturnToListInCompact();
+            e.Handled = true;
+        }
+        else if (key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            if (_vm.CopyLinkCommand.CanExecute(null))
+                _vm.CopyLinkCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
+    private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.XButton1 || _vm == null) return;
+        if (_vm.BackCommand.CanExecute(null))
+            _vm.BackCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -264,11 +360,16 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (Dispatcher.CheckAccess())
         {
             AttachIndexWatcher(newFolderPath);
-            if (_isCompactLayout && !string.IsNullOrEmpty(newFolderPath))
+            if (_vm != null)
             {
-                _showEditorInCompact = true;
-                ApplyColumnLayout();
+                _vm.RecordOpenedPage(null, newFolderPath, pushHistory: false);
+                if (_vm.IsCompactLayout && !string.IsNullOrEmpty(newFolderPath))
+                {
+                    _vm.ShowEditorInCompact = true;
+                    ApplyColumnLayout();
+                }
             }
+            RebuildEntityMoreMenu();
         }
         else
             Dispatcher.BeginInvoke(new Action(() => OnNotesPagePathChanged(newFolderPath)));
@@ -773,8 +874,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         if (e.NewValue is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
         {
-            if (_isCompactLayout)
-                _showEditorInCompact = true;
+            if (_vm?.IsCompactLayout == true)
+                _vm.ShowEditorInCompact = true;
             _ = NavigateToAsync(vm.Item.FullPath);
             ApplyColumnLayout();
         }
@@ -830,7 +931,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
     }
 
-    private async Task NavigateToAsync(string folderPath, bool forceReload = false)
+    private async Task NavigateToAsync(string folderPath, bool forceReload = false, bool fromHistory = false)
     {
         if (_vm == null || !Directory.Exists(folderPath)) return;
 
@@ -847,7 +948,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _isLoading = true;
         try
         {
+            var previous = _vm.CurrentPagePath;
             _vm.CurrentPagePath = folderPath;
+            _vm.RecordOpenedPage(previous, folderPath, pushHistory: !fromHistory);
             _vm.StatusText = "Loading…";
             var html = await _vm.LoadPageContentAsync(folderPath);
             if (NotesWebView.CoreWebView2 != null)
@@ -855,6 +958,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm.StatusText = "Ready";
 
             AttachIndexWatcher(folderPath);
+            RebuildEntityMoreMenu();
         }
         finally
         {

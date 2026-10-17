@@ -10,7 +10,9 @@
         <DockPanel LastChildFill="True">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Content="Copy link" Command="{Binding CopyLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                        Style="{DynamicResource IgGhostButton}" ToolTip="Copy link (Ctrl+Shift+C)" Margin="0,0,4,0"
+                        Style="{DynamicResource IgGhostButton}" Margin="0,0,4,0"
+                        ToolTip="{Binding CopyLinkToolTip, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        ToolTipService.ShowOnDisabled="True"
                         Visibility="{Binding ShowCopyLink, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 <Button x:Name="MoreButton" Content="⋮" Width="36" Height="32" FontSize="16"
                         Style="{DynamicResource IgGhostButton}" ToolTip="More"

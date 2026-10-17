@@ -10,9 +10,10 @@ using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
-public class NotesViewModel : ViewModelBase
+public partial class NotesViewModel : ViewModelBase
 {
     private readonly ISettingsService _settingsService;
+    private readonly INoteRemoteIdResolver? _remoteIdResolver;
     private readonly NotesFileService _fileService;
     private readonly NotesFileSystemService _fsService;
     private readonly EditableMarkdownRenderer _renderer;
@@ -26,9 +27,10 @@ public class NotesViewModel : ViewModelBase
     private CancellationTokenSource? _saveCts;
     private bool _pendingDebouncedSave;
 
-    public NotesViewModel(ISettingsService settingsService)
+    public NotesViewModel(ISettingsService settingsService, INoteRemoteIdResolver? remoteIdResolver = null)
     {
         _settingsService = settingsService;
+        _remoteIdResolver = remoteIdResolver;
         _fileService = new NotesFileService();
         _fsService = new NotesFileSystemService();
         _renderer = new EditableMarkdownRenderer();
@@ -36,6 +38,7 @@ public class NotesViewModel : ViewModelBase
         _rootPath = _settingsService.LoadSettings().NotesRootPath;
         NewFolderCommand = new RelayCommand(_ => { }, _ => !string.IsNullOrEmpty(_rootPath));
         RefreshCommand = new RelayCommand(_ => RefreshTree());
+        InitNavigationCommands();
         RefreshTree();
     }
 
@@ -50,6 +53,11 @@ public class NotesViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentPageTitle));
             OnPropertyChanged(nameof(HasOpenPage));
+            OnPropertyChanged(nameof(HeaderTitle));
+            OnPropertyChanged(nameof(HeaderSubtitle));
+            OnPropertyChanged(nameof(CanNavigateParent));
+            if (string.IsNullOrEmpty(value))
+                CurrentRemoteId = null;
         }
     }
     public string CurrentPageTitle =>

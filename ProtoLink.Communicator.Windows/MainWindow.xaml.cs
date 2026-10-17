@@ -47,8 +47,9 @@ public partial class MainWindow : Window
         var cloudHandler = CreateAuthHandler();
         cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
         _cloudHttpClient = new HttpClient(cloudHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        var noteRemoteIdResolver = new ProtoLink.Communicator.Windows.Services.Notes.NoteRemoteIdResolver(_syncStore);
+        _notesViewModel = new NotesViewModel(_settingsService, noteRemoteIdResolver);
         RebuildCloudTab();
-        _notesViewModel = new NotesViewModel(_settingsService);
         _notesView = new Views.NotesView { DataContext = _notesViewModel };
         _notesViewModel.ContentSaved += _ => _cloudViewModel.RequestLocalPushAfterNoteSave();
         NotesTabContent.Children.Add(_notesView);
@@ -152,6 +153,7 @@ public partial class MainWindow : Window
             () =>
             {
                 _notesViewModel?.RefreshTree();
+                _notesViewModel?.RefreshRemoteLinkState();
             });
         CloudTabContent.Children.Add(new CloudView { DataContext = _cloudViewModel });
     }
