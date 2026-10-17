@@ -1,10 +1,7 @@
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Threading;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
@@ -13,7 +10,7 @@ using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
-public class CloudViewModel : ViewModelBase
+public partial class CloudViewModel : ViewModelBase
 {
     private readonly IAuthService _authService;
     private readonly ISettingsService _settingsService;
@@ -27,6 +24,9 @@ public class CloudViewModel : ViewModelBase
     private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
+    private bool _isCompactLayout;
+    private bool _showEntityInCompact;
+    private Guid? _listedFolderId;
 
     public CloudViewModel(
         IAuthService authService,
@@ -75,17 +75,43 @@ public class CloudViewModel : ViewModelBase
         NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => ListedFolderId.HasValue);
         UploadCommand = new RelayCommand(_ => Upload(), _ => ListedFolderId.HasValue);
         DeleteCommand = new RelayCommand(async p => await DeleteAsync((CloudItemViewModel)p!), p => p is CloudItemViewModel);
-        BackCommand = new RelayCommand(async _ => await GoBackAsync(), _ => _history.CanGoBack);
+        BackCommand = new RelayCommand(async _ => await HandleBackAsync(), _ => CanGoBack);
         NavigateToBreadcrumbCommand = new RelayCommand(async p => await NavigateToBreadcrumbAsync((int)p!));
+        NavigateParentCommand = new RelayCommand(async _ => await NavigateToParentAsync(), _ => CanNavigateParent);
         OpenCommand = new RelayCommand(async p => await OpenItemAsync((CloudItemViewModel)p!), p => p is CloudItemViewModel);
         NewSubfolderCommand = new RelayCommand(p => NewSubfolder((CloudItemViewModel)p!), p => p is CloudItemViewModel item && item.IsFolder);
         UploadHereCommand = new RelayCommand(p => UploadHere((CloudItemViewModel)p!), p => p is CloudItemViewModel item && item.IsFolder);
         DownloadCommand = new RelayCommand(
             _ => { if (SelectedItem != null && !SelectedItem.IsFolder) _ = DownloadAsync(SelectedItem); },
             _ => SelectedItem != null && !SelectedItem.IsFolder);
+        DownloadCurrentCommand = new RelayCommand(
+            _ =>
+            {
+                if (CurrentEntity is { IsFolder: false } file)
+                    _ = DownloadEntityAsync(file);
+            },
+            _ => CurrentEntity is { IsFolder: false });
+        DeleteCurrentCommand = new RelayCommand(
+            _ =>
+            {
+                if (CurrentEntity is null) return;
+                var item = Items.FirstOrDefault(i => i.Id == CurrentEntity.Id)
+                    ?? new CloudItemViewModel { Id = CurrentEntity.Id, Name = CurrentEntity.Name, IsFolder = CurrentEntity.IsFolder };
+                _ = DeleteAsync(item);
+            },
+            _ => CurrentEntity is { ParentId: not null });
         CopyLinkCommand = new RelayCommand(p => CopyLink(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         OpenInBrowserCommand = new RelayCommand(p => OpenInBrowser(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
-        _history.Changed += CommandManager.InvalidateRequerySuggested;
+        SyncCurrentMappingCommand = new RelayCommand(_ => SyncCurrentMapping(), _ => HasCurrentFolderMapping);
+        ForceUploadCurrentMappingCommand = new RelayCommand(_ => ForceUploadCurrentMapping(), _ => HasCurrentFolderMapping);
+        ForceDownloadCurrentMappingCommand = new RelayCommand(_ => ForceDownloadCurrentMapping(), _ => HasCurrentFolderMapping);
+        UnmapCurrentFolderCommand = new RelayCommand(_ => UnmapCurrentFolder(), _ => HasCurrentFolderMapping);
+        _history.Changed += () =>
+        {
+            OnPropertyChanged(nameof(CanGoBack));
+            OnPropertyChanged(nameof(ShowBack));
+            CommandManager.InvalidateRequerySuggested();
+        };
     }
 
     public ObservableCollection<CloudItemViewModel> Items { get; }
@@ -101,6 +127,8 @@ public class CloudViewModel : ViewModelBase
         {
             _currentEntity = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ListedFolderId));
+            NotifyHeaderAndInfoChanged();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -111,22 +139,106 @@ public class CloudViewModel : ViewModelBase
     /// <summary>Written by the view on scroll; stored in history so Back restores it.</summary>
     public double ListScrollOffset { get; set; }
     public event Action<double>? ListScrollRestoreRequested;
+    /// <summary>Raised after an entity is opened so the view can show the entity pane in compact layout.</summary>
+    public event Action? EntityOpened;
 
     public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
+
+    public bool IsCompactLayout
+    {
+        get => _isCompactLayout;
+        set
+        {
+            if (_isCompactLayout == value) return;
+            _isCompactLayout = value;
+            if (!_isCompactLayout)
+                _showEntityInCompact = false;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowEntityPane));
+            OnPropertyChanged(nameof(ShowListPane));
+            OnPropertyChanged(nameof(CanGoBack));
+            OnPropertyChanged(nameof(ShowBack));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    public bool ShowEntityInCompact
+    {
+        get => _showEntityInCompact;
+        set
+        {
+            if (_showEntityInCompact == value) return;
+            _showEntityInCompact = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowEntityPane));
+            OnPropertyChanged(nameof(ShowListPane));
+            OnPropertyChanged(nameof(CanGoBack));
+            OnPropertyChanged(nameof(ShowBack));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    public bool ShowListPane => !IsCompactLayout || !ShowEntityInCompact;
+    public bool ShowEntityPane => !IsCompactLayout || ShowEntityInCompact;
+
+    public bool CanGoBack => _history.CanGoBack || (IsCompactLayout && ShowEntityInCompact);
+    public bool ShowBack => CanGoBack;
+
+    public string HeaderTitle => CurrentEntity?.Name ?? "Cloud";
+    public string HeaderTypeGlyph => CurrentEntity is null ? "" : CurrentEntity.IsFolder ? "📁" : "📄";
+    public string HeaderSubtitle
+    {
+        get
+        {
+            if (CurrentEntity?.ParentId is null || BreadcrumbPath.Count < 2) return string.Empty;
+            var parent = BreadcrumbPath[^2];
+            return "… › " + parent.Name;
+        }
+    }
+
+    public bool CanNavigateParent => BreadcrumbPath.Count >= 2;
+    public bool IsFolderOpen => CurrentEntity?.IsFolder == true;
+    public bool IsFileOpen => CurrentEntity is { IsFolder: false };
+    public int ListedChildCount => Items.Count;
+    public string ListedChildCountText => ListedChildCount == 1 ? "1 item" : $"{ListedChildCount} items";
+    public string? FolderSizeSummary
+    {
+        get
+        {
+            if (CurrentFolderMapping?.LocalPath is not { } path || !Directory.Exists(path)) return null;
+            try
+            {
+                var bytes = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+                return FormatByteSize(bytes);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
     public ICommand RefreshCommand { get; }
     public ICommand NewFolderCommand { get; }
     public ICommand UploadCommand { get; }
     public ICommand DeleteCommand { get; }
+    public ICommand DeleteCurrentCommand { get; }
     public ICommand BackCommand { get; }
     public ICommand NavigateToBreadcrumbCommand { get; }
+    public ICommand NavigateParentCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand NewSubfolderCommand { get; }
     public ICommand UploadHereCommand { get; }
     public ICommand DownloadCommand { get; }
+    public ICommand DownloadCurrentCommand { get; }
     /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
     public ICommand CopyLinkCommand { get; }
     /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
     public ICommand OpenInBrowserCommand { get; }
+    public ICommand SyncCurrentMappingCommand { get; }
+    public ICommand ForceUploadCurrentMappingCommand { get; }
+    public ICommand ForceDownloadCurrentMappingCommand { get; }
+    public ICommand UnmapCurrentFolderCommand { get; }
 
     public CloudItemViewModel? SelectedItem
     {
@@ -141,36 +253,54 @@ public class CloudViewModel : ViewModelBase
     }
     public event Action<string, Stream>? DownloadFile;
 
-    public bool IsFolderSynced(Guid folderId) => SyncMappings.Any(m => m.CloudFolderId == folderId);
-
-    public bool CanMapFolder(CloudItemViewModel item)
+    public void ReturnToListInCompact()
     {
-        if (!item.IsFolder) return false;
-        if (IsFolderSynced(item.Id)) return false;
-        return BreadcrumbPath.All(b => !IsFolderSynced(b.Id));
+        if (IsCompactLayout)
+            ShowEntityInCompact = false;
     }
 
-    public void AddMapping(Guid cloudFolderId, string localPath, string? cloudFolderName = null)
+    private async Task HandleBackAsync()
     {
-        if (string.IsNullOrWhiteSpace(localPath)) return;
-        if (SyncMappings.Any(m => m.CloudFolderId == cloudFolderId)) return;
-        var ancestorSynced = BreadcrumbPath.Any(b => IsFolderSynced(b.Id));
-        if (ancestorSynced) return;
-        SyncMappings.Add(new CloudSyncMapping { CloudFolderId = cloudFolderId, LocalPath = localPath.Trim(), CloudFolderName = cloudFolderName ?? "" });
-        _syncStore.Save(SyncMappings);
-        StatusText = "Mapped — syncing into existing cloud folder…";
-        _ = LoadCurrentAsync();
-        // Full reconcile into the existing CloudFolderId — never create a new root folder for the map.
-        _ = _mappedSync.RequestFullSyncAsync();
+        if (_history.CanGoBack)
+        {
+            await GoBackAsync();
+            return;
+        }
+
+        if (IsCompactLayout && ShowEntityInCompact)
+            ShowEntityInCompact = false;
     }
 
-    public void RemoveMapping(Guid cloudFolderId)
+    private void NotifyHeaderAndInfoChanged()
     {
-        var mapping = SyncMappings.FirstOrDefault(m => m.CloudFolderId == cloudFolderId);
-        if (mapping == null) return;
-        SyncMappings.Remove(mapping);
-        _syncStore.Save(SyncMappings);
-        _ = LoadCurrentAsync();
+        OnPropertyChanged(nameof(HeaderTitle));
+        OnPropertyChanged(nameof(HeaderSubtitle));
+        OnPropertyChanged(nameof(HeaderTypeGlyph));
+        OnPropertyChanged(nameof(CanNavigateParent));
+        OnPropertyChanged(nameof(IsFolderOpen));
+        OnPropertyChanged(nameof(IsFileOpen));
+        OnPropertyChanged(nameof(ListedChildCount));
+        OnPropertyChanged(nameof(ListedChildCountText));
+        OnPropertyChanged(nameof(CurrentFolderMapping));
+        OnPropertyChanged(nameof(HasCurrentFolderMapping));
+        OnPropertyChanged(nameof(CurrentFolderMappingPath));
+        OnPropertyChanged(nameof(FolderSizeSummary));
+        OnPropertyChanged(nameof(CanMapCurrentFolder));
+        OnPropertyChanged(nameof(CanGoBack));
+        OnPropertyChanged(nameof(ShowBack));
+    }
+
+    private static string FormatByteSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes;
+        var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1)
+        {
+            size /= 1024;
+            unit++;
+        }
+        return unit == 0 ? $"{bytes} {units[unit]}" : $"{size:0.#} {units[unit]}";
     }
 
     /// <summary>Refresh cloud folder listing without clearing selection or flashing empty.</summary>
@@ -189,53 +319,6 @@ public class CloudViewModel : ViewModelBase
 
     public void StopAutoSync() => _mappedSync.StopAutoSyncInterval();
 
-    public Task SyncMappingAsync(CloudSyncMapping mapping)
-    {
-        _mappedSync.StartManualSync(mapping);
-        return Task.CompletedTask;
-    }
-
-    public Task ForceUploadMappingAsync(CloudSyncMapping mapping)
-    {
-        var confirm = System.Windows.MessageBox.Show(
-            $"Upload all local files in:\n{mapping.LocalPath}\n\nto the server (overwrite remote)?",
-            "Force upload",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Warning);
-        if (confirm != System.Windows.MessageBoxResult.Yes)
-            return Task.CompletedTask;
-        _mappedSync.StartForcePush(mapping);
-        return Task.CompletedTask;
-    }
-
-    public Task ForceDownloadMappingAsync(CloudSyncMapping mapping)
-    {
-        var confirm = System.Windows.MessageBox.Show(
-            $"Download all server files for “{mapping.CloudFolderName}”\n\noverwriting local files in:\n{mapping.LocalPath}?",
-            "Force download",
-            System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Warning);
-        if (confirm != System.Windows.MessageBoxResult.Yes)
-            return Task.CompletedTask;
-        _mappedSync.StartForcePull(mapping);
-        return Task.CompletedTask;
-    }
-
-    public async Task SyncAllMappingsOnStartupAsync()
-    {
-        if (!_authService.IsAuthenticated)
-        {
-            StatusText = "Please log in.";
-            return;
-        }
-        var mappings = SyncMappings
-            .Where(m => !string.IsNullOrWhiteSpace(m.LocalPath) && Directory.Exists(m.LocalPath))
-            .ToList();
-        if (mappings.Count == 0) return;
-        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => StatusText = "Syncing…");
-        await _mappedSync.SynchronizeAllMappedAsync();
-    }
-
     public async Task EnsureRootAsync()
     {
         if (_authService.CurrentToken == null) return;
@@ -250,8 +333,6 @@ public class CloudViewModel : ViewModelBase
             new[] { new CloudBreadcrumbEntry { Id = rootId, Name = "Cloud" } },
             pushHistory: false);
     }
-
-    private Guid? _listedFolderId;
 
     public async Task LoadCurrentAsync(bool quiet = true, Guid? restoreSelectionId = null)
     {
@@ -292,6 +373,9 @@ public class CloudViewModel : ViewModelBase
             ReportCaughtException(ex);
         }
         OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(ListedChildCount));
+        OnPropertyChanged(nameof(ListedChildCountText));
+        OnPropertyChanged(nameof(FolderSizeSummary));
     }
 
     /// <summary>
@@ -356,316 +440,5 @@ public class CloudViewModel : ViewModelBase
         }
         else
             StatusText = "Error: " + ex.Message;
-    }
-
-    /// <summary>Breadcrumb trail of the listed folder at the time an entity was opened; Back restores it.</summary>
-    private sealed record CloudLocation(CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb);
-
-    private async Task OpenAsync(
-        CloudEntityRef target,
-        IEnumerable<CloudBreadcrumbEntry> breadcrumb,
-        bool pushHistory = true,
-        Guid? restoreSelectionId = null,
-        double? restoreScrollOffset = null)
-    {
-        if (pushHistory && CurrentEntity != null)
-            _history.Push(new NavigationEntry<Guid>(CurrentEntity.Id, ListScrollOffset, SelectedItem?.Id ?? Guid.Empty));
-
-        var trail = breadcrumb.Select((b, i) => new CloudBreadcrumbEntry { Index = i, Id = b.Id, Name = b.Name }).ToList();
-        _locations[target.Id] = new CloudLocation(target, trail);
-        if (!BreadcrumbPath.Select(b => b.Id).SequenceEqual(trail.Select(b => b.Id)))
-        {
-            BreadcrumbPath.Clear();
-            foreach (var b in trail)
-                BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = b.Index, Id = b.Id, Name = b.Name });
-        }
-
-        CurrentEntity = target;
-        await LoadCurrentAsync(quiet: true, restoreSelectionId);
-        if (restoreScrollOffset is { } offset)
-            ListScrollRestoreRequested?.Invoke(offset);
-    }
-
-    private async Task OpenItemAsync(CloudItemViewModel item)
-    {
-        if (ListedFolderId is not { } parentId || CurrentEntity?.Id == item.Id) return;
-        var kind = item.IsFolder ? CloudEntityKind.Folder : CloudEntityKind.File;
-        var trail = item.IsFolder
-            ? BreadcrumbPath.Append(new CloudBreadcrumbEntry { Id = item.Id, Name = item.Name })
-            : BreadcrumbPath;
-        await OpenAsync(new CloudEntityRef(item.Id, kind, item.Name, parentId), trail.ToList());
-    }
-
-    private async Task NavigateToBreadcrumbAsync(int index)
-    {
-        if (index < 0 || index >= BreadcrumbPath.Count) return;
-        var entry = BreadcrumbPath[index];
-        if (CurrentEntity?.Id == entry.Id) return;
-        var parentId = index > 0 ? BreadcrumbPath[index - 1].Id : (Guid?)null;
-        await OpenAsync(
-            new CloudEntityRef(entry.Id, CloudEntityKind.Folder, entry.Name, parentId),
-            BreadcrumbPath.Take(index + 1).ToList());
-    }
-
-    private async Task GoBackAsync()
-    {
-        while (_history.TryPop(out var entry))
-        {
-            if (!_locations.TryGetValue(entry.Key, out var location)) continue;
-            await OpenAsync(
-                location.Entity,
-                location.Breadcrumb,
-                pushHistory: false,
-                restoreSelectionId: entry.SelectedKey == Guid.Empty ? null : entry.SelectedKey,
-                restoreScrollOffset: entry.ListScrollOffset);
-            return;
-        }
-    }
-
-    private void NewSubfolder(CloudItemViewModel parentFolder)
-    {
-        if (!parentFolder.IsFolder) return;
-        if (!Dialogs.InputDialog.TryShow("Folder name:", "New subfolder", out var name) || string.IsNullOrWhiteSpace(name)) return;
-        var nameTrim = name.Trim();
-        var currentId = ListedFolderId!.Value;
-        var parentName = parentFolder.Name;
-        var breadcrumbSnapshot = BreadcrumbPath.ToList();
-        var mappingsSnapshot = SyncMappings.ToList();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                if (CloudMappingMirrorPaths.TryGetSyncedMirrorForChildFolder(
-                        currentId, parentName, breadcrumbSnapshot, mappingsSnapshot, out var root, out var parentLocal))
-                {
-                    Directory.CreateDirectory(Path.Combine(parentLocal, nameTrim));
-                    await _mappedSync.RunFolderSynchronizeAsync(root.CloudFolderId, root.LocalPath);
-                }
-                else
-                {
-                    await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentFolder.Id }, nameTrim);
-                }
-
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
-            }
-            catch (Exception ex)
-            {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
-            }
-        });
-    }
-
-    private void UploadHere(CloudItemViewModel targetFolder)
-    {
-        if (!targetFolder.IsFolder) return;
-        var dlg = new Microsoft.Win32.OpenFileDialog();
-        if (dlg.ShowDialog() != true) return;
-        var path = dlg.FileName;
-        var currentId = ListedFolderId!.Value;
-        var targetName = targetFolder.Name;
-        var breadcrumbSnapshot = BreadcrumbPath.ToList();
-        var mappingsSnapshot = SyncMappings.ToList();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var fileName = Path.GetFileName(path);
-                if (CloudMappingMirrorPaths.TryGetSyncedMirrorForChildFolder(
-                        currentId, targetName, breadcrumbSnapshot, mappingsSnapshot, out var root, out var targetLocal))
-                {
-                    Directory.CreateDirectory(targetLocal);
-                    File.Copy(path, Path.Combine(targetLocal, fileName), overwrite: true);
-                    await _mappedSync.RunFolderSynchronizeAsync(root.CloudFolderId, root.LocalPath);
-                }
-                else
-                {
-                    await UploadNewCloudFileAsync(targetFolder.Id, path);
-                }
-
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
-            }
-            catch (Exception ex)
-            {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
-            }
-        });
-    }
-
-    private void NewFolder()
-    {
-        if (ListedFolderId is not { } currentId) return;
-        if (!Dialogs.InputDialog.TryShow("Folder name:", "New folder", out var name) || string.IsNullOrWhiteSpace(name)) return;
-        var nameTrim = name.Trim();
-        var breadcrumbSnapshot = BreadcrumbPath.ToList();
-        var mappingsSnapshot = SyncMappings.ToList();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                if (CloudMappingMirrorPaths.TryGetSyncedMirror(currentId, breadcrumbSnapshot, mappingsSnapshot, out var root, out var localDir))
-                {
-                    Directory.CreateDirectory(Path.Combine(localDir, nameTrim));
-                    await _mappedSync.RunFolderSynchronizeAsync(root.CloudFolderId, root.LocalPath);
-                }
-                else
-                {
-                    await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { currentId }, nameTrim);
-                }
-
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
-            }
-            catch (Exception ex)
-            {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
-            }
-        });
-    }
-
-    private void Upload()
-    {
-        if (ListedFolderId is not { } currentId) return;
-        var dlg = new Microsoft.Win32.OpenFileDialog();
-        if (dlg.ShowDialog() != true) return;
-        var path = dlg.FileName;
-        var breadcrumbSnapshot = BreadcrumbPath.ToList();
-        var mappingsSnapshot = SyncMappings.ToList();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var fileName = Path.GetFileName(path);
-                if (CloudMappingMirrorPaths.TryGetSyncedMirror(currentId, breadcrumbSnapshot, mappingsSnapshot, out var root, out var localDir))
-                {
-                    Directory.CreateDirectory(localDir);
-                    File.Copy(path, Path.Combine(localDir, fileName), overwrite: true);
-                    await _mappedSync.RunFolderSynchronizeAsync(root.CloudFolderId, root.LocalPath);
-                }
-                else
-                {
-                    await UploadNewCloudFileAsync(currentId, path);
-                }
-
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => LoadCurrentAsync(quiet: true));
-            }
-            catch (Exception ex)
-            {
-                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() => ReportCaughtException(ex));
-            }
-        });
-    }
-
-    private async Task UploadNewCloudFileAsync(Guid parentFolderId, string localFilePath)
-    {
-        var fileName = Path.GetFileName(localFilePath);
-        var entityId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentFolderId }, fileName);
-        await using var stream = File.OpenRead(localFilePath);
-        var mime = MimeTypes.GetMimeType(fileName);
-        await _api.AddFileAsync(entityId, fileName, stream, mime);
-    }
-
-    private async Task DeleteAsync(CloudItemViewModel item)
-    {
-        try
-        {
-            var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
-            _mappedSync.SuspendMappedRootWatchers();
-            try
-            {
-                if (item.IsFolder)
-                {
-                    var children = await _api.GetEntitiesAsync(new[] { item.Id }, includeValues: false);
-                    foreach (var c in children ?? new List<GetEntitiesResult>())
-                    {
-                        if (c.Code == CloudEntityCodes.CloudFile)
-                            await _api.DeleteEntityAsync(c.Id);
-                        else if (c.Code == CloudEntityCodes.CloudFolder)
-                            await DeleteFolderRecursiveAsync(c.Id);
-                    }
-                    await _api.DeleteEntityAsync(item.Id);
-                }
-                else
-                {
-                    await _api.DeleteEntityAsync(item.Id);
-                }
-
-                CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);
-                Items.Remove(item);
-                _locations.Remove(item.Id);
-                if (CurrentEntity?.Id == item.Id && ListedFolderId is { } listedId && _locations.TryGetValue(listedId, out var folder))
-                    CurrentEntity = folder.Entity;
-            }
-            finally
-            {
-                _mappedSync.ResumeMappedRootWatchers();
-            }
-
-            await LoadCurrentAsync();
-        }
-        catch (Exception ex)
-        {
-            ReportCaughtException(ex);
-        }
-    }
-
-    private async Task DeleteFolderRecursiveAsync(Guid folderId)
-    {
-        var children = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: false);
-        foreach (var c in children ?? new List<GetEntitiesResult>())
-        {
-            if (c.Code == CloudEntityCodes.CloudFile)
-                await _api.DeleteEntityAsync(c.Id);
-            else
-                await DeleteFolderRecursiveAsync(c.Id);
-        }
-        await _api.DeleteEntityAsync(folderId);
-    }
-
-    public async Task DownloadAsync(CloudItemViewModel item)
-    {
-        if (item.IsFolder) return;
-        try
-        {
-            var stream = await _api.GetFileStreamAsync(item.Id);
-            DownloadFile?.Invoke(item.Name, stream);
-        }
-        catch (Exception ex)
-        {
-            ReportCaughtException(ex);
-        }
-    }
-
-    private Guid? LinkTargetId(object? parameter) => parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
-
-    private string BuildLink(Guid entityId)
-    {
-        var settings = _settingsService.LoadSettings();
-        return EntityLinks.Build(settings.PublicSiteBaseUrl, entityId, settings.UiLanguage);
-    }
-
-    private void CopyLink(Guid? entityId)
-    {
-        if (entityId is not { } id) return;
-        try
-        {
-            System.Windows.Clipboard.SetText(BuildLink(id));
-            StatusText = "Link copied";
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Could not copy link: " + ex.Message;
-        }
-    }
-
-    private void OpenInBrowser(Guid? entityId)
-    {
-        if (entityId is not { } id) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = BuildLink(id), UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Could not open browser: " + ex.Message;
-        }
     }
 }

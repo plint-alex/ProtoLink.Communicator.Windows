@@ -1,0 +1,49 @@
+<UserControl x:Class="ProtoLink.Communicator.Windows.Controls.EntityHeader"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignHeight="64" d:DesignWidth="480"
+             Foreground="{DynamicResource ForegroundBrush}">
+    <Border Background="{DynamicResource ToolbarBackground}"
+            BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,10">
+        <DockPanel LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="Copy link" Command="{Binding CopyLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        Style="{DynamicResource IgGhostButton}" ToolTip="Copy link (Ctrl+Shift+C)" Margin="0,0,4,0"
+                        Visibility="{Binding ShowCopyLink, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                <Button x:Name="MoreButton" Content="⋮" Width="36" Height="32" FontSize="16"
+                        Style="{DynamicResource IgGhostButton}" ToolTip="More"
+                        Click="OnMoreClick"
+                        Visibility="{Binding ShowMoreMenu, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </StackPanel>
+
+            <Button DockPanel.Dock="Left" Content="←" Width="36" Height="32" FontSize="16" Margin="0,0,8,0"
+                    Command="{Binding BackCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    Style="{DynamicResource IgGhostButton}" ToolTip="Back (Alt+←)"
+                    Visibility="{Binding ShowBack, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+            <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="10" Margin="0,0,10,0"
+                    Background="{DynamicResource AccentSoftBrush}"
+                    Visibility="{Binding TypeGlyph, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StringToVisibilityConverter}}">
+                <TextBlock Text="{Binding TypeGlyph, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                           FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ForegroundBrush}"/>
+                <Button x:Name="SubtitleButton"
+                        Command="{Binding NavigateParentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        Style="{DynamicResource IgGhostButton}" Padding="0,2" HorizontalAlignment="Left"
+                        Visibility="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StringToVisibilityConverter}}"
+                        ToolTip="Open parent">
+                    <TextBlock Text="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                               FontSize="12" Foreground="{DynamicResource ForegroundMutedBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                </Button>
+            </StackPanel>
+        </DockPanel>
+    </Border>
+</UserControl>

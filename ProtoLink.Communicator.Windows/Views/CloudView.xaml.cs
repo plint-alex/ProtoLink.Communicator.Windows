@@ -13,25 +13,78 @@ namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class CloudView : System.Windows.Controls.UserControl
 {
+    private const double CompactBreakpoint = 700;
     private CloudViewModel? _vm;
+    private GridLength _listColumnWidth = new(360);
 
     public CloudView()
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        DataContextChanged += OnDataContextChanged;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _vm = DataContext as CloudViewModel;
+        HookViewModel(DataContext as CloudViewModel);
         if (_vm != null)
         {
-            _vm.ListScrollRestoreRequested += OnListScrollRestoreRequested;
-            _vm.DownloadFile += OnDownloadFile;
             await _vm.EnsureRootAsync();
             // Defer sync so messenger contact GetEntities is not starved at startup.
             _ = StartDeferredSyncAsync();
         }
+        ApplyResponsiveLayout();
+        RebuildEntityMoreMenu();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) => UnhookViewModel();
+
+    private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        UnhookViewModel();
+        HookViewModel(e.NewValue as CloudViewModel);
+        RebuildEntityMoreMenu();
+    }
+
+    private void HookViewModel(CloudViewModel? vm)
+    {
+        _vm = vm;
+        if (_vm == null) return;
+        _vm.ListScrollRestoreRequested += OnListScrollRestoreRequested;
+        _vm.DownloadFile += OnDownloadFile;
+        _vm.EntityOpened += OnEntityOpened;
+        _vm.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void UnhookViewModel()
+    {
+        if (_vm == null) return;
+        _vm.ListScrollRestoreRequested -= OnListScrollRestoreRequested;
+        _vm.DownloadFile -= OnDownloadFile;
+        _vm.EntityOpened -= OnEntityOpened;
+        _vm.PropertyChanged -= OnViewModelPropertyChanged;
+        _vm = null;
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CloudViewModel.CurrentEntity)
+            or nameof(CloudViewModel.HasCurrentFolderMapping)
+            or nameof(CloudViewModel.CanMapCurrentFolder)
+            or nameof(CloudViewModel.IsFolderOpen)
+            or nameof(CloudViewModel.IsFileOpen))
+            RebuildEntityMoreMenu();
+
+        if (e.PropertyName is nameof(CloudViewModel.ShowListPane) or nameof(CloudViewModel.ShowEntityPane)
+            or nameof(CloudViewModel.IsCompactLayout))
+            ApplyColumnLayout();
+    }
+
+    private void OnEntityOpened()
+    {
+        if (_vm?.IsCompactLayout == true)
+            _vm.ShowEntityInCompact = true;
     }
 
     private async Task StartDeferredSyncAsync()
@@ -46,6 +99,124 @@ public partial class CloudView : System.Windows.Controls.UserControl
         {
             // Sync errors are reported via CloudViewModel callback.
         }
+    }
+
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Math.Abs(e.PreviousSize.Width - e.NewSize.Width) < 0.5) return;
+        ApplyResponsiveLayout();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        if (_vm == null) return;
+        _vm.IsCompactLayout = ActualWidth > 0 && ActualWidth < CompactBreakpoint;
+        ApplyColumnLayout();
+    }
+
+    private void ApplyColumnLayout()
+    {
+        if (_vm == null) return;
+
+        if (_vm.IsCompactLayout)
+        {
+            if (ListColumn.Width.Value > 0)
+                _listColumnWidth = ListColumn.Width;
+
+            PaneSplitter.Visibility = Visibility.Collapsed;
+            SplitterColumn.Width = new GridLength(0);
+
+            if (_vm.ShowEntityInCompact)
+            {
+                ListColumn.Width = new GridLength(0);
+                ListColumn.MinWidth = 0;
+                EntityColumn.Width = new GridLength(1, GridUnitType.Star);
+            }
+            else
+            {
+                ListColumn.MinWidth = 0;
+                ListColumn.MaxWidth = double.PositiveInfinity;
+                ListColumn.Width = new GridLength(1, GridUnitType.Star);
+                EntityColumn.Width = new GridLength(0);
+            }
+        }
+        else
+        {
+            ListColumn.MinWidth = 320;
+            ListColumn.MaxWidth = 420;
+            ListColumn.Width = _listColumnWidth.Value > 0 ? _listColumnWidth : new GridLength(360);
+            SplitterColumn.Width = new GridLength(4);
+            EntityColumn.Width = new GridLength(1, GridUnitType.Star);
+            PaneSplitter.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void RebuildEntityMoreMenu()
+    {
+        if (_vm == null)
+        {
+            EntityHeaderControl.MoreMenu = null;
+            return;
+        }
+
+        var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand });
+        if (_vm.IsFileOpen)
+            menu.Items.Add(new MenuItem { Header = "Download", Command = _vm.DownloadCurrentCommand });
+        menu.Items.Add(new Separator());
+
+        if (_vm.IsFolderOpen)
+        {
+            if (_vm.CanMapCurrentFolder)
+            {
+                var mapItem = new MenuItem { Header = "Map to local folder…" };
+                mapItem.Click += (_, _) => OnMapCurrentFolderClick(this, new RoutedEventArgs());
+                menu.Items.Add(mapItem);
+            }
+
+            if (_vm.HasCurrentFolderMapping)
+            {
+                menu.Items.Add(new MenuItem { Header = "Sync", Command = _vm.SyncCurrentMappingCommand });
+                menu.Items.Add(new MenuItem { Header = "Upload all", Command = _vm.ForceUploadCurrentMappingCommand });
+                menu.Items.Add(new MenuItem { Header = "Download all", Command = _vm.ForceDownloadCurrentMappingCommand });
+                menu.Items.Add(new MenuItem { Header = "Unmap", Command = _vm.UnmapCurrentFolderCommand });
+                menu.Items.Add(new Separator());
+            }
+        }
+
+        if (_vm.CurrentEntity?.ParentId != null)
+        {
+            var deleteItem = new MenuItem { Header = "Delete" };
+            deleteItem.Click += (_, _) => OnDeleteCurrentEntity();
+            menu.Items.Add(deleteItem);
+        }
+
+        EntityHeaderControl.MoreMenu = menu;
+        EntityHeaderControl.ShowMoreMenu = menu.Items.Count > 0;
+    }
+
+    private void OnMapCurrentFolderClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm?.CurrentEntity is not { IsFolder: true } folder) return;
+        using var dlg = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "Select local folder to sync with",
+            UseDescriptionForTitle = true
+        };
+        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        _vm.AddMapping(folder.Id, dlg.SelectedPath, folder.Name);
+    }
+
+    private void OnDeleteCurrentEntity()
+    {
+        if (_vm?.CurrentEntity is null) return;
+        var entity = _vm.CurrentEntity;
+        var message = entity.IsFolder
+            ? $"Delete folder \"{entity.Name}\" and all its contents?"
+            : $"Delete file \"{entity.Name}\"?";
+        if (System.Windows.MessageBox.Show(message, "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        _vm.DeleteCurrentCommand.Execute(null);
     }
 
     private void OnListScrollRestoreRequested(double offset)
@@ -115,6 +286,11 @@ public partial class CloudView : System.Windows.Controls.UserControl
             ExecuteIfCan(_vm.BackCommand);
             e.Handled = true;
         }
+        else if (key == Key.Escape && _vm.IsCompactLayout && _vm.ShowEntityInCompact)
+        {
+            _vm.ReturnToListInCompact();
+            e.Handled = true;
+        }
         else if (key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             ExecuteIfCan(_vm.CopyLinkCommand);
@@ -165,6 +341,12 @@ public partial class CloudView : System.Windows.Controls.UserControl
                     var syncNowItem = new MenuItem { Header = "Sync now" };
                     syncNowItem.Click += (s, e) => _ = _vm.SyncMappingAsync(mapping);
                     menu.Items.Add(syncNowItem);
+                    var uploadAll = new MenuItem { Header = "Upload all" };
+                    uploadAll.Click += (s, e) => _ = _vm.ForceUploadMappingAsync(mapping);
+                    menu.Items.Add(uploadAll);
+                    var downloadAll = new MenuItem { Header = "Download all" };
+                    downloadAll.Click += (s, e) => _ = _vm.ForceDownloadMappingAsync(mapping);
+                    menu.Items.Add(downloadAll);
                 }
                 var unmapItem = new MenuItem { Header = "Unmap" };
                 unmapItem.Click += (s, e) => _vm.RemoveMapping(item.Id);
@@ -221,29 +403,5 @@ public partial class CloudView : System.Windows.Controls.UserControl
         menu.Items.Add(new MenuItem { Header = "Upload", Command = _vm.UploadCommand });
         menu.Items.Add(new MenuItem { Header = "Refresh", Command = _vm.RefreshCommand });
         return menu;
-    }
-
-    private void OnUnmapSyncClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
-        _vm?.RemoveMapping(mapping.CloudFolderId);
-    }
-
-    private void OnSyncNowClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
-        _ = _vm?.SyncMappingAsync(mapping);
-    }
-
-    private void OnForceUploadClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
-        _ = _vm?.ForceUploadMappingAsync(mapping);
-    }
-
-    private void OnForceDownloadClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.Button btn || btn.Tag is not CloudSyncMapping mapping) return;
-        _ = _vm?.ForceDownloadMappingAsync(mapping);
     }
 }
