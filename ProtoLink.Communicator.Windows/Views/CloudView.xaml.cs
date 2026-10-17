@@ -33,7 +33,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
         HookViewModel(DataContext as CloudViewModel);
         if (_vm != null)
         {
-            await _vm.EnsureRootAsync();
+            await _vm.InitializeNavigationAsync();
             // Defer sync so messenger contact GetEntities is not starved at startup.
             _ = StartDeferredSyncAsync();
         }
@@ -335,15 +335,32 @@ public partial class CloudView : System.Windows.Controls.UserControl
             ExecuteIfCan(_vm.BackCommand);
             e.Handled = true;
         }
-        else if (key == Key.Escape && _vm.IsCompactLayout && _vm.ShowEntityInCompact)
+        else if (key == Key.Escape)
         {
-            _vm.ReturnToListInCompact();
+            _vm.HandleEscape();
+            FocusList();
+            e.Handled = true;
+        }
+        else if (key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            ListSearchBox.Focus();
+            ListSearchBox.SelectAll();
             e.Handled = true;
         }
         else if (key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             ExecuteIfCan(_vm.CopyLinkCommand);
             e.Handled = true;
+        }
+    }
+
+    private void FocusList()
+    {
+        CloudListBox.Focus();
+        if (CloudListBox.SelectedItem != null)
+        {
+            var container = CloudListBox.ItemContainerGenerator.ContainerFromItem(CloudListBox.SelectedItem) as ListBoxItem;
+            container?.Focus();
         }
     }
 

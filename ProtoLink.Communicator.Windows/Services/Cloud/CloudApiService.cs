@@ -39,6 +39,36 @@ public class CloudApiService
 
     public async Task<List<GetEntitiesResult>> GetEntitiesAsync(Guid[]? parentIds, bool includeValues = true)
     {
+        return await GetEntitiesPagedAsync(new GetEntitiesContract
+        {
+            ParentIds = parentIds,
+            IncludeValues = includeValues
+        });
+    }
+
+    /// <summary>Fetch entities by id (empty list when none are visible / gone).</summary>
+    public async Task<List<GetEntitiesResult>> GetEntitiesByIdsAsync(Guid[] ids, bool includeValues = true)
+    {
+        if (ids.Length == 0) return new List<GetEntitiesResult>();
+        return await GetEntitiesPagedAsync(new GetEntitiesContract
+        {
+            Ids = ids,
+            IncludeValues = includeValues
+        });
+    }
+
+    /// <summary>Immediate parents of <paramref name="entityId"/> (API <c>IdsToFindParents</c>).</summary>
+    public async Task<List<GetEntitiesResult>> GetParentEntitiesAsync(Guid entityId, bool includeValues = true)
+    {
+        return await GetEntitiesPagedAsync(new GetEntitiesContract
+        {
+            IdsToFindParents = new[] { entityId },
+            IncludeValues = includeValues
+        });
+    }
+
+    private async Task<List<GetEntitiesResult>> GetEntitiesPagedAsync(GetEntitiesContract template)
+    {
         const int pageSize = 200;
         var all = new List<GetEntitiesResult>();
         var skip = 0;
@@ -46,8 +76,10 @@ public class CloudApiService
         {
             var response = await _http.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
             {
-                ParentIds = parentIds,
-                IncludeValues = includeValues,
+                Ids = template.Ids,
+                ParentIds = template.ParentIds,
+                IdsToFindParents = template.IdsToFindParents,
+                IncludeValues = template.IncludeValues,
                 Skip = skip,
                 Take = pageSize
             });

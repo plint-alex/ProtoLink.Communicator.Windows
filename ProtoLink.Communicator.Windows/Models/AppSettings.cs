@@ -13,4 +13,6 @@ public class AppSettings
     /// <summary>App UI language (e.g. <c>ru-RU</c>); appended to entity links as <c>?lang=</c> only when set.</summary>
     public string? UiLanguage { get; set; }
     public string? NotesRootPath { get; set; }
+    /// <summary>Last open Cloud entity id; restored on next start (AT-C7). Null → Cloud root.</summary>
+    public Guid? LastOpenCloudEntityId { get; set; }
 }

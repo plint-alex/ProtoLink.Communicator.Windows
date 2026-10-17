@@ -32,6 +32,7 @@ public partial class CloudViewModel
         }
 
         CurrentEntity = target;
+        PersistLastOpenCloudEntityId(target.Id);
         await LoadCurrentAsync(quiet: true, restoreSelectionId);
         if (restoreScrollOffset is { } offset)
             ListScrollRestoreRequested?.Invoke(offset);

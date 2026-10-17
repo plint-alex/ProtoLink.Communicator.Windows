@@ -125,12 +125,16 @@ public class SettingsViewModel : ViewModelBase
 
     private void SaveSettings()
     {
+        // Preserve fields not edited on this page (UiLanguage, LastOpenCloudEntityId).
+        var existing = _settingsService.LoadSettings();
         _settingsService.SaveSettings(new AppSettings
         {
             Theme = Theme,
             ApiBaseAddress = ApiBaseAddress,
             PublicSiteBaseUrl = PublicSiteBaseUrl,
-            NotesRootPath = NotesRootPath
+            NotesRootPath = NotesRootPath,
+            UiLanguage = existing.UiLanguage,
+            LastOpenCloudEntityId = existing.LastOpenCloudEntityId
         });
         OnSettingsSaved?.Invoke();
         _ = LoadApiVersionAsync();

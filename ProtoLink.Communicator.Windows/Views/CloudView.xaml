@@ -39,12 +39,7 @@
         </Style>
     </UserControl.Resources>
     <Grid Background="{DynamicResource ContentBackground}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <Grid Grid.Row="0" x:Name="PanesGrid">
+        <Grid x:Name="PanesGrid">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="ListColumn" Width="360" MinWidth="320" MaxWidth="420"/>
                 <ColumnDefinition x:Name="SplitterColumn" Width="4"/>
@@ -56,17 +51,49 @@
                   Visibility="{Binding ShowListPane, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
                         BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
-                    <TextBlock Text="Cloud" FontSize="20" FontWeight="Bold"
-                               Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+                    <StackPanel>
+                        <TextBlock Text="Cloud" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"
+                                   Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+                        <TextBox x:Name="ListSearchBox"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Padding="8,6" FontSize="13"
+                                 Background="{DynamicResource ContentBackground}"
+                                 Foreground="{DynamicResource ForegroundBrush}"
+                                 BorderBrush="{DynamicResource BorderBrushStandard}"
+                                 ToolTip="Search in this folder (Ctrl+F)"/>
+                    </StackPanel>
                 </Border>
 
-                <Grid Grid.Row="1">
-                    <ListBox x:Name="CloudListBox" ItemsSource="{Binding Items}" KeyDown="OnListKeyDown"
+                <!-- Offline / status banners (UX Pattern 5; replaces permanent status bar) -->
+                <StackPanel Grid.Row="1">
+                    <Border Padding="12,8" Background="{DynamicResource AccentSoftBrush}"
+                            BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"
+                            Visibility="{Binding ShowNetworkBanner, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="Waiting for network…" FontSize="12"
+                                   Foreground="{DynamicResource ForegroundBrush}"/>
+                    </Border>
+                    <Border Padding="12,8" Background="{DynamicResource ToolbarBackground}"
+                            BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"
+                            Visibility="{Binding ShowStatusBanner, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right" Content="Details" Margin="8,0,0,0" Padding="8,2"
+                                    Style="{DynamicResource IgGhostButton}"
+                                    Command="{Binding ShowErrorDetailsCommand}"
+                                    Visibility="{Binding HasErrorDetails, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
+                </StackPanel>
+
+                <Grid Grid.Row="2">
+                    <ListBox x:Name="CloudListBox" ItemsSource="{Binding FilteredItems}" KeyDown="OnListKeyDown"
                              ScrollViewer.ScrollChanged="OnListScrollChanged"
                              SelectionChanged="OnSelectionChanged" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                              BorderThickness="0" Background="{DynamicResource ListBackground}"
@@ -244,11 +271,5 @@
                 </Grid>
             </Grid>
         </Grid>
-
-        <Border Grid.Row="1" Background="{DynamicResource StatusBarBackground}"
-                BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
-            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" MaxHeight="60"
-                       Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
-        </Border>
     </Grid>
 </UserControl>

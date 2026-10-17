@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Windows.Data;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
@@ -24,6 +26,9 @@ public partial class CloudViewModel : ViewModelBase
     private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
+    private string _searchText = "";
+    private bool _showNetworkBanner;
+    private Exception? _lastError;
     private bool _isCompactLayout;
     private bool _showEntityInCompact;
     private Guid? _listedFolderId;
@@ -45,6 +50,8 @@ public partial class CloudViewModel : ViewModelBase
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
         Items = new ObservableCollection<CloudItemViewModel>();
+        FilteredItems = CollectionViewSource.GetDefaultView(Items);
+        FilteredItems.Filter = MatchesSearchFilter;
         BreadcrumbPath = new ObservableCollection<CloudBreadcrumbEntry>();
         SyncMappings = new ObservableCollection<CloudSyncMapping>(_syncStore.Load());
         _mappedSync = new CloudMappedSyncCoordinator(
@@ -107,6 +114,7 @@ public partial class CloudViewModel : ViewModelBase
         ForceUploadCurrentMappingCommand = new RelayCommand(_ => ForceUploadCurrentMapping(), _ => HasCurrentFolderMapping);
         ForceDownloadCurrentMappingCommand = new RelayCommand(_ => ForceDownloadCurrentMapping(), _ => HasCurrentFolderMapping);
         UnmapCurrentFolderCommand = new RelayCommand(_ => UnmapCurrentFolder(), _ => HasCurrentFolderMapping);
+        ShowErrorDetailsCommand = new RelayCommand(_ => ShowErrorDetails(), _ => HasErrorDetails);
         _history.Changed += () =>
         {
             OnPropertyChanged(nameof(CanGoBack));
@@ -116,6 +124,7 @@ public partial class CloudViewModel : ViewModelBase
     }
 
     public ObservableCollection<CloudItemViewModel> Items { get; }
+    public ICollectionView FilteredItems { get; }
     public ObservableCollection<CloudBreadcrumbEntry> BreadcrumbPath { get; }
     public ObservableCollection<CloudSyncMapping> SyncMappings { get; }
     public bool IsEmpty => Items.Count == 0;
@@ -144,7 +153,39 @@ public partial class CloudViewModel : ViewModelBase
     /// <summary>Raised after an entity is opened so the view can show the entity pane in compact layout.</summary>
     public event Action? EntityOpened;
 
-    public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
+    public string StatusText
+    {
+        get => _statusText;
+        set
+        {
+            _statusText = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowStatusBanner));
+        }
+    }
+
+    /// <summary>AT-C6: shown when a folder listing fails; cleared on successful load / SignalR reconnect refresh.</summary>
+    public bool ShowNetworkBanner => _showNetworkBanner;
+
+    /// <summary>Transient sync/copy/error line (replaces the permanent status bar).</summary>
+    public bool ShowStatusBanner =>
+        !_showNetworkBanner
+        && !string.IsNullOrWhiteSpace(_statusText)
+        && !string.Equals(_statusText, "Ready", StringComparison.Ordinal);
+
+    public bool HasErrorDetails => _lastError != null;
+
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (_searchText == value) return;
+            _searchText = value;
+            OnPropertyChanged();
+            FilteredItems.Refresh();
+        }
+    }
 
     public bool IsCompactLayout
     {
@@ -241,6 +282,7 @@ public partial class CloudViewModel : ViewModelBase
     public ICommand ForceUploadCurrentMappingCommand { get; }
     public ICommand ForceDownloadCurrentMappingCommand { get; }
     public ICommand UnmapCurrentFolderCommand { get; }
+    public ICommand ShowErrorDetailsCommand { get; }
 
     public CloudItemViewModel? SelectedItem
     {
@@ -259,6 +301,25 @@ public partial class CloudViewModel : ViewModelBase
     {
         if (IsCompactLayout)
             ShowEntityInCompact = false;
+    }
+
+    /// <summary>Esc: leave entity focus in compact layout; caller focuses the list.</summary>
+    public bool HandleEscape()
+    {
+        if (IsCompactLayout && ShowEntityInCompact)
+        {
+            ShowEntityInCompact = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool MatchesSearchFilter(object obj)
+    {
+        if (obj is not CloudItemViewModel item) return false;
+        if (string.IsNullOrWhiteSpace(_searchText)) return true;
+        return item.Name.Contains(_searchText.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task HandleBackAsync()
@@ -305,7 +366,7 @@ public partial class CloudViewModel : ViewModelBase
         return unit == 0 ? $"{bytes} {units[unit]}" : $"{size:0.#} {units[unit]}";
     }
 
-    /// <summary>Refresh cloud folder listing without clearing selection or flashing empty.</summary>
+    /// <summary>Refresh cloud folder listing without clearing selection or flashing empty. Clears offline banner on success.</summary>
     public async Task RefreshFromRealtimeAsync()
     {
         if (!_authService.IsAuthenticated) return;
@@ -367,12 +428,14 @@ public partial class CloudViewModel : ViewModelBase
 
             MergeListing(fresh, selectedId, reset: folderChanged);
             _listedFolderId = folderId;
+            ClearNetworkBanner();
             if (!quiet)
                 StatusText = "Ready";
         }
         catch (Exception ex)
         {
-            ReportCaughtException(ex);
+            // Keep last list (MergeListing not called); show offline banner (AT-C6).
+            ReportCaughtException(ex, asNetworkFailure: true);
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(ListedChildCount));
@@ -433,14 +496,28 @@ public partial class CloudViewModel : ViewModelBase
         }
     }
 
-    private void ReportCaughtException(Exception ex)
+    private void ReportCaughtException(Exception ex, bool asNetworkFailure = false)
     {
         if (CloudFolderSynchronizer.IsAuthFailure(ex))
         {
+            ClearNetworkBanner();
+            _lastError = null;
+            OnPropertyChanged(nameof(HasErrorDetails));
             StatusText = "Please log in.";
             _onAuthRequired?.Invoke();
+            return;
         }
-        else
-            StatusText = "Error: " + ex.Message;
+
+        if (asNetworkFailure)
+        {
+            SetNetworkBanner();
+            return;
+        }
+
+        ClearNetworkBanner();
+        _lastError = ex;
+        OnPropertyChanged(nameof(HasErrorDetails));
+        StatusText = "Something went wrong. See details.";
+        CommandManager.InvalidateRequerySuggested();
     }
 }
