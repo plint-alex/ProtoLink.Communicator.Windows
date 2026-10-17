@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:controls="clr-namespace:ProtoLink.Communicator.Windows.Controls"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
              Foreground="{DynamicResource ForegroundBrush}"
              SizeChanged="OnRootSizeChanged"
@@ -186,20 +187,61 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- File placeholder (preview in entity-nav-02) -->
-                <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24"
-                            Visibility="{Binding IsFileOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <Border Width="72" Height="72" CornerRadius="16" Margin="0,0,0,16"
-                            Background="{DynamicResource AccentSoftBrush}">
-                        <TextBlock Text="📄" FontSize="32" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <TextBlock Text="{Binding HeaderTitle}" FontSize="16" FontWeight="SemiBold" TextAlignment="Center"
-                               Foreground="{DynamicResource ForegroundBrush}" Margin="0,0,0,8"/>
-                    <TextBlock Text="Preview coming soon" FontSize="13" TextAlignment="Center"
-                               Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
-                    <Button Content="Download" HorizontalAlignment="Center" Style="{DynamicResource IgGhostButton}"
-                            Command="{Binding DownloadCurrentCommand}"/>
-                </StackPanel>
+                <!-- File preview (image / text / PDF / other) -->
+                <Grid Grid.Row="1"
+                      Visibility="{Binding IsFileOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock Text="Loading preview…" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="13"
+                               Visibility="{Binding ShowPreviewLoading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24" MaxWidth="420"
+                                Visibility="{Binding ShowPreviewError, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{Binding PreviewError}" TextWrapping="Wrap" TextAlignment="Center"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
+                        <WrapPanel HorizontalAlignment="Center">
+                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource IgGhostButton}"
+                                    Command="{Binding OpenExternallyCommand}"/>
+                            <Button Content="Download" Style="{DynamicResource IgGhostButton}"
+                                    Command="{Binding DownloadCurrentCommand}"/>
+                        </WrapPanel>
+                    </StackPanel>
+
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                  Visibility="{Binding ShowPreviewImage, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Image Source="{Binding PreviewImage}" Stretch="Uniform" Margin="16"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </ScrollViewer>
+
+                    <TextBox Text="{Binding PreviewText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                             AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto" BorderThickness="0" Padding="16"
+                             Background="Transparent" Foreground="{DynamicResource ForegroundBrush}"
+                             FontFamily="Consolas" FontSize="13"
+                             Visibility="{Binding ShowPreviewText, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                    <wv2:WebView2 x:Name="PdfPreviewWebView" DefaultBackgroundColor="Transparent"
+                                  Visibility="{Binding ShowPreviewPdf, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24"
+                                Visibility="{Binding ShowPreviewOther, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border Width="88" Height="88" CornerRadius="18" Margin="0,0,0,16"
+                                Background="{DynamicResource AccentSoftBrush}">
+                            <TextBlock Text="{Binding PreviewTypeGlyph}" FontSize="40"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="{Binding HeaderTitle}" FontSize="16" FontWeight="SemiBold" TextAlignment="Center"
+                                   Foreground="{DynamicResource ForegroundBrush}" Margin="0,0,0,8"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="360"/>
+                        <TextBlock Text="No in-app preview for this file type" FontSize="13" TextAlignment="Center"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
+                        <WrapPanel HorizontalAlignment="Center">
+                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource IgGhostButton}"
+                                    Command="{Binding OpenExternallyCommand}"/>
+                            <Button Content="Download" Style="{DynamicResource IgGhostButton}"
+                                    Command="{Binding DownloadCurrentCommand}"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Grid>
 

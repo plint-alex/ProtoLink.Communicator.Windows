@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.ViewModels;
 using ContextMenu = System.Windows.Controls.ContextMenu;
@@ -16,6 +17,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private const double CompactBreakpoint = 700;
     private CloudViewModel? _vm;
     private GridLength _listColumnWidth = new(360);
+    private bool _pdfWebViewReady;
+    private string? _pdfNavigatedPath;
 
     public CloudView()
     {
@@ -79,6 +82,10 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (e.PropertyName is nameof(CloudViewModel.ShowListPane) or nameof(CloudViewModel.ShowEntityPane)
             or nameof(CloudViewModel.IsCompactLayout))
             ApplyColumnLayout();
+
+        if (e.PropertyName is nameof(CloudViewModel.ShowPreviewPdf)
+            or nameof(CloudViewModel.PreviewOpenPath))
+            _ = UpdatePdfPreviewAsync();
     }
 
     private void OnEntityOpened()
@@ -151,6 +158,47 @@ public partial class CloudView : System.Windows.Controls.UserControl
         }
     }
 
+    private async Task UpdatePdfPreviewAsync()
+    {
+        if (_vm?.ShowPreviewPdf != true || string.IsNullOrEmpty(_vm.PreviewOpenPath) || !File.Exists(_vm.PreviewOpenPath))
+        {
+            if (_pdfWebViewReady && PdfPreviewWebView.CoreWebView2 != null)
+                PdfPreviewWebView.CoreWebView2.Navigate("about:blank");
+            _pdfNavigatedPath = null;
+            return;
+        }
+
+        var path = _vm.PreviewOpenPath;
+        if (string.Equals(_pdfNavigatedPath, path, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            await EnsurePdfWebViewAsync();
+            if (PdfPreviewWebView.CoreWebView2 == null) return;
+            var uri = new Uri(path).AbsoluteUri;
+            PdfPreviewWebView.CoreWebView2.Navigate(uri);
+            _pdfNavigatedPath = path;
+        }
+        catch
+        {
+            // Preview errors surface via VM StatusText / PreviewError when load fails upstream.
+        }
+    }
+
+    private async Task EnsurePdfWebViewAsync()
+    {
+        if (_pdfWebViewReady && PdfPreviewWebView.CoreWebView2 != null) return;
+        var userData = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ProtoLinkCommunicator",
+            "WebView2-CloudPreview");
+        Directory.CreateDirectory(userData);
+        var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+        await PdfPreviewWebView.EnsureCoreWebView2Async(env);
+        _pdfWebViewReady = PdfPreviewWebView.CoreWebView2 != null;
+    }
+
     private void RebuildEntityMoreMenu()
     {
         if (_vm == null)
@@ -162,7 +210,10 @@ public partial class CloudView : System.Windows.Controls.UserControl
         var menu = new ContextMenu();
         menu.Items.Add(new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand });
         if (_vm.IsFileOpen)
+        {
+            menu.Items.Add(new MenuItem { Header = "Open", Command = _vm.OpenExternallyCommand });
             menu.Items.Add(new MenuItem { Header = "Download", Command = _vm.DownloadCurrentCommand });
+        }
         menu.Items.Add(new Separator());
 
         if (_vm.IsFolderOpen)
@@ -258,8 +309,6 @@ public partial class CloudView : System.Windows.Controls.UserControl
     {
         var item = (sender as ListBoxItem)?.DataContext as CloudItemViewModel;
         _pressedItem = e.ClickCount == 1 ? item : null;
-        if (e.ClickCount == 2 && item is { IsFolder: false })
-            _ = _vm?.DownloadAsync(item);
     }
 
     private void OnItemMouseUp(object sender, MouseButtonEventArgs e)

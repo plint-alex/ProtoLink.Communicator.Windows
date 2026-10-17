@@ -91,6 +91,7 @@ public partial class CloudViewModel : ViewModelBase
                     _ = DownloadEntityAsync(file);
             },
             _ => CurrentEntity is { IsFolder: false });
+        InitPreviewCommands();
         DeleteCurrentCommand = new RelayCommand(
             _ =>
             {
@@ -129,6 +130,7 @@ public partial class CloudViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(ListedFolderId));
             NotifyHeaderAndInfoChanged();
+            BeginFilePreview();
             CommandManager.InvalidateRequerySuggested();
         }
     }
