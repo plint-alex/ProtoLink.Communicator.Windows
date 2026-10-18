@@ -95,6 +95,7 @@ Messenger uses the same SignalR hub for inbound commands (`message_sent`, etc.) 
 ## Related code
 
 - Windows Notes: `NotesViewModel`, `NotesView` + `NotesIndexFileWatcher`
+- Windows Notes root: `AppSettings.NotesRootPath`. When unset or missing, Notes shows **Choose a Notes folder** (not “No notes yet”); Settings → Notes root folder Browse uses `FolderPicker` (`OpenFolderDialog`). Browse/edit stay offline on the local tree.
 - Windows Cloud: `CloudMappedSyncCoordinator`, `SyncEngine.PushLocalChangesAsync` / `ReconcileAllAsync`
 - Android Notes: `MainViewModel` persist + disk poller → `requestLocalPush`
 - Android Cloud: `:sync` `SyncEngine`, `requestFullSync` / `requestLocalPush`, Settings force actions

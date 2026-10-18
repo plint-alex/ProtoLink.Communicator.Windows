@@ -64,6 +64,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             oldVm.TreeRefreshed -= PopulateTree;
             oldVm.RequestNewFolder -= OnRequestNewFolder;
+            oldVm.RequestChooseNotesRoot -= OnRequestChooseNotesRoot;
             oldVm.InternalNoteWriteStarting -= OnInternalNoteWriteStarting;
             oldVm.InternalNoteWriteCompleted -= OnInternalNoteWriteCompleted;
             oldVm.NotesPagePathChanged -= OnNotesPagePathChanged;
@@ -90,6 +91,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (_vm == null || _treeEventsHooked) return;
         _vm.TreeRefreshed += PopulateTree;
         _vm.RequestNewFolder += OnRequestNewFolder;
+        _vm.RequestChooseNotesRoot += OnRequestChooseNotesRoot;
         _vm.InternalNoteWriteStarting += OnInternalNoteWriteStarting;
         _vm.InternalNoteWriteCompleted += OnInternalNoteWriteCompleted;
         _vm.NotesPagePathChanged += OnNotesPagePathChanged;
@@ -99,6 +101,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _vm.ReturnToListRequested += OnReturnToListRequested;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         _treeEventsHooked = true;
+    }
+
+    private void OnRequestChooseNotesRoot()
+    {
+        if (_vm == null) return;
+        var path = FolderPicker.PickFolder("Select notes root folder", _vm.RootPath);
+        if (path is null) return;
+        _vm.SetNotesRootPath(path);
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

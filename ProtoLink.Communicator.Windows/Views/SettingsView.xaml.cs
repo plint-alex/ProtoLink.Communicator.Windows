@@ -1,4 +1,5 @@
 using System.Windows;
+using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
 
 namespace ProtoLink.Communicator.Windows.Views;
@@ -12,14 +13,10 @@ public partial class SettingsView : System.Windows.Controls.UserControl
 
     private void OnNotesBrowseClick(object sender, RoutedEventArgs e)
     {
-        using var dlg = new System.Windows.Forms.FolderBrowserDialog
-        {
-            Description = "Select notes root folder",
-            UseDescriptionForTitle = true,
-            SelectedPath = (DataContext as SettingsViewModel)?.NotesRootPath ?? ""
-        };
-        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+        var current = (DataContext as SettingsViewModel)?.NotesRootPath;
+        var path = FolderPicker.PickFolder("Select notes root folder", current);
+        if (path is null) return;
         if (DataContext is SettingsViewModel vm)
-            vm.NotesRootPath = dlg.SelectedPath;
+            vm.NotesRootPath = path;
     }
 }

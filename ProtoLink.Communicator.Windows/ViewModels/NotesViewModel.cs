@@ -36,14 +36,39 @@ public partial class NotesViewModel : ViewModelBase
         _renderer = new EditableMarkdownRenderer();
         _titleRename = new NotesPageTitleRenameService(_fileService, _fsService);
         _rootPath = _settingsService.LoadSettings().NotesRootPath;
-        NewFolderCommand = new RelayCommand(_ => { }, _ => !string.IsNullOrEmpty(_rootPath));
+        NewFolderCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => !NeedsNotesRoot);
+        CreateFirstNoteCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => IsNotesEmpty);
+        ChooseNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
         RefreshCommand = new RelayCommand(_ => RefreshTree());
         InitNavigationCommands();
         RefreshTree();
     }
 
     public string? RootPath { get => _rootPath; private set { _rootPath = value; OnPropertyChanged(); } }
-    public TreeItemViewModel? TreeRoot { get => _treeRoot; private set { _treeRoot = value; OnPropertyChanged(); } }
+    public TreeItemViewModel? TreeRoot
+    {
+        get => _treeRoot;
+        private set
+        {
+            _treeRoot = value;
+            OnPropertyChanged();
+            NotifyNotesListStateChanged();
+        }
+    }
+
+    /// <summary>Notes root unset or folder missing — must not look like “no notes yet”.</summary>
+    public bool NeedsNotesRoot =>
+        string.IsNullOrWhiteSpace(_rootPath) || !Directory.Exists(_rootPath);
+
+    /// <summary>Root is configured but has no child note folders yet.</summary>
+    public bool IsNotesEmpty =>
+        !NeedsNotesRoot
+        && _treeRoot != null
+        && _treeRoot.Children.Count == 0;
+
+    /// <summary>Show the Notes tree (not setup / empty states).</summary>
+    public bool ShowNotesTree => !NeedsNotesRoot && !IsNotesEmpty;
+
     public string? CurrentPagePath
     {
         get => _currentPagePath;
@@ -65,9 +90,12 @@ public partial class NotesViewModel : ViewModelBase
     public bool HasOpenPage => !string.IsNullOrEmpty(_currentPagePath);
     public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
     public ICommand NewFolderCommand { get; }
+    public ICommand CreateFirstNoteCommand { get; }
+    public ICommand ChooseNotesRootCommand { get; }
     public ICommand RefreshCommand { get; }
     public event Action? TreeRefreshed;
     public event Action? RequestNewFolder;
+    public event Action? RequestChooseNotesRoot;
     public event Action<string>? ContentSaved;
     public event Action? InternalNoteWriteStarting;
     public event Action? InternalNoteWriteCompleted;
@@ -92,7 +120,13 @@ public partial class NotesViewModel : ViewModelBase
 
     private static void PostUi(Action action)
     {
-        var d = System.Windows.Application.Current.Dispatcher;
+        var d = System.Windows.Application.Current?.Dispatcher;
+        if (d == null)
+        {
+            action();
+            return;
+        }
+
         if (d.CheckAccess())
             action();
         else
@@ -135,8 +169,32 @@ public partial class NotesViewModel : ViewModelBase
     {
         _rootPath = _settingsService.LoadSettings().NotesRootPath;
         OnPropertyChanged(nameof(RootPath));
+        NotifyNotesListStateChanged();
         RefreshTree();
         NotesRootPathChanged?.Invoke();
+    }
+
+    /// <summary>Persist Notes root from the Notes setup CTA (Settings Browse uses SettingsViewModel).</summary>
+    public void SetNotesRootPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+        var full = Path.GetFullPath(path.Trim());
+        var settings = _settingsService.LoadSettings();
+        settings.NotesRootPath = full;
+        _settingsService.SaveSettings(settings);
+        ReloadFromSettings();
+        StatusText = Directory.Exists(full)
+            ? $"Notes folder: {full}"
+            : "Notes folder not found. Choose another path.";
+    }
+
+    private void NotifyNotesListStateChanged()
+    {
+        OnPropertyChanged(nameof(NeedsNotesRoot));
+        OnPropertyChanged(nameof(IsNotesEmpty));
+        OnPropertyChanged(nameof(ShowNotesTree));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private string? _lastTreeFingerprint;
@@ -147,38 +205,50 @@ public partial class NotesViewModel : ViewModelBase
         {
             _lastTreeFingerprint = null;
             TreeRoot = null;
+            CommandManager.InvalidateRequerySuggested();
             TreeRefreshed?.Invoke();
             return;
         }
 
         var path = _rootPath;
-        _ = Task.Run(() =>
+        // No WPF dispatcher (unit tests / headless): build on the caller thread.
+        if (System.Windows.Application.Current?.Dispatcher == null)
         {
-            try
+            ApplyBuiltTree(path);
+            return;
+        }
+
+        _ = Task.Run(() => ApplyBuiltTree(path));
+    }
+
+    private void ApplyBuiltTree(string path)
+    {
+        try
+        {
+            var built = _fsService.BuildTree(path);
+            var fingerprint = ComputeTreeFingerprint(built);
+            PostUi(() =>
             {
-                var built = _fsService.BuildTree(path);
-                var fingerprint = ComputeTreeFingerprint(built);
-                PostUi(() =>
-                {
-                    if (fingerprint == _lastTreeFingerprint && TreeRoot != null)
-                        return;
-                    _lastTreeFingerprint = fingerprint;
-                    TreeRoot = built != null ? new TreeItemViewModel(built) : null;
-                    TreeRefreshed?.Invoke();
-                });
-            }
-            catch (Exception ex)
+                if (fingerprint == _lastTreeFingerprint && TreeRoot != null)
+                    return;
+                _lastTreeFingerprint = fingerprint;
+                TreeRoot = built != null ? new TreeItemViewModel(built) : null;
+                CommandManager.InvalidateRequerySuggested();
+                TreeRefreshed?.Invoke();
+            });
+        }
+        catch (Exception ex)
+        {
+            PostUi(() =>
             {
-                PostUi(() =>
-                {
-                    _lastTreeFingerprint = null;
-                    TreeRoot = null;
-                    StatusText = "Error loading notes tree.";
-                    TreeRefreshed?.Invoke();
-                    ErrorDetailDialog.Show("Notes tree", ex);
-                });
-            }
-        });
+                _lastTreeFingerprint = null;
+                TreeRoot = null;
+                StatusText = "Error loading notes tree.";
+                CommandManager.InvalidateRequerySuggested();
+                TreeRefreshed?.Invoke();
+                ErrorDetailDialog.Show("Notes tree", ex);
+            });
+        }
     }
 
     private static string ComputeTreeFingerprint(FileSystemItem? root)

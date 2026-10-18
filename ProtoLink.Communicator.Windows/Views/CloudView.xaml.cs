@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
 using ContextMenu = System.Windows.Controls.ContextMenu;
 using MenuItem = System.Windows.Controls.MenuItem;
@@ -264,13 +265,9 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private void OnMapCurrentFolderClick(object sender, RoutedEventArgs e)
     {
         if (_vm?.CurrentEntity is not { IsFolder: true } folder) return;
-        using var dlg = new System.Windows.Forms.FolderBrowserDialog
-        {
-            Description = "Select local folder to sync with",
-            UseDescriptionForTitle = true
-        };
-        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-        _vm.AddMapping(folder.Id, dlg.SelectedPath, folder.Name);
+        var path = FolderPicker.PickFolder("Select local folder to sync with");
+        if (path is null) return;
+        _vm.AddMapping(folder.Id, path, folder.Name);
     }
 
     private void OnDeleteCurrentEntity()
@@ -468,13 +465,9 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
     private void OnMapToLocalFolder(CloudItemViewModel folder)
     {
-        using var dlg = new System.Windows.Forms.FolderBrowserDialog
-        {
-            Description = "Select local folder to sync with",
-            UseDescriptionForTitle = true
-        };
-        if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-        _vm!.AddMapping(folder.Id, dlg.SelectedPath, folder.Name);
+        var path = FolderPicker.PickFolder("Select local folder to sync with");
+        if (path is null) return;
+        _vm!.AddMapping(folder.Id, path, folder.Name);
     }
 
     private ContextMenu CreateBackgroundContextMenu()
