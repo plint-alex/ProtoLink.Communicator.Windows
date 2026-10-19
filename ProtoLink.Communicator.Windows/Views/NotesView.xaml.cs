@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Dialogs;
+using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
@@ -36,6 +37,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
     /// <summary>Ignore TreeView selection changes while restoring selection after refresh.</summary>
     private bool _suppressTreeSelectionNavigate;
     private GridLength _treeColumnWidth = new(320);
+    private const string NotesFolderDragFormat = "ProtoLink.NotesFolderPath";
+    private System.Windows.Point _treeDragStartPoint;
+    private TreeViewItem? _treeDragSourceItem;
+    private bool _treeDragInProgress;
 
     public NotesView()
     {
@@ -613,6 +618,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         var rootPath = _vm.TreeRoot.Item.FullPath;
         var keepEditorFocus = NotesWebView.IsKeyboardFocusWithin;
+        // Merge/rebuild removes live TreeViewItems; WPF then selects a parent (often root) and
+        // SelectedItemChanged would NavigateToAsync that parent — keep CurrentPagePath/editor stable.
+        var preservePagePath = _vm.CurrentPagePath;
 
         if (NotesTreeView.Items.Count == 1
             && NotesTreeView.Items[0] is TreeViewItem existingRoot
@@ -622,9 +630,19 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 NormalizePathKey(rootPath),
                 StringComparison.OrdinalIgnoreCase))
         {
-            // In-place merge: never rewrite IsExpanded — live TreeViewItems keep user collapse/expand.
-            MergeTreeItem(existingRoot, _vm.TreeRoot);
-            TryReselectCurrentPage(focusTree: false);
+            _suppressTreeSelectionNavigate = true;
+            try
+            {
+                // In-place merge: never rewrite IsExpanded — live TreeViewItems keep user collapse/expand.
+                MergeTreeItem(existingRoot, _vm.TreeRoot);
+                TryReselectCurrentPageCore(focusTree: false);
+                EnsurePreservedPagePath(preservePagePath);
+            }
+            finally
+            {
+                _suppressTreeSelectionNavigate = false;
+            }
+
             if (keepEditorFocus)
                 NotesWebView.Focus();
             return;
@@ -646,14 +664,46 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         // Build before Clear so a create failure cannot leave an empty tree.
         var rootItem = CreateTreeItem(_vm.TreeRoot, _rememberedExpandedPaths);
-        NotesTreeView.Items.Clear();
-        NotesTreeView.Items.Add(rootItem);
+        _suppressTreeSelectionNavigate = true;
+        try
+        {
+            NotesTreeView.Items.Clear();
+            NotesTreeView.Items.Add(rootItem);
+        }
+        catch
+        {
+            _suppressTreeSelectionNavigate = false;
+            throw;
+        }
+
+        // Keep suppress until after reselect — Clear/Add can select root before Loaded.
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
-            TryReselectCurrentPage(focusTree: false);
-            if (keepEditorFocus)
-                NotesWebView.Focus();
+            try
+            {
+                TryReselectCurrentPageCore(focusTree: false);
+                EnsurePreservedPagePath(preservePagePath);
+                if (keepEditorFocus)
+                    NotesWebView.Focus();
+            }
+            finally
+            {
+                _suppressTreeSelectionNavigate = false;
+            }
         }));
+    }
+
+    /// <summary>
+    /// If a tree mutation somehow changed <see cref="NotesViewModel.CurrentPagePath"/>, restore it
+    /// when the previous page still exists (deleted pages intentionally clear elsewhere).
+    /// </summary>
+    private void EnsurePreservedPagePath(string? preservePagePath)
+    {
+        if (_vm == null || string.IsNullOrEmpty(preservePagePath)) return;
+        if (!Directory.Exists(preservePagePath)) return;
+        if (string.Equals(_vm.CurrentPagePath, preservePagePath, StringComparison.OrdinalIgnoreCase))
+            return;
+        _vm.CurrentPagePath = preservePagePath;
     }
 
     /// <summary>Patch an existing TreeViewItem from model data without rewriting IsExpanded except via restore after replace.</summary>
@@ -851,6 +901,20 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void TryReselectCurrentPage(bool focusTree = false)
     {
+        _suppressTreeSelectionNavigate = true;
+        try
+        {
+            TryReselectCurrentPageCore(focusTree);
+        }
+        finally
+        {
+            _suppressTreeSelectionNavigate = false;
+        }
+    }
+
+    /// <summary>Select CurrentPagePath in the live tree. Caller owns <see cref="_suppressTreeSelectionNavigate"/> when nesting inside PopulateTree.</summary>
+    private void TryReselectCurrentPageCore(bool focusTree = false)
+    {
         var path = _vm?.CurrentPagePath;
         if (string.IsNullOrEmpty(path)) return;
 
@@ -861,18 +925,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
         var targetKey = NormalizePathKey(path);
         if (string.IsNullOrEmpty(targetKey)) return;
 
-        _suppressTreeSelectionNavigate = true;
-        try
+        foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
         {
-            foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
-            {
-                if (TrySelectUnder(tvi, targetKey, focusTree))
-                    return;
-            }
-        }
-        finally
-        {
-            _suppressTreeSelectionNavigate = false;
+            if (TrySelectUnder(tvi, targetKey, focusTree))
+                return;
         }
     }
 
@@ -980,6 +1036,99 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _ = NavigateToAsync(vm.Item.FullPath);
             ApplyColumnLayout();
         }
+    }
+
+    private void OnTreePreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _treeDragStartPoint = e.GetPosition(null);
+        _treeDragSourceItem = FindAncestorTreeViewItem(e.OriginalSource as DependencyObject);
+    }
+
+    private void OnTreePreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_treeDragInProgress || _vm == null) return;
+        if (e.LeftButton != MouseButtonState.Pressed || _treeDragSourceItem == null) return;
+
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - _treeDragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(pos.Y - _treeDragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        if (_treeDragSourceItem.Tag is not TreeItemViewModel vm) return;
+        var sourcePath = vm.Item.FullPath;
+        if (string.IsNullOrEmpty(sourcePath) || string.IsNullOrEmpty(_vm.RootPath)) return;
+
+        try
+        {
+            if (string.Equals(
+                    Path.GetFullPath(sourcePath),
+                    Path.GetFullPath(_vm.RootPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _treeDragSourceItem = null;
+                return;
+            }
+        }
+        catch
+        {
+            _treeDragSourceItem = null;
+            return;
+        }
+
+        _treeDragInProgress = true;
+        try
+        {
+            var data = new System.Windows.DataObject(NotesFolderDragFormat, sourcePath);
+            DragDrop.DoDragDrop(_treeDragSourceItem, data, System.Windows.DragDropEffects.Move);
+        }
+        finally
+        {
+            _treeDragInProgress = false;
+            _treeDragSourceItem = null;
+        }
+    }
+
+    private void OnTreeDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = System.Windows.DragDropEffects.None;
+        e.Handled = true;
+        if (_vm == null || !e.Data.GetDataPresent(NotesFolderDragFormat)) return;
+        if (e.Data.GetData(NotesFolderDragFormat) is not string sourcePath) return;
+
+        var targetItem = FindAncestorTreeViewItem(e.OriginalSource as DependencyObject);
+        if (targetItem?.Tag is not TreeItemViewModel targetVm) return;
+
+        var error = NotesFileSystemService.ValidateMove(sourcePath, targetVm.Item.FullPath, _vm.RootPath ?? "");
+        if (error == null)
+            e.Effects = System.Windows.DragDropEffects.Move;
+    }
+
+    private void OnTreeDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Handled = true;
+        if (_vm == null || !e.Data.GetDataPresent(NotesFolderDragFormat)) return;
+        if (e.Data.GetData(NotesFolderDragFormat) is not string sourcePath) return;
+
+        var targetItem = FindAncestorTreeViewItem(e.OriginalSource as DependencyObject);
+        if (targetItem?.Tag is not TreeItemViewModel targetVm) return;
+
+        var targetPath = targetVm.Item.FullPath;
+        if (!_vm.MoveFolder(sourcePath, targetPath))
+            return;
+
+        if (!string.IsNullOrEmpty(_vm.CurrentPagePath))
+            _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);
+    }
+
+    private static TreeViewItem? FindAncestorTreeViewItem(DependencyObject? element)
+    {
+        while (element != null)
+        {
+            if (element is TreeViewItem tvi)
+                return tvi;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return null;
     }
 
     private void OnTreeDoubleClick(object sender, MouseButtonEventArgs e)
