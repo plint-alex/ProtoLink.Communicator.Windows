@@ -147,6 +147,14 @@ public partial class NotesViewModel
         CurrentRemoteId = _remoteIdResolver.Resolve(CurrentPagePath);
     }
 
+    /// <summary>E2 Cloud RemoteId for any note folder path (tree context menu Copy id). Null if unmapped / not synced.</summary>
+    public Guid? TryResolveRemoteId(string? noteFolderFullPath)
+    {
+        if (string.IsNullOrWhiteSpace(noteFolderFullPath) || _remoteIdResolver == null)
+            return null;
+        return _remoteIdResolver.Resolve(noteFolderFullPath);
+    }
+
     public void ReturnToListInCompact()
     {
         ShowEditorInCompact = false;

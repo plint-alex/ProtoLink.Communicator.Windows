@@ -33,6 +33,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private readonly HashSet<string> _rememberedExpandedPaths = new(StringComparer.OrdinalIgnoreCase);
     private bool _treeEventsHooked;
     private bool _suppressTreeExpandMemory;
+    /// <summary>Ignore TreeView selection changes while restoring selection after refresh.</summary>
+    private bool _suppressTreeSelectionNavigate;
     private GridLength _treeColumnWidth = new(320);
 
     public NotesView()
@@ -743,8 +745,13 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void ApplyRememberedExpansionRecursive(TreeViewItem node)
     {
-        if (node.Tag is TreeItemViewModel vm && _rememberedExpandedPaths.Contains(vm.Item.FullPath))
-            node.IsExpanded = true;
+        if (node.Tag is TreeItemViewModel vm)
+        {
+            var key = NormalizePathKey(vm.Item.FullPath);
+            if ((!string.IsNullOrEmpty(key) && _rememberedExpandedPaths.Contains(key))
+                || _rememberedExpandedPaths.Contains(vm.Item.FullPath))
+                node.IsExpanded = true;
+        }
         foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
             ApplyRememberedExpansionRecursive(child);
     }
@@ -781,8 +788,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (string.IsNullOrEmpty(pagePath) || string.IsNullOrEmpty(_vm?.RootPath)) return;
         try
         {
-            var root = Path.GetFullPath(_vm.RootPath);
-            var current = Path.GetFullPath(pagePath);
+            var root = NormalizePathKey(_vm.RootPath);
+            var current = NormalizePathKey(pagePath);
             while (!string.IsNullOrEmpty(current))
             {
                 _rememberedExpandedPaths.Add(current);
@@ -790,9 +797,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
                     break;
                 var parent = Path.GetDirectoryName(current);
                 if (string.IsNullOrEmpty(parent) ||
-                    string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(NormalizePathKey(parent), current, StringComparison.OrdinalIgnoreCase))
                     break;
-                current = parent;
+                current = NormalizePathKey(parent);
             }
         }
         catch
@@ -846,38 +853,95 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         var path = _vm?.CurrentPagePath;
         if (string.IsNullOrEmpty(path)) return;
-        foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
+
+        // Keep the open page visible after refresh: expand ancestors, then select.
+        EnsureAncestorsExpanded(path);
+        ExpandRememberedAncestorsForPath(path);
+
+        var targetKey = NormalizePathKey(path);
+        if (string.IsNullOrEmpty(targetKey)) return;
+
+        _suppressTreeSelectionNavigate = true;
+        try
         {
-            if (TrySelectUnder(tvi, path, focusTree))
-                return;
+            foreach (TreeViewItem tvi in NotesTreeView.Items.OfType<TreeViewItem>())
+            {
+                if (TrySelectUnder(tvi, targetKey, focusTree))
+                    return;
+            }
+        }
+        finally
+        {
+            _suppressTreeSelectionNavigate = false;
         }
     }
 
-    private static bool PathIsUnderOrEqual(string nodePath, string targetPath)
+    /// <summary>Expand live tree nodes on the path to <paramref name="pagePath"/> so selection is visible.</summary>
+    private void ExpandRememberedAncestorsForPath(string pagePath)
     {
-        var n = Path.GetFullPath(nodePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var t = Path.GetFullPath(targetPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (string.Equals(n, t, StringComparison.OrdinalIgnoreCase)) return true;
-        var prefix = n + Path.DirectorySeparatorChar;
-        return t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        var targetKey = NormalizePathKey(pagePath);
+        if (string.IsNullOrEmpty(targetKey)) return;
+
+        _suppressTreeExpandMemory = true;
+        try
+        {
+            foreach (TreeViewItem root in NotesTreeView.Items.OfType<TreeViewItem>())
+                ExpandAlongPath(root, targetKey);
+        }
+        finally
+        {
+            _suppressTreeExpandMemory = false;
+        }
     }
 
-    private static bool TrySelectUnder(TreeViewItem node, string path, bool focusTree)
+    private static bool ExpandAlongPath(TreeViewItem node, string targetKey)
     {
         if (node.Tag is not TreeItemViewModel vm) return false;
-        var nodePath = vm.Item.FullPath;
-        if (string.Equals(nodePath, path, StringComparison.OrdinalIgnoreCase))
+        var nodeKey = NormalizePathKey(vm.Item.FullPath);
+        if (string.IsNullOrEmpty(nodeKey)) return false;
+
+        if (string.Equals(nodeKey, targetKey, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!PathKeyIsUnderOrEqual(nodeKey, targetKey))
+            return false;
+
+        node.IsExpanded = true;
+        foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
+        {
+            if (ExpandAlongPath(child, targetKey))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool PathKeyIsUnderOrEqual(string nodeKey, string targetKey)
+    {
+        if (string.Equals(nodeKey, targetKey, StringComparison.OrdinalIgnoreCase)) return true;
+        var prefix = nodeKey + Path.DirectorySeparatorChar;
+        return targetKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TrySelectUnder(TreeViewItem node, string targetKey, bool focusTree)
+    {
+        if (node.Tag is not TreeItemViewModel vm) return false;
+        var nodeKey = NormalizePathKey(vm.Item.FullPath);
+        if (string.IsNullOrEmpty(nodeKey)) return false;
+
+        if (string.Equals(nodeKey, targetKey, StringComparison.OrdinalIgnoreCase))
         {
             node.IsSelected = true;
+            node.BringIntoView();
             if (focusTree)
                 node.Focus();
             return true;
         }
-        if (!PathIsUnderOrEqual(nodePath, path)) return false;
-        // Do not force-expand ancestors — respect user collapse during quiet refresh.
+
+        if (!PathKeyIsUnderOrEqual(nodeKey, targetKey)) return false;
+
         foreach (TreeViewItem child in node.Items.OfType<TreeViewItem>())
         {
-            if (TrySelectUnder(child, path, focusTree))
+            if (TrySelectUnder(child, targetKey, focusTree))
                 return true;
         }
         return false;
@@ -887,18 +951,28 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         if (_suppressTreeExpandMemory) return;
         if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
-            _rememberedExpandedPaths.Add(vm.Item.FullPath);
+        {
+            var key = NormalizePathKey(vm.Item.FullPath);
+            if (!string.IsNullOrEmpty(key))
+                _rememberedExpandedPaths.Add(key);
+        }
     }
 
     private void OnTreeItemCollapsed(object sender, RoutedEventArgs e)
     {
         if (_suppressTreeExpandMemory) return;
         if (e.OriginalSource is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
+        {
+            var key = NormalizePathKey(vm.Item.FullPath);
+            if (!string.IsNullOrEmpty(key))
+                _rememberedExpandedPaths.Remove(key);
             _rememberedExpandedPaths.Remove(vm.Item.FullPath);
+        }
     }
 
     private void OnTreeSelectionChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
+        if (_suppressTreeSelectionNavigate) return;
         if (e.NewValue is TreeViewItem tvi && tvi.Tag is TreeItemViewModel vm)
         {
             if (_vm?.IsCompactLayout == true)
@@ -1128,6 +1202,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             treeViewItem.IsSelected = true;
             NotesTreeContextMenu.Tag = vm;
+            var path = vm.Item.FullPath;
+            NotesTreeOpenInExplorerMenuItem.IsEnabled =
+                !string.IsNullOrEmpty(path) && Directory.Exists(path);
+            var hasCloudId = _vm?.TryResolveRemoteId(path) is not null;
+            NotesTreeCopyIdMenuItem.IsEnabled = hasCloudId;
+            NotesTreeCopyIdMenuItem.ToolTip = hasCloudId ? "Copy Cloud RemoteId" : "Not in Cloud yet";
         }
         else
         {
@@ -1161,6 +1241,39 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (_vm.CurrentPagePath != null)
             _ = NavigateToAsync(_vm.CurrentPagePath, forceReload: true);
         NotesTreeContextMenu.Tag = null;
+    }
+
+    private void OnOpenInExplorerClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        var folderPath = vm.Item.FullPath;
+        NotesTreeContextMenu.Tag = null;
+        if (!WindowsExplorer.TryOpenFolderSelected(folderPath))
+            _vm.StatusText = "Folder not found";
+    }
+
+    private void OnCopyIdClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        var folderPath = vm.Item.FullPath;
+        NotesTreeContextMenu.Tag = null;
+
+        var id = _vm.TryResolveRemoteId(folderPath);
+        if (id is not { } remoteId)
+        {
+            _vm.StatusText = "Not in Cloud yet";
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(remoteId.ToString("D"));
+            _vm.StatusText = "Id copied";
+        }
+        catch (Exception ex)
+        {
+            _vm.StatusText = "Could not copy id: " + ex.Message;
+        }
     }
 
     private void OnRenameFolderClick(object sender, RoutedEventArgs e)

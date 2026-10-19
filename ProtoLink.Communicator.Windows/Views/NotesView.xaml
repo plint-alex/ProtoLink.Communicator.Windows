@@ -65,6 +65,9 @@
                         <ContextMenu x:Name="NotesTreeContextMenu">
                             <MenuItem Header="New Page" Click="OnNewPageClick"/>
                             <Separator/>
+                            <MenuItem x:Name="NotesTreeOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnOpenInExplorerClick"/>
+                            <MenuItem x:Name="NotesTreeCopyIdMenuItem" Header="Copy id" Click="OnCopyIdClick"/>
+                            <Separator/>
                             <MenuItem Header="Rename" Click="OnRenameFolderClick"/>
                             <MenuItem Header="Delete" Click="OnDeleteFolderClick"/>
                         </ContextMenu>

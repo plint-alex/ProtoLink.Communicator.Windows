@@ -18,6 +18,8 @@ dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Of
 | `LiveApiTargetTests` | The live-test gate: no default host, production blocked without opt-in |
 | `NavigationHistoryTests` | AT-N6: push/pop order, cap 50, breadcrumb pushes |
 | `NoteRemoteIdResolverTests` | AT-N5: mapped path → RemoteId; outside → null; SyncPathUtil case/separators |
+| `NotesViewModelCopyIdTests` | Notes tree Copy id: TryResolveRemoteId via INoteRemoteIdResolver (null when unsynced) |
+| `WindowsExplorerTests` | Notes Open in Explorer: `/select,"path"` args; missing path returns false |
 | `EntityLinksTests` | AT-C4 / AT-X1: `{base}/{id:D}`, `?lang=` only when UI language set |
 | `CloudFilePreviewTests` | AT-C2: extension → preview kind; local mirror pick |
 | `CloudEntityRestoreTests` | AT-C7: restore decision + breadcrumb assembly |
