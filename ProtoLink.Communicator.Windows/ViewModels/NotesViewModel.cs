@@ -430,6 +430,76 @@ public partial class NotesViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Reparent a note folder under <paramref name="targetParentPath"/> (local FS). Name preserved.
+    /// </summary>
+    public bool MoveFolder(string sourcePath, string targetParentPath)
+    {
+        if (string.IsNullOrEmpty(_rootPath))
+            return false;
+
+        var error = NotesFileSystemService.ValidateMove(sourcePath, targetParentPath, _rootPath);
+        if (error != null)
+        {
+            StatusText = error;
+            return false;
+        }
+
+        try
+        {
+            var sourceFull = Path.GetFullPath(sourcePath);
+            var destFull = _fsService.MoveFolder(sourceFull, targetParentPath);
+            var pathChanged = RemapCurrentPagePathAfterMove(sourceFull, destFull);
+            if (!pathChanged)
+                CurrentPagePath = destFull;
+            RefreshTree();
+            StatusText = "Moved";
+            if (pathChanged || !string.IsNullOrEmpty(CurrentPagePath))
+                NotesPagePathChanged?.Invoke(CurrentPagePath!);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Error moving.";
+            ErrorDetailDialog.Show("Error moving folder", ex);
+            return false;
+        }
+    }
+
+    /// <returns>True when an open page path was remapped because it was the source or under it.</returns>
+    private bool RemapCurrentPagePathAfterMove(string sourceFull, string destFull)
+    {
+        if (string.IsNullOrEmpty(_currentPagePath))
+            return false;
+
+        string currentFull;
+        try
+        {
+            currentFull = Path.GetFullPath(_currentPagePath);
+        }
+        catch
+        {
+            return false;
+        }
+
+        sourceFull = sourceFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        currentFull = currentFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        destFull = destFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (string.Equals(currentFull, sourceFull, StringComparison.OrdinalIgnoreCase))
+        {
+            CurrentPagePath = destFull;
+            return true;
+        }
+
+        var prefix = sourceFull + Path.DirectorySeparatorChar;
+        if (!currentFull.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        CurrentPagePath = destFull + currentFull.Substring(sourceFull.Length);
+        return true;
+    }
+
     public void RaiseRequestNewFolder() => RequestNewFolder?.Invoke();
 
     public bool DeleteFolder(string folderPath)

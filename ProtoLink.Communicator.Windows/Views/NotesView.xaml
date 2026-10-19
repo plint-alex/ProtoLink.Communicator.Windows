@@ -48,6 +48,11 @@
             <Grid Grid.Row="1">
                 <TreeView x:Name="NotesTreeView" SelectedItemChanged="OnTreeSelectionChanged"
                           Background="{DynamicResource ListBackground}" BorderThickness="0"
+                          AllowDrop="True"
+                          PreviewMouseLeftButtonDown="OnTreePreviewMouseLeftButtonDown"
+                          PreviewMouseMove="OnTreePreviewMouseMove"
+                          DragOver="OnTreeDragOver"
+                          Drop="OnTreeDrop"
                           MouseDoubleClick="OnTreeDoubleClick" ContextMenuOpening="OnNotesTreeContextMenuOpening"
                           Padding="0,4"
                           TreeViewItem.Expanded="OnTreeItemExpanded"
