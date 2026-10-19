@@ -184,6 +184,24 @@
                                    Foreground="{DynamicResource ForegroundMutedBrush}"
                                    Visibility="{Binding FolderSizeSummary, Converter={StaticResource StringToVisibilityConverter}}"/>
 
+                        <!-- AT-S40: id row + Copy link (canonical URL via CopyLinkCommand) -->
+                        <DockPanel Margin="0,4,0,12"
+                                   Visibility="{Binding HasCurrentEntityId, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Button DockPanel.Dock="Right" Content="Copy link" Margin="12,0,0,0"
+                                    Style="{DynamicResource IgGhostButton}" VerticalAlignment="Center"
+                                    Command="{Binding CopyLinkCommand}"
+                                    AutomationProperties.Name="Copy link"
+                                    ToolTip="Copy link (Ctrl+Shift+C)"/>
+                            <StackPanel>
+                                <TextBlock Text="Id" FontSize="12"
+                                           Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                                <TextBlock Text="{Binding CurrentEntityIdText}" FontSize="13" TextWrapping="Wrap"
+                                           FontFamily="Consolas"
+                                           Foreground="{DynamicResource ForegroundBrush}"
+                                           AutomationProperties.Name="Entity id"/>
+                            </StackPanel>
+                        </DockPanel>
+
                         <Border Margin="0,8,0,0" Padding="12,10" CornerRadius="10"
                                 Background="{DynamicResource PanelCardBackground}"
                                 BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="1"

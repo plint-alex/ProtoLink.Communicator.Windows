@@ -242,6 +242,9 @@ public partial class CloudViewModel : ViewModelBase
     public bool CanNavigateParent => BreadcrumbPath.Count >= 2;
     public bool IsFolderOpen => CurrentEntity?.IsFolder == true;
     public bool IsFileOpen => CurrentEntity is { IsFolder: false };
+    /// <summary>Entity id for the Info panel (AT-S40); empty when nothing is open.</summary>
+    public string CurrentEntityIdText => CurrentEntity is { } e ? e.Id.ToString("D") : "";
+    public bool HasCurrentEntityId => CurrentEntity != null;
     public int ListedChildCount => Items.Count;
     public string ListedChildCountText => ListedChildCount == 1 ? "1 item" : $"{ListedChildCount} items";
     public string? FolderSizeSummary
@@ -342,6 +345,8 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanNavigateParent));
         OnPropertyChanged(nameof(IsFolderOpen));
         OnPropertyChanged(nameof(IsFileOpen));
+        OnPropertyChanged(nameof(CurrentEntityIdText));
+        OnPropertyChanged(nameof(HasCurrentEntityId));
         OnPropertyChanged(nameof(ListedChildCount));
         OnPropertyChanged(nameof(ListedChildCountText));
         OnPropertyChanged(nameof(CurrentFolderMapping));

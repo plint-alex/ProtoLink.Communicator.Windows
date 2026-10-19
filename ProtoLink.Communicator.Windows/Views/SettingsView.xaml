@@ -105,12 +105,20 @@
                 <Border Background="{DynamicResource PanelCardBackground}"
                         BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,14"
                         Visibility="{Binding IsAuthenticated, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Log off" Command="{Binding LogOffCommand}"
-                                Style="{DynamicResource GhostButton}"/>
-                        <TextBlock Text="{Binding CurrentLogin, StringFormat='Logged in as {0}'}"
-                                   VerticalAlignment="Center" Foreground="{DynamicResource ForegroundBrush}"/>
-                    </DockPanel>
+                    <StackPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Log off" Command="{Binding LogOffCommand}"
+                                    Style="{DynamicResource GhostButton}"/>
+                            <TextBlock Text="{Binding CurrentLogin, StringFormat='Logged in as {0}'}"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource ForegroundBrush}"/>
+                        </DockPanel>
+                        <Button Content="{Binding CopyMyIdLabel}" Command="{Binding CopyMyIdCommand}"
+                                Style="{DynamicResource GhostButton}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                ToolTip="{Binding CopyMyIdHint}"
+                                AutomationProperties.Name="Copy my ID"/>
+                        <TextBlock Text="{Binding CopyMyIdHint}" Margin="0,6,0,0" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                    </StackPanel>
                 </Border>
                 <Border Background="{DynamicResource PanelCardBackground}"
                         BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,14"

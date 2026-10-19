@@ -5,6 +5,7 @@ using System.Windows.Input;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -20,7 +21,9 @@ public class SettingsViewModel : ViewModelBase
     private string _publicSiteBaseUrl;
     private string? _notesRootPath;
     private string _theme;
+    private string? _uiLanguage;
     private string _apiVersionText = "Loading…";
+    private string? _copyMyIdFeedback;
 
     public IReadOnlyList<string> ThemeOptions { get; } = new[] { ThemeManager.Light, ThemeManager.Dark };
 
@@ -36,14 +39,24 @@ public class SettingsViewModel : ViewModelBase
         _publicSiteBaseUrl = settings.PublicSiteBaseUrl;
         _notesRootPath = settings.NotesRootPath;
         _theme = ThemeManager.Normalize(settings.Theme);
+        _uiLanguage = settings.UiLanguage;
 
         SaveCommand = new RelayCommand(_ => SaveSettings());
         LogOffCommand = new RelayCommand(_ => LogOff(), _ => _authService.IsAuthenticated);
         CloseCommand = new RelayCommand(_ => OnCloseRequested?.Invoke());
         RefreshApiVersionCommand = new RelayCommand(_ => _ = LoadApiVersionAsync());
+        CopyMyIdCommand = new RelayCommand(_ => CopyMyId(), _ => !string.IsNullOrEmpty(MyUserIdText));
 
         LoginViewModel = new LoginViewModel(_authService);
-        LoginViewModel.OnLoginSuccess += () => OnLoginSuccess?.Invoke();
+        LoginViewModel.OnLoginSuccess += () =>
+        {
+            OnPropertyChanged(nameof(IsAuthenticated));
+            OnPropertyChanged(nameof(CurrentLogin));
+            OnPropertyChanged(nameof(MyUserIdText));
+            OnPropertyChanged(nameof(CopyMyIdLabel));
+            CommandManager.InvalidateRequerySuggested();
+            OnLoginSuccess?.Invoke();
+        };
 
         AddContactViewModel = new AddContactViewModel(_authService, _httpClient, _logger, isEmbedded: true);
         AddContactViewModel.OnContactAdded += () => OnContactAdded?.Invoke();
@@ -76,12 +89,21 @@ public class SettingsViewModel : ViewModelBase
     }
     public bool IsAuthenticated => _authService.IsAuthenticated;
     public string? CurrentLogin => _authService.CurrentToken?.Login;
+    /// <summary>User entity id in D format for paste into Share → Add people (same as web Copy my ID).</summary>
+    public string? MyUserIdText =>
+        _authService.CurrentToken is { UserId: var id } && id != Guid.Empty ? id.ToString("D") : null;
+    public string CopyMyIdLabel =>
+        string.IsNullOrEmpty(_copyMyIdFeedback)
+            ? ShareAccountStrings.CopyMyIdLabel(_uiLanguage)
+            : _copyMyIdFeedback;
+    public string CopyMyIdHint => ShareAccountStrings.CopyMyIdHint(_uiLanguage);
     public LoginViewModel LoginViewModel { get; }
     public AddContactViewModel AddContactViewModel { get; }
     public ICommand SaveCommand { get; }
     public ICommand LogOffCommand { get; }
     public ICommand CloseCommand { get; }
     public ICommand RefreshApiVersionCommand { get; }
+    public ICommand CopyMyIdCommand { get; }
     public event Action? OnLoginSuccess;
     public event Action? OnContactAdded;
     public event Action? OnSettingsSaved;
@@ -143,8 +165,36 @@ public class SettingsViewModel : ViewModelBase
     private void LogOff()
     {
         _authService.Logout();
+        _copyMyIdFeedback = null;
         OnPropertyChanged(nameof(IsAuthenticated));
         OnPropertyChanged(nameof(CurrentLogin));
+        OnPropertyChanged(nameof(MyUserIdText));
+        OnPropertyChanged(nameof(CopyMyIdLabel));
         OnSettingsSaved?.Invoke();
+    }
+
+    private void CopyMyId()
+    {
+        if (MyUserIdText is not { } id) return;
+        try
+        {
+            System.Windows.Clipboard.SetText(id);
+            _copyMyIdFeedback = ShareAccountStrings.CopiedLabel(_uiLanguage);
+            OnPropertyChanged(nameof(CopyMyIdLabel));
+            _ = ClearCopyMyIdFeedbackAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not copy user id to clipboard");
+            _copyMyIdFeedback = null;
+            OnPropertyChanged(nameof(CopyMyIdLabel));
+        }
+    }
+
+    private async Task ClearCopyMyIdFeedbackAsync()
+    {
+        await Task.Delay(2000);
+        _copyMyIdFeedback = null;
+        OnPropertyChanged(nameof(CopyMyIdLabel));
     }
 }
