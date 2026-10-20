@@ -1,6 +1,6 @@
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
-/// <summary>Dedicated test accounts for messenger integration tests against production API.</summary>
+/// <summary>Dedicated test accounts. Password comes from PROTOLINK_TEST_PASSWORD. The host comes from PROTOLINK_API_BASE, not a production default.</summary>
 internal static class MessengerTestCredentials
 {
     public const string PrimaryLogin = "alex.plint@gmail.com";

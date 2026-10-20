@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.ViewModels;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -26,7 +27,8 @@ public sealed class MessengerOpenSelectContactScenarioTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         _client = new HttpClient();
-        IntegrationTestHttp.ConfigureClient(_client);
+        if (LiveApiTarget.AllowsCurrentEnvironment())
+            IntegrationTestHttp.ConfigureClient(_client);
         return Task.CompletedTask;
     }
 
@@ -36,7 +38,7 @@ public sealed class MessengerOpenSelectContactScenarioTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [LiveFact]
     public async Task OpenMessenger_SelectFirstContact_TimingsLogged()
     {
         var swTotal = Stopwatch.StartNew();
@@ -132,45 +134,26 @@ public sealed class MessengerOpenSelectContactScenarioTests : IAsyncLifetime
         if (firstContactUserId == null)
             firstContactUserId = partnerId;
 
+        var partnerIdForChat = firstContactUserId.Value;
         var t4 = Stopwatch.StartNew();
         var msgResponse = await _client.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
         {
             ParentIds = new[] { SystemEntities.Message },
             IncludeValues = true,
             Skip = 0,
-            Take = 5000
+            Take = MessengerViewModel.ConversationMessagePageSize,
+            ConversationUserIds = MessengerViewModel.BuildConversationUserIds(userId, partnerIdForChat)
         }, IntegrationTestHttp.JsonOptions);
-        var msgBody = await IntegrationTestHttp.AssertSuccessAsync(msgResponse, "GetEntities(Message, IncludeValues, Take=5000)");
+        var msgBody = await IntegrationTestHttp.AssertSuccessAsync(
+            msgResponse,
+            "GetEntities(Message, IncludeValues, ConversationUserIds)");
         var all = JsonSerializer.Deserialize<List<GetEntitiesResult>>(msgBody, IntegrationTestHttp.JsonOptions);
         t4.Stop();
-        _output.WriteLine($"[select contact] GetEntities(Message, IncludeValues, Take=5000) rows={all?.Count ?? 0} {t4.ElapsedMilliseconds} ms (dominant cost when many messages exist)");
-
-        var myStr = userId.ToString();
-        var partnerStr = firstContactUserId.Value.ToString();
-        var matchCount = 0;
-        if (all != null)
-        {
-            foreach (var msg in all)
-            {
-                if (msg.Values == null) continue;
-                string? sender = null, receiver = null;
-                foreach (var val in msg.Values)
-                {
-                    if (val is EntityValue ev && ev.Type == "StringValue")
-                    {
-                        var s = ev.Value?.ToString();
-                        if (s == null) continue;
-                        if (s.StartsWith("sender:", StringComparison.Ordinal)) sender = s.Substring(7);
-                        else if (s.StartsWith("receiver:", StringComparison.Ordinal)) receiver = s.Substring(9);
-                    }
-                }
-                if (sender == myStr && receiver == partnerStr) matchCount++;
-                else if (sender == partnerStr && receiver == myStr) matchCount++;
-            }
-        }
+        _output.WriteLine(
+            $"[select contact] GetEntities(Message, ConversationUserIds, Take={MessengerViewModel.ConversationMessagePageSize}) rows={all?.Count ?? 0} {t4.ElapsedMilliseconds} ms");
 
         swTotal.Stop();
-        _output.WriteLine($"[summary] conversation rows for first contact: {matchCount}; total scenario: {swTotal.ElapsedMilliseconds} ms");
+        _output.WriteLine($"[summary] conversation rows for first contact: {all?.Count ?? 0}; total scenario: {swTotal.ElapsedMilliseconds} ms");
         Assert.NotNull(all);
     }
 

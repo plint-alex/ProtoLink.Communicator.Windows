@@ -20,9 +20,9 @@
                            Visibility="{Binding IsEmbedded, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}"/>
                 <TextBlock Text="User ID" Margin="0,0,0,5"/>
                 <TextBox Text="{Binding UserId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"
-                         Style="{DynamicResource IgTextBox}"/>
+                         Style="{DynamicResource AppTextBox}"/>
                 <Button Content="Add contact" Command="{Binding AddContactCommand}"
-                        Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch" Margin="0,0,0,16"
+                        Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch" Margin="0,0,0,16"
                         IsEnabled="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}"/>
                 <TextBlock Text="{Binding StatusMessage}" Foreground="{Binding StatusMessage, Converter={StaticResource StatusColorConverter}}"
                            TextWrapping="Wrap" Margin="0,0,0,10"

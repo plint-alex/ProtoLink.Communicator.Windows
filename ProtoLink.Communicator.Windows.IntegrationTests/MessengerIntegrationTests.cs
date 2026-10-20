@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Utilities;
+using ProtoLink.Communicator.Windows.ViewModels;
 using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
@@ -19,7 +21,8 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         _client = new HttpClient();
-        IntegrationTestHttp.ConfigureClient(_client);
+        if (LiveApiTarget.AllowsCurrentEnvironment())
+            IntegrationTestHttp.ConfigureClient(_client);
         return Task.CompletedTask;
     }
 
@@ -29,7 +32,7 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [LiveFact]
     public async Task Login_GetContacts_SendToPartner_GetMessages_ContainsSentText()
     {
         var loginTask = LoginAsync(_client, MessengerTestCredentials.PrimaryLogin, MessengerTestCredentials.PrimaryPassword);
@@ -216,7 +219,7 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
         return createdId;
     }
 
-    /// <summary>One <c>GetEntities</c> under Message (same as MessengerViewModel). Optionally asserts the newly created row is present with body/sender/receiver.</summary>
+    /// <summary>One conversation-scoped <c>GetEntities</c> under Message (same as MessengerViewModel). Optionally asserts the newly created row is present with body/sender/receiver.</summary>
     private static async Task<List<MessageRow>> LoadConversationMessagesAsync(
         HttpClient client,
         Guid myUserId,
@@ -232,9 +235,12 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
             ParentIds = new[] { SystemEntities.Message },
             IncludeValues = true,
             Skip = 0,
-            Take = 5000
+            Take = MessengerViewModel.ConversationMessagePageSize,
+            ConversationUserIds = MessengerViewModel.BuildConversationUserIds(myUserId, partnerUserId)
         }, IntegrationTestHttp.JsonOptions);
-        var feedBody = await IntegrationTestHttp.AssertSuccessAsync(response, "GetEntities Message feed (IncludeValues, Take=5000)");
+        var feedBody = await IntegrationTestHttp.AssertSuccessAsync(
+            response,
+            "GetEntities Message conversation (IncludeValues, ConversationUserIds)");
         var all = JsonSerializer.Deserialize<List<GetEntitiesResult>>(feedBody, IntegrationTestHttp.JsonOptions);
         if (all == null) return new List<MessageRow>();
 
@@ -243,31 +249,19 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
             var probe = all.FirstOrDefault(e => e.Id == verifyMessageEntityId.Value);
             Assert.True(
                 probe != null,
-                $"New message entity {verifyMessageEntityId} not returned in the Message feed (count={all.Count}).");
+                $"New message entity {verifyMessageEntityId} not returned in the conversation page (count={all.Count}).");
             GetBodySenderReceiver(probe!, out var body, out var sender, out var receiver);
             Assert.Equal(myStr, sender);
             Assert.Equal(partnerStr, receiver);
             Assert.Equal(verifyMarker, body);
         }
 
-        var sent = new List<GetEntitiesResult>();
-        var received = new List<GetEntitiesResult>();
+        var list = new List<MessageRow>();
         foreach (var msg in all)
         {
-            GetSenderReceiverStrings(msg, out var sender, out var receiver);
-            if (sender == myStr && receiver == partnerStr) sent.Add(msg);
-            else if (sender == partnerStr && receiver == myStr) received.Add(msg);
-        }
-
-        var list = new List<MessageRow>();
-        foreach (var msg in sent)
-        {
-            var row = ParseMessage(msg, isFromMe: true);
-            if (row != null) list.Add(row);
-        }
-        foreach (var msg in received)
-        {
-            var row = ParseMessage(msg, isFromMe: false);
+            GetSenderReceiverStrings(msg, out var sender, out _);
+            var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
+            var row = ParseMessage(msg, isFromMe);
             if (row != null) list.Add(row);
         }
         return list.OrderBy(x => x.Timestamp).ToList();
@@ -276,25 +270,24 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
     private static MessageRow? ParseMessage(GetEntitiesResult message, bool isFromMe)
     {
         if (message.Values == null) return null;
-        var text = "";
+        var stringValues = new List<string?>();
         var date = DateTime.MinValue;
         foreach (var val in message.Values)
         {
-            if (val is EntityValue ev)
+            if (val is not EntityValue ev)
+                continue;
+            if (ev.Type == "StringValue")
+                stringValues.Add(ev.Value?.ToString());
+            else if (ev.Type == "DateTimeValue" && ev.Value != null)
             {
-                if (ev.Type == "StringValue")
-                {
-                    var s = ev.Value?.ToString() ?? "";
-                    if (!s.StartsWith("sender:", StringComparison.Ordinal) && !s.StartsWith("receiver:", StringComparison.Ordinal))
-                        text = s;
-                }
-                else if (ev.Type == "DateTimeValue" && ev.Value != null)
-                {
-                    var ds = ev.Value.ToString();
-                    if (ds != null) DateTime.TryParse(ds, out date);
-                }
+                var ds = ev.Value.ToString();
+                if (ds != null) DateTime.TryParse(ds, out date);
             }
         }
+
+        var (text, attachmentIds) = MessageStringValues.Parse(stringValues);
+        if (string.IsNullOrWhiteSpace(text) && attachmentIds.Count == 0)
+            return null;
         return new MessageRow(text, date, isFromMe);
     }
 
@@ -319,6 +312,7 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
         sender = null;
         receiver = null;
         if (msg.Values == null) return;
+        var stringValues = new List<string?>();
         foreach (var val in msg.Values)
         {
             if (val is not EntityValue ev || ev.Type != "StringValue") continue;
@@ -326,8 +320,12 @@ public sealed class MessengerIntegrationTests : IAsyncLifetime
             if (s == null) continue;
             if (s.StartsWith("sender:", StringComparison.Ordinal)) sender = s.Substring(7);
             else if (s.StartsWith("receiver:", StringComparison.Ordinal)) receiver = s.Substring(9);
-            else body = s;
+            stringValues.Add(s);
         }
+
+        body = MessageStringValues.Parse(stringValues).BodyText;
+        if (string.IsNullOrEmpty(body))
+            body = null;
     }
 
     private sealed record ContactRow(Guid UserId, string CodeOrName);

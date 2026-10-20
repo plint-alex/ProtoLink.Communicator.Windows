@@ -152,6 +152,11 @@
                                    FontWeight="SemiBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
+                    <Button DockPanel.Dock="Right" Content="Media" Padding="10,4" Margin="0,0,8,0"
+                            Foreground="White" Background="Transparent" BorderThickness="0"
+                            Command="{Binding OpenMediaGalleryCommand}"
+                            Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}"
+                            ToolTip="Media in this chat"/>
                     <StackPanel VerticalAlignment="Center" Margin="4,0,8,0">
                         <TextBlock Text="{Binding ChatHeaderTitle}" Foreground="White"
                                    FontSize="15" FontWeight="SemiBold"
@@ -175,7 +180,9 @@
                 </DockPanel>
             </Border>
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1" AllowDrop="True"
+                  PreviewDragEnter="OnChatDragEnter" PreviewDragOver="OnChatDragOver"
+                  PreviewDragLeave="OnChatDragLeave" Drop="OnChatDrop">
                 <ListBox x:Name="MessagesList"
                          ItemsSource="{Binding Messages}"
                          Background="{DynamicResource ChatBackgroundBrush}"
@@ -235,10 +242,149 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
+                                        <Border.Opacity>
+                                            <Binding Path="BubbleOpacity"/>
+                                        </Border.Opacity>
                                         <StackPanel>
+                                            <!-- Attachments stack (images / file rows / tombstones) -->
+                                            <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,0,0,4">
+                                                <ItemsControl.Style>
+                                                    <Style TargetType="ItemsControl">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasAttachments}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ItemsControl.Style>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="0,0,0,6" MaxWidth="480">
+                                                            <!-- Loading placeholder -->
+                                                            <Border Height="120" CornerRadius="10" Background="#22000000"
+                                                                    Visibility="{Binding ShowLoading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                            <!-- Image tile -->
+                                                            <Border CornerRadius="10" ClipToBounds="True" Cursor="Hand"
+                                                                    Visibility="{Binding ShowImage, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                    MouseLeftButtonUp="OnAttachmentImageClick">
+                                                                <Grid>
+                                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform"
+                                                                           MaxHeight="420" MaxWidth="480"/>
+                                                                    <Ellipse Width="36" Height="36" Stroke="#FF2AABEE" StrokeThickness="3"
+                                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                             Visibility="{Binding DataContext.ShowUploadProgress, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                </Grid>
+                                                            </Border>
+                                                            <!-- File row -->
+                                                            <DockPanel Visibility="{Binding ShowFileRow, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="8"
+                                                                        Background="#33000000" Margin="0,0,10,0">
+                                                                    <TextBlock Text="{Binding TypeGlyph}" FontSize="18"
+                                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                </Border>
+                                                                <Button DockPanel.Dock="Right" Content="Download" Margin="8,0,0,0"
+                                                                        Padding="4,0" VerticalAlignment="Top"
+                                                                        Foreground="#FF2AABEE" Background="Transparent" BorderThickness="0"
+                                                                        Command="{Binding DataContext.DownloadAttachmentCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                                        CommandParameter="{Binding}"/>
+                                                                <StackPanel VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"
+                                                                               Foreground="{DynamicResource ChatBubbleTextBrush}"/>
+                                                                    <TextBlock Text="{Binding SizeLabel}" FontSize="11"
+                                                                               Foreground="{DynamicResource ChatBubbleTimeBrush}"
+                                                                               Visibility="{Binding ShowSize, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                </StackPanel>
+                                                            </DockPanel>
+                                                            <!-- Tombstone -->
+                                                            <DockPanel Visibility="{Binding ShowTombstone, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                <Grid DockPanel.Dock="Left" Width="40" Height="40" Margin="0,0,10,0">
+                                                                    <Rectangle RadiusX="8" RadiusY="8" Stroke="{DynamicResource ChatBubbleTimeBrush}"
+                                                                               StrokeThickness="1" StrokeDashArray="2 2" Fill="Transparent"/>
+                                                                    <TextBlock FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                               Foreground="{DynamicResource ChatBubbleTimeBrush}">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Setter Property="Text" Value="∅"/>
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding IsNoAccessTombstone}" Value="True">
+                                                                                        <Setter Property="Text" Value="🔒"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </Grid>
+                                                                <TextBlock Text="{Binding TombstoneText}" VerticalAlignment="Center"
+                                                                           Foreground="{DynamicResource ChatBubbleTimeBrush}" TextWrapping="Wrap"/>
+                                                            </DockPanel>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
                                             <TextBlock Text="{Binding Text}"
                                                        TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource ChatBubbleTextBrush}"/>
+                                                       Foreground="{DynamicResource ChatBubbleTextBrush}"
+                                                       Visibility="{Binding ShowCaptionText, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <!-- M8 entity link unfurl cards -->
+                                            <ItemsControl ItemsSource="{Binding UnfurlCards}" Margin="0,6,0,0">
+                                                <ItemsControl.Style>
+                                                    <Style TargetType="ItemsControl">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasUnfurlCards}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ItemsControl.Style>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Margin="0,0,0,4" Padding="8,6" CornerRadius="8" Cursor="Hand"
+                                                                BorderThickness="1" BorderBrush="{DynamicResource ChatBubbleTimeBrush}"
+                                                                Background="Transparent"
+                                                                MouseLeftButtonUp="OnUnfurlCardClick"
+                                                                Visibility="{Binding IsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <DockPanel>
+                                                                <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="6"
+                                                                        Background="#22000000" Margin="0,0,10,0">
+                                                                    <Grid>
+                                                                        <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
+                                                                               Visibility="{Binding HasThumbnail, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                        <TextBlock Text="{Binding TypeGlyph}" FontSize="16"
+                                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                                   Visibility="{Binding HasThumbnail, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}"/>
+                                                                    </Grid>
+                                                                </Border>
+                                                                <StackPanel VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               Foreground="{DynamicResource ChatBubbleTextBrush}"/>
+                                                                    <TextBlock Text="{Binding TypeName}" FontSize="11"
+                                                                               Foreground="{DynamicResource ChatBubbleTimeBrush}"/>
+                                                                </StackPanel>
+                                                            </DockPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Text="{Binding StatusLine}"
+                                                       FontSize="12"
+                                                       Margin="0,4,0,0"
+                                                       Foreground="{DynamicResource ChatBubbleTimeBrush}"
+                                                       Visibility="{Binding ShowStatusLine, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0"
+                                                        Visibility="{Binding ShowFailedActions, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <Button Content="Retry" Margin="0,0,8,0" Padding="4,0"
+                                                        Foreground="#FF2AABEE" Background="Transparent" BorderThickness="0"
+                                                        Command="{Binding DataContext.RetryFailedSendCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                        CommandParameter="{Binding}"/>
+                                                <Button Content="Cancel" Padding="4,0"
+                                                        Foreground="{DynamicResource ChatBubbleTimeBrush}" Background="Transparent" BorderThickness="0"
+                                                        Command="{Binding DataContext.CancelFailedSendCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                        CommandParameter="{Binding}"/>
+                                            </StackPanel>
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,2,0,0">
                                                 <TextBlock Text="{Binding TimeLabel}"
                                                            FontSize="11"
@@ -285,10 +431,92 @@
                                Foreground="{DynamicResource ChatDateChipForegroundBrush}"/>
                 </Border>
 
+                <!-- DnD overlay -->
+                <Grid Margin="8" IsHitTestVisible="False"
+                      Visibility="{Binding IsDragOverChat, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Rectangle RadiusX="8" RadiusY="8" Fill="#662AABEE"
+                               Stroke="#FF2AABEE" StrokeThickness="2" StrokeDashArray="6 4"/>
+                    <TextBlock Text="Drop files to attach" FontSize="16" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                </Grid>
+
                 <TextBlock Text="Select a contact to start messaging"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Foreground="{DynamicResource ChatBubbleTimeBrush}"
                            Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}, ConverterParameter=Inverse}"/>
+
+                <!-- M9 Media gallery -->
+                <Grid Background="{DynamicResource ContentBackground}"
+                      Visibility="{Binding IsGalleryOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="12,10">
+                        <Button DockPanel.Dock="Right" Content="✕" Width="32" Height="28"
+                                Command="{Binding CloseMediaGalleryCommand}"
+                                Background="Transparent" BorderThickness="0"/>
+                        <TextBlock Text="Media" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding GalleryItems}" Margin="8">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="4"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="4" Width="120" Height="120" CornerRadius="6" ClipToBounds="True"
+                                            Background="#22000000" Cursor="Hand"
+                                            MouseLeftButtonUp="OnGalleryTileClick">
+                                        <Grid>
+                                            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
+                                                   Visibility="{Binding ShowThumbnail, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                        Visibility="{Binding ShowFileTile, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <TextBlock Text="{Binding TypeGlyph}" FontSize="28" HorizontalAlignment="Center"/>
+                                                <TextBlock Text="{Binding ExtensionLabel}" FontSize="11" HorizontalAlignment="Center"
+                                                           Foreground="{DynamicResource ChatBubbleTimeBrush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Grid.Row="1" Text="{Binding GalleryEmptyHint}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource ChatBubbleTimeBrush}"
+                               Visibility="{Binding ShowGalleryEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                </Grid>
+
+                <!-- Lightbox -->
+                <Grid Background="#EB000000"
+                      Visibility="{Binding IsLightboxOpen, Converter={StaticResource BooleanToVisibilityConverter}}"
+                      PreviewKeyDown="OnLightboxKeyDown">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="12,8">
+                        <Button DockPanel.Dock="Right" Content="✕" Width="36" Height="36"
+                                Background="Transparent" Foreground="White" BorderThickness="0"
+                                Command="{Binding CloseLightboxCommand}"/>
+                        <Button DockPanel.Dock="Right" Content="Download" Margin="0,0,12,0" Padding="10,4"
+                                Background="Transparent" Foreground="White" BorderThickness="0"
+                                Command="{Binding DownloadLightboxCommand}"/>
+                        <TextBlock/>
+                    </DockPanel>
+                    <Grid Grid.Row="1">
+                        <TextBlock Text="Loading…" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding IsLightboxLoading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <TextBlock Text="{Binding LightboxError}" Foreground="#FFFFCDD2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Visibility="{Binding LightboxError, Converter={StaticResource NullToVisibilityConverter}}"/>
+                        <Image Source="{Binding LightboxImage}" Stretch="Uniform" Margin="24"
+                               Visibility="{Binding LightboxImage, Converter={StaticResource NullToVisibilityConverter}}"/>
+                    </Grid>
+                </Grid>
             </Grid>
 
             <Border Grid.Row="2" Background="{DynamicResource ContentBackground}"
@@ -296,17 +524,88 @@
                     Padding="8,6"
                     Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
-                             Grid.Column="0" Margin="0,0,8,0" AcceptsReturn="True" MinHeight="36"
-                             VerticalContentAlignment="Center"
-                             Padding="10,6"/>
-                    <Button Content="Send" Command="{Binding SendCommand}" Grid.Column="1"
-                            MinWidth="64" Padding="12,6"
-                            Background="#FF2AABEE" Foreground="White" BorderThickness="0"/>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                  Margin="0,0,0,4">
+                        <ItemsControl ItemsSource="{Binding PendingAttachments}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,6,0" Padding="6,4" CornerRadius="6"
+                                            Background="{DynamicResource ChatDateChipBackgroundBrush}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Grid Width="40" Height="40" Margin="0,0,8,0">
+                                                <Image Source="{Binding LocalThumbnail}" Stretch="UniformToFill"
+                                                       Visibility="{Binding HasLocalThumbnail, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                <Border Background="#33000000" CornerRadius="4"
+                                                        Visibility="{Binding HasLocalThumbnail, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
+                                                    <TextBlock Text="{Binding TypeGlyph}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <Border Width="14" Height="14" CornerRadius="2" Background="#FF2AABEE"
+                                                        HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                        Visibility="{Binding ShowSendAsFileBadge, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock Text="📄" FontSize="8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </Grid>
+                                            <StackPanel VerticalAlignment="Center" MaxWidth="140">
+                                                <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+                                                <TextBlock Text="{Binding SizeLabel}" FontSize="10"
+                                                           Foreground="{DynamicResource ChatBubbleTimeBrush}"/>
+                                            </StackPanel>
+                                            <Button Content="⋮" Margin="4,0,0,0" Padding="4,0" FontSize="14"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    ToolTip="Send as file"
+                                                    Command="{Binding DataContext.ToggleSendAsFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    Visibility="{Binding CanToggleSendAsFile, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <Button Content="✕" Margin="2,0,0,0" Padding="2,0"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    Command="{Binding DataContext.RemovePendingAttachmentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock Grid.Row="1" Text="{Binding AttachStatusMessage}" FontSize="12" Margin="0,0,0,4"
+                               Foreground="#FFC62828"
+                               Visibility="{Binding AttachStatusMessage, Converter={StaticResource NullToVisibilityConverter}}"/>
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Content="📎" Grid.Column="0"
+                                Margin="0,0,6,0" MinWidth="36" Padding="8,6" ToolTip="Attach"
+                                Background="Transparent" BorderThickness="0"
+                                Click="OnAttachMenuClick">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="File…" Command="{Binding AttachFromDiskCommand}"/>
+                                    <MenuItem Header="Choose from Cloud…" Command="{Binding ChooseFromCloudCommand}"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <TextBox x:Name="ComposerBox"
+                                 Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
+                                 Grid.Column="1" Margin="0,0,8,0" AcceptsReturn="True" MinHeight="36"
+                                 VerticalContentAlignment="Center"
+                                 Padding="10,6"
+                                 PreviewKeyDown="OnComposerPreviewKeyDown"/>
+                        <Button Content="Send" Command="{Binding SendCommand}" Grid.Column="2"
+                                MinWidth="64" Padding="12,6"
+                                Background="#FF2AABEE" Foreground="White" BorderThickness="0"/>
+                    </Grid>
                 </Grid>
             </Border>
         </Grid>

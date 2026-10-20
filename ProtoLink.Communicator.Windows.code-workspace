@@ -23,6 +23,15 @@
 		},
 		{
 			"path": "../AgentTeam"
+		},
+		{
+			"path": "../../tmp/MyNotesFolder/Server"
+		},
+		{
+			"path": "../AutomationAPI"
+		},
+		{
+			"path": "../../tmp/My AI Model"
 		}
 	],
 	"settings": {}

@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Services.Messenger;
 using Newtonsoft.Json;
 
 namespace ProtoLink.Communicator.Windows.Services;
@@ -132,5 +133,7 @@ public class AuthService : IAuthService
     {
         _currentToken = null;
         _tokenService.ClearToken();
+        // Messenger media: in-memory thumbs only — clear private chat cache on sign-out.
+        MessengerThumbnailCache.Shared.Clear();
     }
 }

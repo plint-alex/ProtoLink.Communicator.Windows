@@ -4,7 +4,8 @@ using Xunit.Abstractions;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
-/// <summary>Offline: seed empty ContentHash from local files so same-size edits sync without a full remote walk.</summary>
+/// <summary>No HTTP. Reads the Communicator profile under LocalAppData and may write ContentHash into that sync store.</summary>
+[Trait("Category", "LocalProfile")]
 public class SeedContentHashesFromLocalTests
 {
     private readonly ITestOutputHelper _output;

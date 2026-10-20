@@ -3,6 +3,7 @@ using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Offline")]
 public class SyncClassifierTests
 {
     [Fact]

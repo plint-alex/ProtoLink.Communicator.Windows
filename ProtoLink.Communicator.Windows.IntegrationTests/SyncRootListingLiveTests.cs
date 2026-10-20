@@ -19,13 +19,6 @@ public class SyncRootListingLiveTests
     [LiveFact]
     public async Task List_MyNotesFolder_TopLevel_Children()
     {
-        var appData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ProtoLinkCommunicator");
-        var settings = JsonSerializer.Deserialize<AppSettings>(
-            await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
-            IntegrationTestHttp.JsonOptions)!;
-
         using var http = new HttpClient();
         IntegrationTestHttp.ConfigureClient(http);
         var tokenService = new TokenService(NullLogger<TokenService>.Instance);

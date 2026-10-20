@@ -1,5 +1,4 @@
 using Xunit;
-using Xunit.Sdk;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 

@@ -17,7 +17,7 @@
         <TaskbarItemInfo/>
     </Window.TaskbarItemInfo>
     <Window.Resources>
-        <!-- Instagram-style top chrome: tabs + actions; Settings opens as full-width page instead of overlay -->
+        <!-- Telegram-aligned top chrome: tabs + actions; Settings opens as full-width page instead of overlay -->
         <Style TargetType="TabControl" x:Key="TabControlWithSettingsButton">
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Template">

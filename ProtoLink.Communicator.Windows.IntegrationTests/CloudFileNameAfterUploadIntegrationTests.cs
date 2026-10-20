@@ -21,7 +21,7 @@ public class CloudFileNameAfterUploadIntegrationTests
 
     public CloudFileNameAfterUploadIntegrationTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task AddEntityWithName_ThenAddFile_DisplayNameRemainsIndexHtml()
     {
         var password = Environment.GetEnvironmentVariable("PROTOLINK_TEST_PASSWORD");

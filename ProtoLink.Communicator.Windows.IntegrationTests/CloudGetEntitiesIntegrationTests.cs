@@ -24,7 +24,8 @@ public sealed class CloudGetEntitiesIntegrationTests : IAsyncLifetime
     public Task InitializeAsync()
     {
         _client = new HttpClient();
-        IntegrationTestHttp.ConfigureClient(_client);
+        if (LiveApiTarget.AllowsCurrentEnvironment())
+            IntegrationTestHttp.ConfigureClient(_client);
         return Task.CompletedTask;
     }
 
@@ -34,7 +35,7 @@ public sealed class CloudGetEntitiesIntegrationTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [LiveFact]
     public async Task Login_CloudRoot_GetFolderChildren_WithValues_Succeeds()
     {
         var login = await LoginAsync();
@@ -76,7 +77,7 @@ public sealed class CloudGetEntitiesIntegrationTests : IAsyncLifetime
         _output.WriteLine($"Children with values: {t1.Json!.Count}");
     }
 
-    [Fact]
+    [LiveFact]
     public async Task GetEntities_WithValues_DoesNotReturn500_ForOptionalMappedFolder()
     {
         var folderIdStr = Environment.GetEnvironmentVariable("PROTOLINK_TEST_CLOUD_FOLDER_ID");

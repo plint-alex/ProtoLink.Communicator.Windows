@@ -320,7 +320,7 @@ public partial class MainWindow : Window
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch
             });
         }
-        // Instagram-style: Settings replaces the main tabs (full width).
+        // Settings replaces the main tabs (full width).
         MainTabControl.Visibility = Visibility.Collapsed;
         AuthFlowPanel.Visibility = Visibility.Collapsed;
         SettingsPanel.Visibility = Visibility.Visible;
@@ -425,8 +425,15 @@ public partial class MainWindow : Window
         var handler = CreateAuthHandler();
         handler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
         var client = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
-        var vm = new MessengerViewModel(_authService, client);
+        var vm = new MessengerViewModel(_authService, client, _settingsService);
         vm.UnreadChanged += count => TaskbarUnreadBadge.Apply(this, count);
+        vm.TryOpenEntityInAppAsync = async entityId =>
+        {
+            // E4 — Cloud native when navigable; switch to Cloud tab.
+            MainTabControl.SelectedIndex = 2;
+            if (_cloudViewModel == null) return false;
+            return await _cloudViewModel.TryOpenEntityAsync(entityId);
+        };
         _messengerViewModel = vm;
         MessengerTabContent.Children.Add(new MessengerView { DataContext = vm });
         _ = EnsureRealtimeConnectedAsync();

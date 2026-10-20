@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.ViewModels;
@@ -15,6 +16,7 @@ public partial class MessengerView : System.Windows.Controls.UserControl
     private DispatcherTimer? _stickyHideTimer;
     private bool _stickToBottom = true;
     private MessengerViewModel? _boundVm;
+    private int _dragDepth;
 
     public MessengerView()
     {
@@ -209,5 +211,107 @@ public partial class MessengerView : System.Windows.Controls.UserControl
             if (found != null) return found;
         }
         return null;
+    }
+
+    private void OnComposerPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.V) return;
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != ModifierKeys.Control) return;
+        if (DataContext is not MessengerViewModel vm) return;
+        if (!System.Windows.Clipboard.ContainsImage()) return;
+        if (vm.TryPasteClipboardImage())
+            e.Handled = true;
+    }
+
+    private void OnChatDragEnter(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!CanAcceptFileDrop(e)) return;
+        _dragDepth++;
+        if (DataContext is MessengerViewModel vm)
+            vm.IsDragOverChat = true;
+        e.Effects = System.Windows.DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void OnChatDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!CanAcceptFileDrop(e))
+        {
+            e.Effects = System.Windows.DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = System.Windows.DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void OnChatDragLeave(object sender, System.Windows.DragEventArgs e)
+    {
+        _dragDepth = Math.Max(0, _dragDepth - 1);
+        if (_dragDepth == 0 && DataContext is MessengerViewModel vm)
+            vm.IsDragOverChat = false;
+    }
+
+    private void OnChatDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        _dragDepth = 0;
+        if (DataContext is MessengerViewModel vm)
+            vm.IsDragOverChat = false;
+
+        if (!CanAcceptFileDrop(e) || DataContext is not MessengerViewModel messenger) return;
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files) return;
+        messenger.AddDroppedFiles(files);
+        e.Handled = true;
+    }
+
+    private bool CanAcceptFileDrop(System.Windows.DragEventArgs e)
+    {
+        if (DataContext is not MessengerViewModel { SelectedContact: not null }) return false;
+        return e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop);
+    }
+
+    private void OnAttachmentImageClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.DataContext is not MessageAttachmentViewModel attachment) return;
+        if (DataContext is not MessengerViewModel vm) return;
+        if (vm.OpenLightboxCommand.CanExecute(attachment))
+            vm.OpenLightboxCommand.Execute(attachment);
+        e.Handled = true;
+    }
+
+    private void OnLightboxKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        if (DataContext is MessengerViewModel vm)
+            vm.CloseLightboxCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void OnAttachMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn || btn.ContextMenu == null) return;
+        btn.ContextMenu.PlacementTarget = btn;
+        btn.ContextMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnGalleryTileClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: MediaGalleryItemViewModel tile }) return;
+        if (DataContext is not MessengerViewModel vm) return;
+        if (vm.ActivateGalleryItemCommand.CanExecute(tile))
+            vm.ActivateGalleryItemCommand.Execute(tile);
+        e.Handled = true;
+    }
+
+    private void OnUnfurlCardClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: MessageUnfurlCardViewModel card }) return;
+        if (DataContext is not MessengerViewModel vm) return;
+        if (vm.OpenUnfurlCommand.CanExecute(card))
+            vm.OpenUnfurlCommand.Execute(card);
+        e.Handled = true;
     }
 }

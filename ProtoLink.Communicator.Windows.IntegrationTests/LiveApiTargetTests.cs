@@ -10,8 +10,8 @@ public class LiveApiTargetTests
     {
         var reason = LiveApiTarget.SkipReason(null, null);
         Assert.Equal(LiveApiTarget.NoBaseSkip, reason);
-        Assert.DoesNotContain("default", reason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("localhost:5000", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("do not default to protolink.ru", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

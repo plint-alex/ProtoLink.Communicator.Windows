@@ -15,4 +15,10 @@ public class AppSettings
     public string? NotesRootPath { get; set; }
     /// <summary>Last open Cloud entity id; restored on next start (AT-C7). Null → Cloud root.</summary>
     public Guid? LastOpenCloudEntityId { get; set; }
+
+    /// <summary>
+    /// Messenger media chat-folder cache: key = <c>{ownerUserId:D}:{partnerUserId:D}</c> → CloudFolder id under CloudRoot/Chats.
+    /// Cache-first per client-contract §4; never grant this folder to the peer.
+    /// </summary>
+    public Dictionary<string, Guid> MessengerChatFolderIds { get; set; } = new();
 }

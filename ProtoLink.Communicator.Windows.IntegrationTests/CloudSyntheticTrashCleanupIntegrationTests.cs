@@ -13,11 +13,13 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// One-off cleanup: deletes CloudFile entities whose display name is the synthetic
 /// <c>file-{guid}</c> fallback (nameless after AddFile version bump).
 ///
-/// Safety: set <c>PROTOLINK_CLEANUP_TRASH=1</c> (and <c>PROTOLINK_TEST_PASSWORD</c>) to run.
+/// Safety: set <c>PROTOLINK_API_BASE</c>, <c>PROTOLINK_CLEANUP_TRASH=1</c>, and <c>PROTOLINK_TEST_PASSWORD</c>.
+/// A protolink.ru host also needs <c>PROTOLINK_ALLOW_PROD_TESTS=1</c>.
 /// Optional: <c>PROTOLINK_CLEANUP_FOLDER_NAME=MyNotesFolder</c> to limit to that CloudFolder under CloudRoot
 /// (case-insensitive). Default walks the entire cloud tree.
 ///
 /// <code>
+/// $env:PROTOLINK_API_BASE = "http://localhost:5000"
 /// $env:PROTOLINK_CLEANUP_TRASH = "1"
 /// $env:PROTOLINK_CLEANUP_FOLDER_NAME = "MyNotesFolder"   # optional
 /// $env:PROTOLINK_TEST_PASSWORD = "..."
@@ -31,7 +33,7 @@ public class CloudSyntheticTrashCleanupIntegrationTests
 
     public CloudSyntheticTrashCleanupIntegrationTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task DeleteSyntheticFileGuidCloudFiles_UnderCloudOrNamedFolder()
     {
         if (!IsCleanupEnabled())

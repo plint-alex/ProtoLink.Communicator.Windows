@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Services.Messenger;
 using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -16,6 +17,7 @@ public partial class MessengerViewModel : ViewModelBase
 {
     private readonly IAuthService _authService;
     private readonly HttpClient _httpClient;
+    private readonly ISettingsService? _settingsService;
     private Contact? _selectedContact;
     private string _messageText = string.Empty;
     private bool _isCompactLayout;
@@ -31,16 +33,25 @@ public partial class MessengerViewModel : ViewModelBase
     private int _loadMessagesBusy;
     private int _loadMessagesQueued;
 
-    public MessengerViewModel(IAuthService authService, HttpClient httpClient)
+    public MessengerViewModel(IAuthService authService, HttpClient httpClient, ISettingsService? settingsService = null)
     {
         _authService = authService;
         _httpClient = httpClient;
+        _settingsService = settingsService;
+        _cloudApi = new CloudApiService(httpClient);
+        _chatFolders = settingsService != null
+            ? new MessengerChatFolderResolver(_cloudApi, settingsService)
+            : null;
 
         Contacts = new ObservableCollection<Contact>();
         Messages = new ObservableCollection<MessageViewModel>();
-        SendCommand = new RelayCommand(async _ => await SendMessageAsync(), _ => SelectedContact != null && !string.IsNullOrWhiteSpace(MessageText));
+        GalleryItems = new ObservableCollection<MediaGalleryItemViewModel>();
+        SendCommand = new RelayCommand(async _ => await SendMessageAsync(), _ => CanSendNow());
         RefreshContactsCommand = new RelayCommand(async _ => await LoadContactsAsync());
         BackToContactsCommand = new RelayCommand(_ => SelectedContact = null, _ => SelectedContact != null);
+        InitMediaSendCommands();
+        InitMediaRenderCommands();
+        InitCloudPickerGalleryUnfurlCommands();
 
         _ = InitializeAsync();
     }
@@ -94,7 +105,16 @@ public partial class MessengerViewModel : ViewModelBase
             }
         }
     }
-    public string MessageText { get => _messageText; set { _messageText = value; OnPropertyChanged(); } }
+    public string MessageText
+    {
+        get => _messageText;
+        set
+        {
+            _messageText = value;
+            OnPropertyChanged();
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
     public ICommand SendCommand { get; }
     public ICommand RefreshContactsCommand { get; }
     public ICommand BackToContactsCommand { get; }
@@ -149,10 +169,22 @@ public partial class MessengerViewModel : ViewModelBase
     private void ShowMessages(IReadOnlyList<MessageViewModel> messages)
     {
         var withDates = WithDateHeaders(messages);
-        if (MessagesLookSame(Messages, withDates)) return;
+        if (MessagesLookSame(Messages, withDates))
+        {
+            foreach (var m in Messages)
+            {
+                EnsureMessageAttachments(m);
+                EnsureMessageUnfurls(m);
+            }
+            return;
+        }
         Messages.Clear();
         foreach (var m in withDates)
+        {
             Messages.Add(m);
+            EnsureMessageAttachments(m);
+            EnsureMessageUnfurls(m);
+        }
     }
 
     private static List<MessageViewModel> WithDateHeaders(IEnumerable<MessageViewModel> messages)
@@ -205,6 +237,8 @@ public partial class MessengerViewModel : ViewModelBase
         if (!string.IsNullOrEmpty(day) && !string.Equals(day, lastDay, StringComparison.Ordinal))
             Messages.Add(MessageViewModel.DateHeader(day));
         Messages.Add(message);
+        EnsureMessageAttachments(message);
+        EnsureMessageUnfurls(message);
     }
 
     private async Task<string> GetUserLoginAsync(Guid userId)
@@ -438,77 +472,6 @@ public partial class MessengerViewModel : ViewModelBase
         else if (systemParentId == SystemEntities.Received) _partnerReceivedContainerIds[userId] = id;
     }
 
-    private async Task SendMessageAsync()
-    {
-        if (SelectedContact == null || _authService.CurrentToken == null || string.IsNullOrWhiteSpace(MessageText)) return;
-        var myUserId = _authService.CurrentToken.UserId;
-        var partnerUserId = SelectedContact.Id;
-        var now = DateTime.UtcNow;
-        var text = MessageText;
-
-        var optimistic = new MessageViewModel
-        {
-            Text = text,
-            Timestamp = now,
-            IsFromMe = true,
-            SenderName = await GetUserLoginAsync(myUserId),
-            DeliveryStatus = MessageDeliveryStatus.Sending
-        };
-        if (!_cachedMessages.ContainsKey(partnerUserId)) _cachedMessages[partnerUserId] = new List<MessageViewModel>();
-        _cachedMessages[partnerUserId].Add(optimistic);
-        AppendMessageToChat(optimistic);
-        MessageText = string.Empty;
-
-        var sentTask = GetOrCreateUserContainer(SystemEntities.Sent, myUserId, "Sent");
-        var receivedTask = GetOrCreateUserContainer(SystemEntities.Received, partnerUserId, "Received", grantWrite: true);
-        await Task.WhenAll(sentTask, receivedTask);
-        var sentId = await sentTask;
-        var receivedId = await receivedTask;
-        if (sentId == Guid.Empty || receivedId == Guid.Empty)
-        {
-            RemoveOptimisticMessage(partnerUserId, optimistic);
-            MessageText = text;
-            return;
-        }
-
-        // Each value needs a distinct parent "slot" so the API does not dedupe multiple StringValues with empty parents to one row (see DataAccess EntityService.DedupeValuesByParentSlot).
-        var addMsg = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
-        {
-            Code = "Message",
-            ParentIds = new[] { SystemEntities.Message },
-            Values = new List<AddValueContract>
-            {
-                new() { Type = TypeOfValue.String, Value = text, ParentIds = new[] { SystemEntities.Message } },
-                new() { Type = TypeOfValue.DateTime, Value = now, ParentIds = new[] { SystemEntities.Message } },
-                new() { Type = TypeOfValue.String, Value = $"sender:{myUserId}", ParentIds = new[] { SystemEntities.Sent } },
-                new() { Type = TypeOfValue.String, Value = $"receiver:{partnerUserId}", ParentIds = new[] { SystemEntities.Received } }
-            },
-            Permissions = partnerUserId != myUserId ? new List<AddPermissionContract> { new() { PermissionForId = partnerUserId, CanWrite = false } } : null
-        });
-
-        if (!addMsg.IsSuccessStatusCode)
-        {
-            RemoveOptimisticMessage(partnerUserId, optimistic);
-            MessageText = text;
-            return;
-        }
-
-        try
-        {
-            var created = await addMsg.Content.ReadFromJsonAsync<JsonElement>();
-            if (created.TryGetProperty("id", out var idEl) && idEl.TryGetGuid(out var newId))
-                optimistic.EntityId = newId;
-        }
-        catch { /* keep local id empty */ }
-        optimistic.DeliveryStatus = MessageDeliveryStatus.Sent;
-
-        // Real-time: notify peer and other devices of the same user.
-        var payload = new { senderId = myUserId.ToString(), messageText = text, timestamp = now };
-        await NotifyRealtimeAsync("message_sent", partnerUserId.ToString(), payload);
-        if (partnerUserId != myUserId)
-            await NotifyRealtimeAsync("message_sent", myUserId.ToString(), payload);
-    }
-
     private async Task NotifyRealtimeAsync(string commandType, string targetUserId, object? parameters = null)
     {
         try
@@ -549,22 +512,29 @@ public partial class MessengerViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Newest page size for a single conversation (server scopes via ConversationUserIds).</summary>
+    public const int ConversationMessagePageSize = 100;
+
+    /// <summary>1 id for self-chat; 2 ids for a pair (order does not matter to the API).</summary>
+    public static Guid[] BuildConversationUserIds(Guid myUserId, Guid partnerUserId) =>
+        myUserId == partnerUserId
+            ? new[] { myUserId }
+            : new[] { myUserId, partnerUserId };
+
     private async Task LoadMessagesCoreAsync()
     {
         if (SelectedContact == null || _authService.CurrentToken == null) return;
         var myUserId = _authService.CurrentToken.UserId;
         var partnerUserId = SelectedContact.Id;
         var myStr = myUserId.ToString();
-        var partnerStr = partnerUserId.ToString();
 
-        // Server defaults Take to 100; message entities are global under SystemEntities.Message,
-        // so a small page can omit this conversation entirely.
         var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
         {
             ParentIds = new[] { SystemEntities.Message },
             IncludeValues = true,
             Skip = 0,
-            Take = 5000
+            Take = ConversationMessagePageSize,
+            ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
         });
         if (!response.IsSuccessStatusCode) return;
         var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
@@ -572,43 +542,35 @@ public partial class MessengerViewModel : ViewModelBase
         // Contact may have changed while the request was in flight.
         if (SelectedContact?.Id != partnerUserId) return;
 
-        var sent = new List<GetEntitiesResult>();
-        var received = new List<GetEntitiesResult>();
-        foreach (var msg in all)
-        {
-            if (msg.Values == null) continue;
-            string? sender = null, receiver = null;
-            foreach (var val in msg.Values)
-            {
-                if (val is EntityValue ev && ev.Type == "StringValue")
-                {
-                    var s = ev.Value?.ToString();
-                    if (s != null)
-                    {
-                        if (s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase)) sender = s.Substring(7);
-                        else if (s.StartsWith("receiver:", StringComparison.OrdinalIgnoreCase)) receiver = s.Substring(9);
-                    }
-                }
-            }
-            // Android may store GUIDs with different casing than Guid.ToString().
-            if (string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(receiver, partnerStr, StringComparison.OrdinalIgnoreCase))
-                sent.Add(msg);
-            else if (string.Equals(sender, partnerStr, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(receiver, myStr, StringComparison.OrdinalIgnoreCase))
-                received.Add(msg);
-        }
-
-        var list = new List<MessageViewModel>();
         var myLoginTask = GetUserLoginAsync(myUserId);
         var partnerLoginTask = GetUserLoginAsync(partnerUserId);
         await Task.WhenAll(myLoginTask, partnerLoginTask);
         var myLogin = await myLoginTask;
         var partnerLogin = await partnerLoginTask;
-        foreach (var msg in sent) { var vm = ParseMessage(msg, true, myLogin); if (vm != null) list.Add(vm); }
-        foreach (var msg in received) { var vm = ParseMessage(msg, false, partnerLogin); if (vm != null) list.Add(vm); }
+
+        var list = new List<MessageViewModel>();
+        foreach (var msg in all)
+        {
+            if (msg.Values == null) continue;
+            string? sender = null;
+            foreach (var val in msg.Values)
+            {
+                if (val is EntityValue ev && ev.Type == "StringValue")
+                {
+                    var s = ev.Value?.ToString();
+                    if (s != null && s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase))
+                        sender = s.Substring(7);
+                }
+            }
+            // Android may store GUIDs with different casing than Guid.ToString().
+            var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
+            var vm = ParseMessage(msg, isFromMe, isFromMe ? myLogin : partnerLogin);
+            if (vm != null) list.Add(vm);
+        }
 
         if (SelectedContact?.Id != partnerUserId) return;
+        list = MergeInFlightLocalMessages(partnerUserId, list);
+        // Server returns newest-first; UI list is oldest→newest.
         _cachedMessages[partnerUserId] = list
             .OrderBy(x => x.Timestamp)
             .ThenBy(x => x.EntityId)
@@ -621,35 +583,29 @@ public partial class MessengerViewModel : ViewModelBase
     private static MessageViewModel? ParseMessage(GetEntitiesResult message, bool isFromMe, string senderName)
     {
         if (message.Values == null) return null;
-        var text = "";
+        var stringValues = new List<string?>();
         var dateFromValue = DateTime.MinValue;
         var isRead = false;
         foreach (var val in message.Values)
         {
-            if (val is EntityValue ev)
+            if (val is not EntityValue ev)
+                continue;
+            if (ev.Type == "StringValue")
             {
-                if (ev.Type == "StringValue")
-                {
-                    var s = ev.Value?.ToString() ?? "";
-                    if (s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase) ||
-                        s.StartsWith("receiver:", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    if (s.Equals("status:read", StringComparison.OrdinalIgnoreCase))
-                    {
-                        isRead = true;
-                        continue;
-                    }
-                    if (s.StartsWith("status:", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    text = s;
-                }
-                else if (ev.Type == "DateTimeValue" && ev.Value != null)
-                {
-                    dateFromValue = ParseMessageTimestamp(ev.Value);
-                }
+                var s = ev.Value?.ToString() ?? "";
+                if (s.Equals("status:read", StringComparison.OrdinalIgnoreCase))
+                    isRead = true;
+                stringValues.Add(s);
+            }
+            else if (ev.Type == "DateTimeValue" && ev.Value != null)
+            {
+                dateFromValue = ParseMessageTimestamp(ev.Value);
             }
         }
-        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        var (text, attachmentIds) = MessageStringValues.Parse(stringValues);
+        // Attachment-only messages: keep row when ids present so GUID never becomes body elsewhere.
+        if (string.IsNullOrWhiteSpace(text) && attachmentIds.Count == 0) return null;
 
         // Prefer entity CreationTime: server stores full precision (seconds + milliseconds).
         // DateTime string values are often culture-formatted without fractional seconds.
@@ -671,6 +627,7 @@ public partial class MessengerViewModel : ViewModelBase
         {
             EntityId = message.Id,
             Text = text,
+            AttachmentIds = attachmentIds,
             Timestamp = stamp,
             IsFromMe = isFromMe,
             SenderName = senderName,
@@ -765,24 +722,50 @@ public class Contact : ViewModelBase
     }
 }
 
-public enum MessageDeliveryStatus
-{
-    Sending,
-    Sent,
-    Read
-}
-
 public class MessageViewModel : ViewModelBase
 {
     private MessageDeliveryStatus _deliveryStatus = MessageDeliveryStatus.Sent;
+    private double _uploadProgress;
+    private string? _statusLine;
+    private bool _attachmentsBound;
     public Guid EntityId { get; set; }
     public string Text { get; set; } = string.Empty;
+    public IReadOnlyList<Guid> AttachmentIds { get; set; } = Array.Empty<Guid>();
+    public ObservableCollection<MessageAttachmentViewModel> Attachments { get; } = new();
     public string SenderName { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
     public bool IsFromMe { get; set; }
     public bool IsDateSeparator { get; set; }
     public string TimeLabel { get; set; } = string.Empty;
     public string DayLabel { get; set; } = string.Empty;
+
+    /// <summary>Local file paths for retry (in-memory only; not restored after restart).</summary>
+    public List<PendingAttachmentDraft> PendingLocalAttachments { get; set; } = new();
+
+    /// <summary>Partner user id for this outgoing bubble (retry / cancel / queue).</summary>
+    public Guid PartnerUserId { get; set; }
+
+    /// <summary>M8 — visible unfurl cards (403s never appear here).</summary>
+    public ObservableCollection<MessageUnfurlCardViewModel> UnfurlCards { get; } = new();
+
+    public bool HasUnfurlCards => UnfurlCards.Count > 0;
+    public bool UnfurlsBound { get; set; }
+
+    public void NotifyUnfurlCardsChanged() => OnPropertyChanged(nameof(HasUnfurlCards));
+
+    public bool HasCaption => !string.IsNullOrWhiteSpace(Text);
+    public bool HasAttachments => Attachments.Count > 0 || AttachmentIds.Count > 0 || PendingLocalAttachments.Count > 0;
+    public bool ShowCaptionText => HasCaption;
+    public bool AttachmentsBound
+    {
+        get => _attachmentsBound;
+        set
+        {
+            if (_attachmentsBound == value) return;
+            _attachmentsBound = value;
+            OnPropertyChanged();
+        }
+    }
 
     public MessageDeliveryStatus DeliveryStatus
     {
@@ -794,13 +777,53 @@ public class MessageViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(TicksText));
             OnPropertyChanged(nameof(ShowTicks));
+            OnPropertyChanged(nameof(ShowFailedActions));
+            OnPropertyChanged(nameof(IsFailed));
+            OnPropertyChanged(nameof(ShowUploadProgress));
+            OnPropertyChanged(nameof(BubbleOpacity));
         }
     }
 
-    public bool ShowTicks => IsFromMe && !IsDateSeparator;
+    public double UploadProgress
+    {
+        get => _uploadProgress;
+        set
+        {
+            if (Math.Abs(_uploadProgress - value) < 0.001) return;
+            _uploadProgress = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string? StatusLine
+    {
+        get => _statusLine;
+        set
+        {
+            if (_statusLine == value) return;
+            _statusLine = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowStatusLine));
+        }
+    }
+
+    public bool ShowStatusLine => !string.IsNullOrEmpty(StatusLine);
+    public bool IsFailed => DeliveryStatus == MessageDeliveryStatus.Failed;
+    public bool ShowFailedActions => IsFromMe && !IsDateSeparator && DeliveryStatus == MessageDeliveryStatus.Failed;
+    public bool ShowUploadProgress =>
+        IsFromMe
+        && !IsDateSeparator
+        && DeliveryStatus is MessageDeliveryStatus.Uploading or MessageDeliveryStatus.Sending;
+    public double BubbleOpacity => DeliveryStatus == MessageDeliveryStatus.Failed ? 0.7 : 1.0;
+
+    /// <summary>Ticks only after Sent (M7); Uploading / Sending / Failed hide them.</summary>
+    public bool ShowTicks =>
+        IsFromMe
+        && !IsDateSeparator
+        && DeliveryStatus is MessageDeliveryStatus.Sent or MessageDeliveryStatus.Read;
+
     public string TicksText => DeliveryStatus switch
     {
-        MessageDeliveryStatus.Sending => "◌",
         MessageDeliveryStatus.Read => "✓✓",
         _ => "✓"
     };

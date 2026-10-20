@@ -1,15 +1,21 @@
 ; ProtoLink Communicator (Windows) Inno Setup script
-; Builds artifacts\ProtoLink.Communicator.Windows-Setup.exe from artifacts\publish
+; Builds artifacts\ProtoLink.Communicator.Windows-Setup-<version>.exe from artifacts\publish
+;
+; Version: pass /DMyAppVersion=x.y.z from tools\Build-Installer.ps1 (csproj <Version>).
+; Do not hand-type MyAppVersion here. Release tagging: see docs\release.md
 ;
 ; Quiet install from command line:
-;   ProtoLink.Communicator.Windows-Setup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
+;   ProtoLink.Communicator.Windows-Setup-<version>.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 ; Optional:
 ;   /DIR="C:\Path\To\Install"
 ; Quiet uninstall:
 ;   uninstall.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 
+#ifndef MyAppVersion
+  #error MyAppVersion is undefined. Compile via tools\Build-Installer.ps1 (passes /DMyAppVersion from csproj).
+#endif
+
 #define MyAppName "ProtoLink Communicator"
-#define MyAppVersion "1.0.7"
 #define MyAppPublisher "ProtoLink"
 #define MyAppExeName "ProtoLink.Communicator.Windows.exe"
 #define MyAppId "{{B8D4F0A2-5C3E-4F9B-8D2A-7E6F9B3C4D5E}"
@@ -24,7 +30,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts
-OutputBaseFilename=ProtoLink.Communicator.Windows-Setup
+OutputBaseFilename=ProtoLink.Communicator.Windows-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

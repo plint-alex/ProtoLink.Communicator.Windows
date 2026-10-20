@@ -6,6 +6,7 @@ using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
+[Trait("Category", "Offline")]
 public class CloudApiServiceContentLengthTests
 {
     private sealed class ChunkedNoLengthHandler : HttpMessageHandler

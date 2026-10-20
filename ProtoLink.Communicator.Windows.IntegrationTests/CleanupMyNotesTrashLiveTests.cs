@@ -12,7 +12,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
 /// <summary>
 /// Deletes synthetic file-{{guid}} CloudFiles under mapped MyNotesFolder using token.dat.
-/// Set PROTOLINK_CLEANUP_TRASH=1 to run (destructive).
+/// Requires PROTOLINK_API_BASE and PROTOLINK_CLEANUP_TRASH=1. Production also requires PROTOLINK_ALLOW_PROD_TESTS=1.
 /// </summary>
 [Trait("Category", "Live")]
 public class CleanupMyNotesTrashLiveTests
@@ -28,13 +28,6 @@ public class CleanupMyNotesTrashLiveTests
             _output.WriteLine("Skip: set PROTOLINK_CLEANUP_TRASH=1");
             return;
         }
-
-        var appData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ProtoLinkCommunicator");
-        var settings = JsonSerializer.Deserialize<AppSettings>(
-            await File.ReadAllTextAsync(Path.Combine(appData, "settings.json")),
-            IntegrationTestHttp.JsonOptions)!;
 
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         IntegrationTestHttp.ConfigureClient(http);

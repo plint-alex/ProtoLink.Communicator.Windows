@@ -26,6 +26,8 @@ dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Of
 
 Live ACL (needs API + password): `CloudFilesAclLiveTests` covers share AT-S30/S31 — private `getFile`/`getImage` 403 `no_access` for anon and partner, 200 for owner, unknown id 404 `not_found`, `Cache-Control: private` then `public, max-age=86400` after a public grant. Optional `PROTOLINK_TEST_PARTNER_PASSWORD` (defaults to `PROTOLINK_TEST_PASSWORD`).
 
+Messenger-media feature ACL (AT-M11/12/22/23): `MessengerMediaFeatureAclLiveTests` creates a `CloudRoot/Chats/…` file with peer-read at create time (same shape as MediaSend), asserts B can read, C (`alex.plint@yandex.ru`) + anon get 403 `no_access` on getFile/getImage, and `Cache-Control: private`. Server AT-M30: `CloudFilesAddFileSizeLimitLiveTests`.
+
 `SeedContentHashesFromLocalTests` (`Category=LocalProfile`) also makes no HTTP call. It reads the real Communicator profile under `%LocalAppData%\ProtoLinkCommunicator` and may write `ContentHash` into that sync store. It is not part of the offline filter.
 
 ## Live tests against a local API

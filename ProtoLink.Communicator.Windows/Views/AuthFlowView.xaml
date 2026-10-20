@@ -14,7 +14,7 @@
                 CornerRadius="12">
             <StackPanel>
                 <Button Content="← Back" Command="{Binding BackCommand}" HorizontalAlignment="Left"
-                        Style="{DynamicResource IgGhostButton}" Margin="0,0,0,12"
+                        Style="{DynamicResource GhostButton}" Margin="0,0,0,12"
                         Visibility="{Binding CanGoBack, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
                 <!-- Welcome -->
@@ -25,11 +25,11 @@
                                TextWrapping="Wrap" TextAlignment="Center"
                                Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,28"/>
                     <Button Content="Start messaging" Command="{Binding StartMessagingCommand}"
-                            Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
                     <Button Content="I already have an account" Command="{Binding HaveAccountCommand}"
-                            Style="{DynamicResource IgGhostButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+                            Style="{DynamicResource GhostButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
                     <Button Content="Server settings" Command="{Binding OpenSettingsCommand}"
-                            Style="{DynamicResource IgGhostButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource GhostButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <!-- Email -->
@@ -38,9 +38,9 @@
                     <TextBlock Text="We'll send a confirmation link to this address."
                                TextWrapping="Wrap" Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
                     <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
-                             Style="{DynamicResource IgTextBox}" Margin="0,0,0,16"/>
+                             Style="{DynamicResource AppTextBox}" Margin="0,0,0,16"/>
                     <Button Content="Next" Command="{Binding EmailNextCommand}" IsDefault="True"
-                            Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <!-- Password -->
@@ -55,7 +55,7 @@
                     <PasswordBox x:Name="ConfirmPasswordBox" Margin="0,0,0,16" Padding="12,10" Height="40"
                                  PasswordChanged="ConfirmPasswordBox_PasswordChanged"/>
                     <Button Content="Create account" Command="{Binding PasswordNextCommand}" IsDefault="True"
-                            Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <!-- Check email -->
@@ -65,9 +65,9 @@
                                Foreground="{DynamicResource ForegroundMutedBrush}"
                                Text="{Binding Email, StringFormat='We sent a confirmation link to {0}. Open the link, then continue to log in.'}"/>
                     <Button Content="Resend email" Command="{Binding ResendCommand}"
-                            Style="{DynamicResource IgGhostButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+                            Style="{DynamicResource GhostButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
                     <Button Content="Continue to log in" Command="{Binding ContinueToLoginCommand}"
-                            Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <!-- Login -->
@@ -75,12 +75,12 @@
                     <TextBlock Text="Log in" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8"/>
                     <TextBlock Text="Email" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
                     <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
-                             Style="{DynamicResource IgTextBox}" Margin="0,0,0,12"/>
+                             Style="{DynamicResource AppTextBox}" Margin="0,0,0,12"/>
                     <TextBlock Text="Password" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
                     <PasswordBox x:Name="LoginPasswordBox" Margin="0,0,0,16" Padding="12,10" Height="40"
                                  PasswordChanged="LoginPasswordBox_PasswordChanged"/>
                     <Button Content="Log in" Command="{Binding LoginCommand}" IsDefault="True"
-                            Style="{DynamicResource IgPrimaryButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <ProgressBar IsIndeterminate="True" Height="4" Margin="0,16,0,0"

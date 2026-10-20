@@ -17,7 +17,7 @@ public class CloudSyncRoundtripIntegrationTests
 
     public CloudSyncRoundtripIntegrationTests(ITestOutputHelper output) => _output = output;
 
-    [Fact]
+    [LiveFact]
     public async Task Login_CreateFolder_AddAndDeleteFileEntity_Succeeds()
     {
         var password = Environment.GetEnvironmentVariable("PROTOLINK_TEST_PASSWORD");
@@ -28,7 +28,7 @@ public class CloudSyncRoundtripIntegrationTests
         }
 
         var login = Environment.GetEnvironmentVariable("PROTOLINK_TEST_LOGIN") ?? "alex.plint@gmail.com";
-        var baseUrl = (Environment.GetEnvironmentVariable("PROTOLINK_API_BASE") ?? "http://protolink.ru").TrimEnd('/') + "/";
+        var baseUrl = IntegrationTestHttp.GetBaseUrl();
         using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromSeconds(120) };
 
         var loginResp = await http.PostAsJsonAsync("api/Authentication/login", new { login, password });
