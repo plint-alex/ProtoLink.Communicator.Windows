@@ -36,6 +36,8 @@ public partial class CloudViewModel : ViewModelBase
     private Guid? _listedFolderId;
     private Guid _myCloudRootId;
     private readonly Dictionary<Guid, string> _shareRootCaptions = new();
+    /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
+    private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
 
     public CloudViewModel(
         IAuthService authService,
@@ -591,6 +593,7 @@ public partial class CloudViewModel : ViewModelBase
         var lang = _settingsService.LoadSettings().UiLanguage;
         var list = await _api.GetSharedWithMeAsync(includeValues: true);
         _shareRootCaptions.Clear();
+        _shareRootCanWrite.Clear();
 
         var creatorIds = list
             .Where(e => e.UserWhoCreatedId is { } uid && uid != Guid.Empty)
@@ -622,6 +625,7 @@ public partial class CloudViewModel : ViewModelBase
                 creatorName = "—";
             var caption = ShareSheetStrings.SharedRowSubtitle(lang, creatorName, canWrite);
             _shareRootCaptions[e.Id] = caption;
+            _shareRootCanWrite[e.Id] = canWrite;
             fresh.Add(new CloudItemViewModel
             {
                 Id = e.Id,

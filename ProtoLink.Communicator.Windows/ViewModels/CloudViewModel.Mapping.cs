@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ProtoLink.Communicator.Windows.Models;
@@ -12,11 +13,13 @@ public partial class CloudViewModel
     public bool IsInSharedWithMeScope =>
         CloudSharedScope.IsInSharedWithMeScope(BreadcrumbPath.Select(b => b.Id));
 
-    /// <summary>AT-S42: Map hidden under Shared with me (browse-only; no download-only sync).</summary>
+    /// <summary>AT-S42 refined: browse-only hint only for non-writable Shared-with-me folders.</summary>
     public bool ShowSharedBrowseOnlyHint =>
-        IsInSharedWithMeScope
-        && CurrentEntity is { IsFolder: true }
-        && !CloudVirtualNodes.IsVirtual(CurrentEntity.Id);
+        CloudSharedScope.ShowSharedBrowseOnlyHint(
+            BreadcrumbPath.Select(b => b.Id),
+            CurrentEntity?.Id,
+            CurrentEntity is { IsFolder: true },
+            _shareRootCanWrite);
 
     public string SharedBrowseOnlyHintText =>
         ShareSheetStrings.BrowseOnlyHint(_settingsService.LoadSettings().UiLanguage);
@@ -25,17 +28,26 @@ public partial class CloudViewModel
     {
         if (!item.IsFolder) return false;
         if (item.IsVirtualEntry) return false;
-        if (IsInSharedWithMeScope) return false;
+        var crumbIds = BreadcrumbPath.Select(b => b.Id);
+        if (!CloudSharedScope.AllowsMapUnderSharedScope(crumbIds, item.Id, _shareRootCanWrite))
+            return false;
         if (IsFolderSynced(item.Id)) return false;
         return BreadcrumbPath.All(b => !IsFolderSynced(b.Id));
     }
 
-    public bool CanMapCurrentFolder =>
-        CurrentEntity is { IsFolder: true } entity
-        && !CloudVirtualNodes.IsVirtual(entity.Id)
-        && !IsInSharedWithMeScope
-        && !IsFolderSynced(entity.Id)
-        && BreadcrumbPath.All(b => !IsFolderSynced(b.Id));
+    public bool CanMapCurrentFolder
+    {
+        get
+        {
+            if (CurrentEntity is not { IsFolder: true } entity) return false;
+            var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            return CloudSharedScope.CanMapCurrentFolder(
+                entity.Id,
+                BreadcrumbPath.Select(b => b.Id),
+                mapped,
+                _shareRootCanWrite);
+        }
+    }
 
     public CloudSyncMapping? CurrentFolderMapping =>
         CurrentEntity is { IsFolder: true } entity

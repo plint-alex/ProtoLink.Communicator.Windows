@@ -27,6 +27,110 @@ public class CloudSharedWithMeScopeTests
     }
 
     [Fact]
+    public void TryGetActiveShareRootId_ReturnsFirstAfterSharedNode()
+    {
+        var shareRoot = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var ids = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            shareRoot,
+            child
+        };
+        Assert.Equal(shareRoot, CloudSharedScope.TryGetActiveShareRootId(ids));
+        Assert.Null(CloudSharedScope.TryGetActiveShareRootId(new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId
+        }));
+        Assert.Null(CloudSharedScope.TryGetActiveShareRootId(new[] { CloudVirtualNodes.HubId }));
+    }
+
+    [Fact]
+    public void CanMap_WriteShareRoot_True_ReadShareRoot_False()
+    {
+        var writeRoot = Guid.NewGuid();
+        var readRoot = Guid.NewGuid();
+        var canWrite = new Dictionary<Guid, bool>
+        {
+            [writeRoot] = true,
+            [readRoot] = false
+        };
+        var emptyMapped = new HashSet<Guid>();
+
+        var writeCrumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            writeRoot
+        };
+        Assert.True(CloudSharedScope.CanMapCurrentFolder(writeRoot, writeCrumbs, emptyMapped, canWrite));
+        Assert.False(CloudSharedScope.ShowSharedBrowseOnlyHint(writeCrumbs, writeRoot, currentIsFolder: true, canWrite));
+
+        var readCrumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            readRoot
+        };
+        Assert.False(CloudSharedScope.CanMapCurrentFolder(readRoot, readCrumbs, emptyMapped, canWrite));
+        Assert.True(CloudSharedScope.ShowSharedBrowseOnlyHint(readCrumbs, readRoot, currentIsFolder: true, canWrite));
+    }
+
+    [Fact]
+    public void CanMap_WriteSurvivesDescendantNavigation()
+    {
+        var writeRoot = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var canWrite = new Dictionary<Guid, bool> { [writeRoot] = true };
+        var crumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            writeRoot,
+            child
+        };
+        Assert.Equal(writeRoot, CloudSharedScope.TryGetActiveShareRootId(crumbs));
+        Assert.True(CloudSharedScope.CanMapCurrentFolder(child, crumbs, new HashSet<Guid>(), canWrite));
+        Assert.False(CloudSharedScope.ShowSharedBrowseOnlyHint(crumbs, child, currentIsFolder: true, canWrite));
+    }
+
+    [Fact]
+    public void CanMap_MyCloud_Unchanged()
+    {
+        var myCloud = Guid.NewGuid();
+        var crumbs = new[] { CloudVirtualNodes.HubId, myCloud };
+        Assert.True(CloudSharedScope.CanMapCurrentFolder(
+            myCloud,
+            crumbs,
+            new HashSet<Guid>(),
+            new Dictionary<Guid, bool>()));
+        Assert.False(CloudSharedScope.ShowSharedBrowseOnlyHint(
+            crumbs,
+            myCloud,
+            currentIsFolder: true,
+            new Dictionary<Guid, bool>()));
+    }
+
+    [Fact]
+    public void CanMap_ShareRootFromListing_UsesFolderIdWhenNoActiveRoot()
+    {
+        var writeRoot = Guid.NewGuid();
+        var listingCrumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId
+        };
+        var canWrite = new Dictionary<Guid, bool> { [writeRoot] = true };
+        Assert.True(CloudSharedScope.AllowsMapUnderSharedScope(listingCrumbs, writeRoot, canWrite));
+        Assert.False(CloudSharedScope.AllowsMapUnderSharedScope(
+            listingCrumbs,
+            Guid.NewGuid(),
+            canWrite));
+    }
+
+    [Fact]
     public void VirtualNodeIds_AreDistinctAndFlagged()
     {
         Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.SharedWithMeId);
