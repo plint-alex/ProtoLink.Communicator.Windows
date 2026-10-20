@@ -241,7 +241,7 @@
                         <StackPanel>
                             <TextBlock Text="{Binding GuestLinkCreatedLabel}" FontSize="14" FontWeight="SemiBold"
                                        Margin="0,0,0,8"/>
-                            <TextBox Text="{Binding CreatedUrl}" IsReadOnly="True" TextWrapping="Wrap"
+                            <TextBox Text="{Binding CreatedUrl, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
                                      Padding="8,6" Margin="0,0,0,8"
                                      Background="{DynamicResource ContentBackground}"
                                      Foreground="{DynamicResource ForegroundBrush}"
