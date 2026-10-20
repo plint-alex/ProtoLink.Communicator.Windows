@@ -13,6 +13,9 @@ namespace ProtoLink.Communicator.Windows.Services;
 
 public class CloudApiService
 {
+    /// <summary>Same page size the Cloud tab uses for GetEntities (M3 picker must not exceed this).</summary>
+    public const int GetEntitiesPageSize = 200;
+
     private readonly HttpClient _http;
 
     public CloudApiService(HttpClient http)
@@ -47,6 +50,16 @@ public class CloudApiService
         });
     }
 
+    /// <summary>S6 Shared with me: caller's direct share roots (AT-S17).</summary>
+    public async Task<List<GetEntitiesResult>> GetSharedWithMeAsync(bool includeValues = true)
+    {
+        return await GetEntitiesPagedAsync(new GetEntitiesContract
+        {
+            SharedWithMe = true,
+            IncludeValues = includeValues
+        });
+    }
+
     /// <summary>Fetch entities by id (empty list when none are visible / gone).</summary>
     public async Task<List<GetEntitiesResult>> GetEntitiesByIdsAsync(Guid[] ids, bool includeValues = true)
     {
@@ -70,7 +83,7 @@ public class CloudApiService
 
     private async Task<List<GetEntitiesResult>> GetEntitiesPagedAsync(GetEntitiesContract template)
     {
-        const int pageSize = 200;
+        var pageSize = GetEntitiesPageSize;
         var all = new List<GetEntitiesResult>();
         var skip = 0;
         while (true)
@@ -81,6 +94,8 @@ public class CloudApiService
                 ParentIds = template.ParentIds,
                 IdsToFindParents = template.IdsToFindParents,
                 IncludeValues = template.IncludeValues,
+                SharedWithMe = template.SharedWithMe,
+                ConversationUserIds = template.ConversationUserIds,
                 Skip = skip,
                 Take = pageSize
             });
@@ -92,6 +107,15 @@ public class CloudApiService
             skip += pageSize;
         }
         return all;
+    }
+
+    /// <summary>M3 — list permission rows for shareability (sender write / recipient read).</summary>
+    public async Task<List<EntityPermissionRow>> GetPermissionsAsync(Guid entityId)
+    {
+        var response = await _http.GetAsync($"api/Entities/GetPermissions?entityId={entityId:D}");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<List<EntityPermissionRow>>()
+               ?? new List<EntityPermissionRow>();
     }
 
     public async Task AddParentAsync(Guid entityId, Guid parentId)
@@ -114,16 +138,46 @@ public class CloudApiService
         await EnsureSuccessAsync(response);
     }
 
-    public async Task<Guid> AddEntityAsync(string code, Guid[] parentIds, string? displayName = null)
+    /// <param name="permissions">Optional grants written in the same create call (messenger media M4). Do not use AddPermission for a fresh entity.</param>
+    /// <param name="mimeType">Optional mime string value (CloudFile); parent slot <see cref="CloudEntityCodes.MimeTypeId"/>.</param>
+    public async Task<Guid> AddEntityAsync(
+        string code,
+        Guid[] parentIds,
+        string? displayName = null,
+        IReadOnlyList<AddPermissionContract>? permissions = null,
+        string? mimeType = null)
     {
+        List<AddValueContract>? values = null;
+        if (displayName != null || mimeType != null)
+        {
+            values = new List<AddValueContract>();
+            if (displayName != null)
+            {
+                values.Add(new AddValueContract
+                {
+                    Type = TypeOfValue.String,
+                    Value = displayName,
+                    ParentIds = new[] { CloudEntityCodes.NameTypeId }
+                });
+            }
+
+            if (mimeType != null)
+            {
+                values.Add(new AddValueContract
+                {
+                    Type = TypeOfValue.String,
+                    Value = mimeType,
+                    ParentIds = new[] { CloudEntityCodes.MimeTypeId }
+                });
+            }
+        }
+
         var contract = new AddEntityContract
         {
             Code = code,
             ParentIds = parentIds,
-            Values = displayName != null ? new List<AddValueContract>
-            {
-                new() { Type = TypeOfValue.String, Value = displayName, ParentIds = new[] { CloudEntityCodes.NameTypeId } }
-            } : null
+            Values = values,
+            Permissions = permissions is { Count: > 0 } ? permissions.ToList() : null
         };
         var response = await _http.PostAsJsonAsync("api/Entities/AddEntity", contract);
         await EnsureSuccessAsync(response);
@@ -161,6 +215,60 @@ public class CloudApiService
         return await response.Content.ReadAsStreamAsync();
     }
 
+    /// <summary>
+    /// Original bytes via getFile with 403/404 discrimination (messenger tombstones).
+    /// Does not throw for NotFound / Forbidden.
+    /// </summary>
+    public async Task<CloudFileBytesResult> TryGetFileBytesAsync(
+        Guid entityId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync(
+            $"api/Files/getFile/{entityId:D}",
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        return await ReadBytesResultAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Derived preview via getImage?width=&amp;height= (messenger bubbles / lightbox).
+    /// Does not throw for NotFound / Forbidden.
+    /// </summary>
+    public async Task<CloudFileBytesResult> TryGetImageBytesAsync(
+        Guid entityId,
+        int width,
+        int height,
+        CancellationToken cancellationToken = default)
+    {
+        var url = $"api/Files/getImage/{entityId:D}?width={width}&height={height}";
+        using var response = await _http.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        return await ReadBytesResultAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<CloudFileBytesResult> ReadBytesResultAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return CloudFileBytesResult.NotFound();
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+            return CloudFileBytesResult.NoAccess();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = response.Content != null
+                ? await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false)
+                : null;
+            return CloudFileBytesResult.Failed((int)response.StatusCode, body);
+        }
+
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        return CloudFileBytesResult.Ok(bytes, contentType);
+    }
+
     /// <summary>404 Not Found returns null; any other failure throws.</summary>
     public async Task<Stream?> GetFileStreamOrNotFoundAsync(Guid entityId, CancellationToken cancellationToken = default)
     {
@@ -196,14 +304,38 @@ public class CloudApiService
         return len is > 0 ? len : null;
     }
 
-    public async Task AddFileAsync(Guid entityId, string fileName, Stream content, string mimeType)
+    /// <param name="progress">Optional byte progress for the multipart body (Cloud / messenger / sync).</param>
+    public async Task AddFileAsync(
+        Guid entityId,
+        string fileName,
+        Stream content,
+        string mimeType,
+        IProgress<CloudUploadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
+        long? total = null;
+        try
+        {
+            if (content.CanSeek)
+                total = content.Length;
+        }
+        catch
+        {
+            total = null;
+        }
+
+        // Progress wrapper does not dispose <paramref name="content"/>; StreamContent may dispose the wrapper only.
+        Stream uploadBody = progress != null
+            ? new ProgressReadStream(content, progress, total)
+            : content;
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent(entityId.ToString()), "EntityId");
-        var streamContent = new StreamContent(content);
+        var streamContent = new StreamContent(uploadBody);
         streamContent.Headers.ContentType = new MediaTypeHeaderValue(mimeType);
+        if (total is > 0)
+            streamContent.Headers.ContentLength = total;
         form.Add(streamContent, "File", fileName);
-        var response = await _http.PostAsync("api/Files/addFile", form);
+        var response = await _http.PostAsync("api/Files/addFile", form, cancellationToken);
         await EnsureSuccessAsync(response);
 
         // Live API may bump entity version with mime-only values and drop NAME_TYPE from the
@@ -286,6 +418,22 @@ public class CloudApiService
         });
         // Non-fatal for callers — ignore failures.
         _ = response;
+    }
+
+    /// <summary>Mime string value from CloudFile (parent slot MimeTypeId), or null.</summary>
+    public static string? GetMimeType(GetEntitiesResult entity)
+    {
+        if (entity.Values == null) return null;
+        foreach (var v in entity.Values)
+        {
+            if (v.Parents == null || !v.Parents.Contains(CloudEntityCodes.MimeTypeId))
+                continue;
+            var s = ValueAsTrimmedString(v.Value);
+            if (!string.IsNullOrEmpty(s))
+                return s;
+        }
+
+        return null;
     }
 
     /// <summary>

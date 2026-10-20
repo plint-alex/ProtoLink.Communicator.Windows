@@ -21,4 +21,11 @@ public class GetEntitiesResult
 
     [JsonPropertyName("values")]
     public List<EntityValue>? Values { get; set; }
+
+    [JsonPropertyName("userWhoCreatedId")]
+    public Guid? UserWhoCreatedId { get; set; }
+
+    /// <summary>Populated for Shared with me rows — effective CanWrite from the caller's direct grant(s).</summary>
+    [JsonPropertyName("canWrite")]
+    public bool? CanWrite { get; set; }
 }

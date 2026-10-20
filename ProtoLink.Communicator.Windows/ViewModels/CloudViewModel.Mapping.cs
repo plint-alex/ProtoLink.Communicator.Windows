@@ -1,6 +1,7 @@
 using System.IO;
 using System.Linq;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -8,15 +9,31 @@ public partial class CloudViewModel
 {
     public bool IsFolderSynced(Guid folderId) => SyncMappings.Any(m => m.CloudFolderId == folderId);
 
+    public bool IsInSharedWithMeScope =>
+        CloudSharedScope.IsInSharedWithMeScope(BreadcrumbPath.Select(b => b.Id));
+
+    /// <summary>AT-S42: Map hidden under Shared with me (browse-only; no download-only sync).</summary>
+    public bool ShowSharedBrowseOnlyHint =>
+        IsInSharedWithMeScope
+        && CurrentEntity is { IsFolder: true }
+        && !CloudVirtualNodes.IsVirtual(CurrentEntity.Id);
+
+    public string SharedBrowseOnlyHintText =>
+        ShareSheetStrings.BrowseOnlyHint(_settingsService.LoadSettings().UiLanguage);
+
     public bool CanMapFolder(CloudItemViewModel item)
     {
         if (!item.IsFolder) return false;
+        if (item.IsVirtualEntry) return false;
+        if (IsInSharedWithMeScope) return false;
         if (IsFolderSynced(item.Id)) return false;
         return BreadcrumbPath.All(b => !IsFolderSynced(b.Id));
     }
 
     public bool CanMapCurrentFolder =>
         CurrentEntity is { IsFolder: true } entity
+        && !CloudVirtualNodes.IsVirtual(entity.Id)
+        && !IsInSharedWithMeScope
         && !IsFolderSynced(entity.Id)
         && BreadcrumbPath.All(b => !IsFolderSynced(b.Id));
 

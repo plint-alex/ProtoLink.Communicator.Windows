@@ -58,4 +58,28 @@ public static class CloudEntityRestore
 
     public static bool IsNavigableCloudCode(string? code) =>
         code is CloudEntityCodes.CloudRoot or CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudFile;
+
+    /// <summary>
+    /// Prepend the Cloud hub so My Cloud stays a sibling of Shared with me after cold restore (AT-S17).
+    /// </summary>
+    public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb) WithCloudHub(
+        CloudEntityRef entity,
+        IReadOnlyList<CloudBreadcrumbEntry> breadcrumb,
+        string hubName,
+        string myCloudName)
+    {
+        var crumbs = breadcrumb.Select(b => new CloudBreadcrumbEntry { Id = b.Id, Name = b.Name }).ToList();
+        if (crumbs.Count > 0)
+            crumbs[0] = new CloudBreadcrumbEntry { Id = crumbs[0].Id, Name = myCloudName };
+
+        crumbs.Insert(0, new CloudBreadcrumbEntry { Id = CloudVirtualNodes.HubId, Name = hubName });
+        for (var i = 0; i < crumbs.Count; i++)
+            crumbs[i].Index = i;
+
+        var resultEntity = entity;
+        if (crumbs.Count >= 2 && entity.Id == crumbs[1].Id)
+            resultEntity = entity with { ParentId = CloudVirtualNodes.HubId, Name = myCloudName };
+
+        return (resultEntity, crumbs);
+    }
 }

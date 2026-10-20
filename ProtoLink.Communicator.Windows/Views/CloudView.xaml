@@ -134,24 +134,25 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <!-- Pattern 5: empty folder -->
+                    <!-- Pattern 5: empty folder / Shared with me empty (UX §7) -->
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
                                 MaxWidth="280"
                                 Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <Border Width="64" Height="64" CornerRadius="32" Margin="0,0,0,16"
                                 Background="{DynamicResource AccentSoftBrush}" HorizontalAlignment="Center">
-                            <TextBlock Text="📁" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding EmptyListGlyph}" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <TextBlock Text="This folder is empty" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="{Binding EmptyListTitle}" FontSize="16" FontWeight="SemiBold"
                                    TextAlignment="Center" Foreground="{DynamicResource ForegroundBrush}" Margin="0,0,0,6"/>
-                        <TextBlock Text="Upload a file or create a folder to get started."
+                        <TextBlock Text="{Binding EmptyListBody}"
                                    FontSize="13" TextAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
                         <Button Content="Upload" HorizontalAlignment="Center"
                                 Style="{DynamicResource PrimaryButton}"
                                 Command="{Binding UploadCommand}"
                                 ToolTip="Upload files into this folder"
-                                AutomationProperties.Name="Upload into empty folder"/>
+                                AutomationProperties.Name="Upload into empty folder"
+                                Visibility="{Binding ShowEmptyUpload, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
                 </Grid>
             </Grid>
@@ -237,6 +238,13 @@
                         <Button Content="Map to local folder…" Margin="0,12,0,0" HorizontalAlignment="Left"
                                 Style="{DynamicResource GhostButton}" Click="OnMapCurrentFolderClick"
                                 Visibility="{Binding CanMapCurrentFolder, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                        <!-- AT-S42: Shared with me is browse-only (no Map / one-way sync in cycle 1) -->
+                        <TextBlock Text="{Binding SharedBrowseOnlyHintText}" FontSize="12" TextWrapping="Wrap"
+                                   Margin="0,12,0,0" MaxWidth="420"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"
+                                   Visibility="{Binding ShowSharedBrowseOnlyHint, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   AutomationProperties.Name="Shared folder browse-only hint"/>
 
                         <Button Content="{Binding ShareButtonLabel}" Margin="0,12,0,0" HorizontalAlignment="Left"
                                 Style="{DynamicResource GhostButton}"

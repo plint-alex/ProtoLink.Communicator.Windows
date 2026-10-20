@@ -12,6 +12,23 @@ public partial class CloudViewModel
     /// Cold start: restore <see cref="AppSettings.LastOpenCloudEntityId"/> when it still exists;
     /// otherwise open Cloud root with no error dialog (AT-C7).
     /// </summary>
+    /// <summary>E4 — open a Cloud folder/file by id (messenger unfurl / deep link). Returns false when not navigable.</summary>
+    public async Task<bool> TryOpenEntityAsync(Guid entityId)
+    {
+        if (_authService.CurrentToken == null) return false;
+        try
+        {
+            var resolved = await TryResolveEntityPathAsync(entityId);
+            if (resolved is not { } open) return false;
+            await OpenAsync(open.Entity, open.Breadcrumb, pushHistory: true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task InitializeNavigationAsync()
     {
         if (_authService.CurrentToken == null) return;
@@ -67,11 +84,25 @@ public partial class CloudViewModel
             current = parent;
         }
 
-        return CloudEntityRestore.BuildOpenTarget(chain);
+        var open = CloudEntityRestore.BuildOpenTarget(chain);
+        if (open is null) return null;
+
+        // Remember My Cloud root for hub listing (InitializeNavigation may skip EnsureRootAsync).
+        if (chain[0].Code == CloudEntityCodes.CloudRoot)
+            _myCloudRootId = chain[0].Id;
+
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        return CloudEntityRestore.WithCloudHub(
+            open.Value.Entity,
+            open.Value.Breadcrumb,
+            ShareSheetStrings.CloudHub(lang),
+            ShareSheetStrings.MyCloud(lang));
     }
 
     private void PersistLastOpenCloudEntityId(Guid entityId)
     {
+        // Virtual hub / Shared with me ids are client-only — restoring them via GetEntities would fail.
+        if (CloudVirtualNodes.IsVirtual(entityId)) return;
         try
         {
             var settings = _settingsService.LoadSettings();

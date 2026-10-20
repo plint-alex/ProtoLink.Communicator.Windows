@@ -164,4 +164,46 @@ public static class ShareSheetStrings
 
     public static string SendInMessenger(string? lang) =>
         IsRussian(lang) ? "Отправить в Мессенджере" : "Send in Messenger";
+
+    // --- Shared with me (UX §7 / AT-S17 / AT-S42) ---
+
+    public static string SharedWithMe(string? lang) =>
+        IsRussian(lang) ? "Доступные мне" : "Shared with me";
+
+    public static string MyCloud(string? lang) =>
+        IsRussian(lang) ? "Моё облако" : "My Cloud";
+
+    public static string CloudHub(string? lang) =>
+        IsRussian(lang) ? "Облако" : "Cloud";
+
+    public static string EmptySharedTitle(string? lang) =>
+        IsRussian(lang) ? "Вам пока ничего не открыли" : "Nothing shared with you yet";
+
+    public static string EmptySharedBody(string? lang) =>
+        IsRussian(lang)
+            ? "Когда кто-то даст вам доступ, это появится здесь."
+            : "When someone gives you access, it shows up here.";
+
+    public static string EmptyFolderTitle(string? lang) =>
+        IsRussian(lang) ? "Папка пуста" : "This folder is empty";
+
+    public static string EmptyFolderBody(string? lang) =>
+        IsRussian(lang)
+            ? "Загрузите файл или создайте папку, чтобы начать."
+            : "Upload a file or create a folder to get started.";
+
+    public static string SharedBy(string? lang, string name) =>
+        IsRussian(lang) ? $"Поделился(ась) {name}" : $"Shared by {name}";
+
+    public static string SharedRowSubtitle(string? lang, string creatorName, bool canWrite)
+    {
+        var by = SharedBy(lang, creatorName);
+        var level = canWrite ? CanEdit(lang) : CanView(lang);
+        return $"{by} · {level}";
+    }
+
+    public static string BrowseOnlyHint(string? lang) =>
+        IsRussian(lang)
+            ? "Только просмотр — синхронизация с ПК для общих папок пока недоступна."
+            : "Browse only — mapping shared folders to this PC is not available yet.";
 }

@@ -82,10 +82,19 @@ public partial class CloudViewModel
         }
     }
 
-    private Guid? LinkTargetId(object? parameter) => parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+    private Guid? LinkTargetId(object? parameter)
+    {
+        var id = parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+        return id is { } g && !CloudVirtualNodes.IsVirtual(g) ? g : null;
+    }
 
-    private Guid? ShareTargetId(object? parameter) =>
-        parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+    private Guid? ShareTargetId(object? parameter)
+    {
+        if (parameter is CloudItemViewModel row && row.IsVirtualEntry)
+            return null;
+        var id = parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+        return id is { } g && !CloudVirtualNodes.IsVirtual(g) ? g : null;
+    }
 
     private async Task OpenShareAsync(Guid? entityId)
     {

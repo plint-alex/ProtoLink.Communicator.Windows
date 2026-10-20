@@ -91,6 +91,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (e.PropertyName is nameof(CloudViewModel.CurrentEntity)
             or nameof(CloudViewModel.HasCurrentFolderMapping)
             or nameof(CloudViewModel.CanMapCurrentFolder)
+            or nameof(CloudViewModel.IsInSharedWithMeScope)
+            or nameof(CloudViewModel.ShowSharedBrowseOnlyHint)
             or nameof(CloudViewModel.IsFolderOpen)
             or nameof(CloudViewModel.IsFileOpen))
             RebuildEntityMoreMenu();
