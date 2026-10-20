@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:controls="clr-namespace:ProtoLink.Communicator.Windows.Controls"
+             xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
              Foreground="{DynamicResource ForegroundBrush}"
@@ -16,12 +17,13 @@
             <Setter Property="Margin" Value="0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="MinHeight" Value="68"/>
             <EventSetter Event="PreviewMouseLeftButtonDown" Handler="OnItemMouseDown"/>
             <EventSetter Event="MouseLeftButtonUp" Handler="OnItemMouseUp"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd" Background="Transparent" Padding="16,12"
+                        <Border x:Name="Bd" Background="Transparent" Padding="12,10"
                                 BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,0,0,1">
                             <ContentPresenter/>
                         </Border>
@@ -59,7 +61,7 @@
                         BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
                     <StackPanel>
                         <TextBlock Text="Cloud" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"
-                                   Foreground="{DynamicResource IgHeaderTitleBrush}"/>
+                                   Foreground="{DynamicResource HeaderTitleBrush}"/>
                         <TextBox x:Name="ListSearchBox"
                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                                  Padding="8,6" FontSize="13"
@@ -83,7 +85,7 @@
                             Visibility="{Binding ShowStatusBanner, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <DockPanel LastChildFill="True">
                             <Button DockPanel.Dock="Right" Content="Details" Margin="8,0,0,0" Padding="8,2"
-                                    Style="{DynamicResource IgGhostButton}"
+                                    Style="{DynamicResource GhostButton}"
                                     Command="{Binding ShowErrorDetailsCommand}"
                                     Visibility="{Binding HasErrorDetails, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" VerticalAlignment="Center"
@@ -98,56 +100,59 @@
                              SelectionChanged="OnSelectionChanged" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                              BorderThickness="0" Background="{DynamicResource ListBackground}"
                              ItemContainerStyle="{StaticResource CloudListBoxItemStyle}"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
                         <ListBox.ItemTemplate>
+                            <!-- Pattern 1: avatar · title · muted subtitle · right meta (time + sync badge) -->
                             <DataTemplate>
                                 <DockPanel LastChildFill="True">
-                                    <Border DockPanel.Dock="Left" Width="44" Height="44" CornerRadius="12" Margin="0,0,14,0"
+                                    <Border DockPanel.Dock="Left" Width="44" Height="44" CornerRadius="22" Margin="0,0,12,0"
                                             Background="{DynamicResource AccentSoftBrush}">
-                                        <TextBlock FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="📄"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsFolder}" Value="True">
-                                                            <Setter Property="Text" Value="📁"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
+                                        <TextBlock Text="{Binding TypeGlyph}" FontSize="18"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
-                                    <TextBlock DockPanel.Dock="Right" Text="›" FontSize="18" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource ForegroundMutedBrush}" Margin="8,0,0,0"/>
-                                    <StackPanel VerticalAlignment="Center">
+                                    <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="10,0,0,0"
+                                                MinWidth="48" HorizontalAlignment="Right">
+                                        <TextBlock Text="{Binding ModifiedDisplay}" FontSize="12"
+                                                   HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                                        <TextBlock Text="{Binding SyncBadgeText}" FontSize="12" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Right" Margin="0,2,0,0"
+                                                   Foreground="{DynamicResource SuccessTintBrush}"
+                                                   Visibility="{Binding IsSynced, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                    </StackPanel>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,4,0">
                                         <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis"
                                                    Foreground="{DynamicResource ForegroundBrush}"/>
-                                        <TextBlock FontSize="12" Foreground="{DynamicResource ForegroundMutedBrush}">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="File"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsFolder}" Value="True">
-                                                            <Setter Property="Text" Value="Folder"/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding IsSynced}" Value="True">
-                                                            <Setter Property="Text" Value="Synced"/>
-                                                            <Setter Property="Foreground" Value="{DynamicResource SuccessTintBrush}"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
+                                        <TextBlock Text="{Binding SubtitleText}" FontSize="12" Margin="0,2,0,0"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
                                     </StackPanel>
                                 </DockPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock Text="This folder is empty"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Foreground="{DynamicResource ForegroundMutedBrush}"
-                               Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                    <!-- Pattern 5: empty folder -->
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                                MaxWidth="280"
+                                Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border Width="64" Height="64" CornerRadius="32" Margin="0,0,0,16"
+                                Background="{DynamicResource AccentSoftBrush}" HorizontalAlignment="Center">
+                            <TextBlock Text="📁" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="This folder is empty" FontSize="16" FontWeight="SemiBold"
+                                   TextAlignment="Center" Foreground="{DynamicResource ForegroundBrush}" Margin="0,0,0,6"/>
+                        <TextBlock Text="Upload a file or create a folder to get started."
+                                   FontSize="13" TextAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
+                        <Button Content="Upload" HorizontalAlignment="Center"
+                                Style="{DynamicResource PrimaryButton}"
+                                Command="{Binding UploadCommand}"
+                                ToolTip="Upload files into this folder"
+                                AutomationProperties.Name="Upload into empty folder"/>
+                    </StackPanel>
                 </Grid>
             </Grid>
 
@@ -169,6 +174,9 @@
                                        TypeGlyph="{Binding HeaderTypeGlyph}"
                                        ShowBack="{Binding ShowBack}"
                                        BackCommand="{Binding BackCommand}"
+                                       ShowShare="True"
+                                       ShareButtonLabel="{Binding ShareButtonLabel}"
+                                       ShareCommand="{Binding OpenShareCommand}"
                                        CopyLinkCommand="{Binding CopyLinkCommand}"
                                        NavigateParentCommand="{Binding NavigateParentCommand}"/>
 
@@ -188,7 +196,7 @@
                         <DockPanel Margin="0,4,0,12"
                                    Visibility="{Binding HasCurrentEntityId, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Button DockPanel.Dock="Right" Content="Copy link" Margin="12,0,0,0"
-                                    Style="{DynamicResource IgGhostButton}" VerticalAlignment="Center"
+                                    Style="{DynamicResource GhostButton}" VerticalAlignment="Center"
                                     Command="{Binding CopyLinkCommand}"
                                     AutomationProperties.Name="Copy link"
                                     ToolTip="Copy link (Ctrl+Shift+C)"/>
@@ -212,23 +220,28 @@
                                 <TextBlock Text="{Binding CurrentFolderMappingPath}" FontSize="12" TextWrapping="Wrap"
                                            Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,10"/>
                                 <WrapPanel>
-                                    <Button Content="Sync" Margin="0,0,8,4" Style="{DynamicResource IgGhostButton}"
+                                    <Button Content="Sync" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
                                             Command="{Binding SyncCurrentMappingCommand}"/>
-                                    <Button Content="Upload all" Margin="0,0,8,4" Style="{DynamicResource IgGhostButton}"
+                                    <Button Content="Upload all" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
                                             Command="{Binding ForceUploadCurrentMappingCommand}"
                                             ToolTip="Overwrite server with local files"/>
-                                    <Button Content="Download all" Margin="0,0,8,4" Style="{DynamicResource IgGhostButton}"
+                                    <Button Content="Download all" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
                                             Command="{Binding ForceDownloadCurrentMappingCommand}"
                                             ToolTip="Overwrite local files from server"/>
-                                    <Button Content="Unmap" Margin="0,0,8,4" Style="{DynamicResource IgGhostButton}"
+                                    <Button Content="Unmap" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
                                             Command="{Binding UnmapCurrentFolderCommand}"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
 
                         <Button Content="Map to local folder…" Margin="0,12,0,0" HorizontalAlignment="Left"
-                                Style="{DynamicResource IgGhostButton}" Click="OnMapCurrentFolderClick"
+                                Style="{DynamicResource GhostButton}" Click="OnMapCurrentFolderClick"
                                 Visibility="{Binding CanMapCurrentFolder, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
+                        <Button Content="{Binding ShareButtonLabel}" Margin="0,12,0,0" HorizontalAlignment="Left"
+                                Style="{DynamicResource GhostButton}"
+                                Command="{Binding OpenShareCommand}"
+                                AutomationProperties.Name="Share from Info"/>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -244,9 +257,9 @@
                         <TextBlock Text="{Binding PreviewError}" TextWrapping="Wrap" TextAlignment="Center"
                                    Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
                         <WrapPanel HorizontalAlignment="Center">
-                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource IgGhostButton}"
+                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource GhostButton}"
                                     Command="{Binding OpenExternallyCommand}"/>
-                            <Button Content="Download" Style="{DynamicResource IgGhostButton}"
+                            <Button Content="Download" Style="{DynamicResource GhostButton}"
                                     Command="{Binding DownloadCurrentCommand}"/>
                         </WrapPanel>
                     </StackPanel>
@@ -280,13 +293,19 @@
                         <TextBlock Text="No in-app preview for this file type" FontSize="13" TextAlignment="Center"
                                    Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,16"/>
                         <WrapPanel HorizontalAlignment="Center">
-                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource IgGhostButton}"
+                            <Button Content="Open" Margin="0,0,8,0" Style="{DynamicResource GhostButton}"
                                     Command="{Binding OpenExternallyCommand}"/>
-                            <Button Content="Download" Style="{DynamicResource IgGhostButton}"
+                            <Button Content="Download" Style="{DynamicResource GhostButton}"
                                     Command="{Binding DownloadCurrentCommand}"/>
                         </WrapPanel>
                     </StackPanel>
                 </Grid>
+
+                <!-- Share side sheet (UX §§2–3 / AT-S41) over entity pane -->
+                <Border Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Right"
+                        Visibility="{Binding ShareSheet.IsOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <views:ShareSheetView DataContext="{Binding ShareSheet}"/>
+                </Border>
             </Grid>
         </Grid>
     </Grid>

@@ -7,6 +7,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Models.Share;
 
 namespace ProtoLink.Communicator.Windows.Services;
 
@@ -212,6 +213,66 @@ public class CloudApiService
         {
             await AddValueAsync(entityId, fileName);
         }
+    }
+
+    public async Task<CreateShareLinkResult> CreateShareLinkAsync(CreateShareLinkContract contract)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/Create", contract);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<CreateShareLinkResult>()
+               ?? throw new InvalidOperationException("Empty CreateShareLink response.");
+    }
+
+    public async Task<List<ShareLinkListItemResult>> ListShareLinksAsync(Guid entityId)
+    {
+        var response = await _http.GetAsync($"api/Share/List?entityId={entityId:D}");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<List<ShareLinkListItemResult>>()
+               ?? new List<ShareLinkListItemResult>();
+    }
+
+    public async Task UpdateShareLinkAsync(UpdateShareLinkContract contract)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/Update", contract);
+        await EnsureSuccessAsync(response);
+    }
+
+    public async Task RevokeShareLinkAsync(Guid shareLinkId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/Revoke", new RevokeShareLinkContract
+        {
+            ShareLinkId = shareLinkId
+        });
+        await EnsureSuccessAsync(response);
+    }
+
+    public async Task<List<ShareGrantResult>> ListShareGrantsAsync(Guid entityId)
+    {
+        var response = await _http.GetAsync($"api/Share/ListGrants?entityId={entityId:D}");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<List<ShareGrantResult>>()
+               ?? new List<ShareGrantResult>();
+    }
+
+    public async Task AddPermissionAsync(Guid entityId, Guid permissionForId, bool canWrite)
+    {
+        var response = await _http.PostAsJsonAsync("api/Entities/AddPermission", new AddPermissionContract
+        {
+            Id = entityId,
+            PermissionForId = permissionForId,
+            CanWrite = canWrite
+        });
+        await EnsureSuccessAsync(response);
+    }
+
+    public async Task RemovePermissionAsync(Guid entityId, Guid permissionForId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Entities/RemovePermission", new
+        {
+            EntityId = entityId,
+            PermissionForId = permissionForId
+        });
+        await EnsureSuccessAsync(response);
     }
 
     /// <summary>Push a SignalR command so other devices refresh (messenger/cloud/notes).</summary>

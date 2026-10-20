@@ -9,6 +9,7 @@ using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.ViewModels.Share;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -21,6 +22,7 @@ public partial class CloudViewModel : ViewModelBase
     private readonly ISyncMappingStore _syncStore;
     private readonly Action<Exception>? _syncFullErrorReporter;
     private readonly Action? _onAuthRequired;
+    private readonly Action<string>? _onSendShareLinkInMessenger;
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
     private CloudEntityRef? _currentEntity;
@@ -40,7 +42,8 @@ public partial class CloudViewModel : ViewModelBase
         ISettingsService settingsService,
         Action<Exception>? syncFullErrorReporter = null,
         Action? onAuthRequired = null,
-        Action? onAfterMappedSync = null)
+        Action? onAfterMappedSync = null,
+        Action<string>? onSendShareLinkInMessenger = null)
     {
         _authService = authService;
         _settingsService = settingsService;
@@ -49,6 +52,7 @@ public partial class CloudViewModel : ViewModelBase
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
+        _onSendShareLinkInMessenger = onSendShareLinkInMessenger;
         Items = new ObservableCollection<CloudItemViewModel>();
         FilteredItems = CollectionViewSource.GetDefaultView(Items);
         FilteredItems.Filter = MatchesSearchFilter;
@@ -78,6 +82,12 @@ public partial class CloudViewModel : ViewModelBase
             {
                 try { onAfterMappedSync?.Invoke(); } catch { /* ignore */ }
             });
+        ShareSheet = new ShareSheetViewModel(
+            _api,
+            () => _settingsService.LoadSettings().UiLanguage,
+            s => StatusText = s,
+            url => _onSendShareLinkInMessenger?.Invoke(url));
+        ShareSheet.CopyCanonicalLink = () => CopyLink(CurrentEntity?.Id);
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());
         NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => ListedFolderId.HasValue);
         UploadCommand = new RelayCommand(_ => Upload(), _ => ListedFolderId.HasValue);
@@ -110,6 +120,9 @@ public partial class CloudViewModel : ViewModelBase
             _ => CurrentEntity is { ParentId: not null });
         CopyLinkCommand = new RelayCommand(p => CopyLink(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         OpenInBrowserCommand = new RelayCommand(p => OpenInBrowser(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
+        OpenShareCommand = new RelayCommand(
+            async p => await OpenShareAsync(ShareTargetId(p)),
+            p => ShareTargetId(p).HasValue);
         SyncCurrentMappingCommand = new RelayCommand(_ => SyncCurrentMapping(), _ => HasCurrentFolderMapping);
         ForceUploadCurrentMappingCommand = new RelayCommand(_ => ForceUploadCurrentMapping(), _ => HasCurrentFolderMapping);
         ForceDownloadCurrentMappingCommand = new RelayCommand(_ => ForceDownloadCurrentMapping(), _ => HasCurrentFolderMapping);
@@ -281,6 +294,11 @@ public partial class CloudViewModel : ViewModelBase
     public ICommand CopyLinkCommand { get; }
     /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
     public ICommand OpenInBrowserCommand { get; }
+    /// <summary>Opens the Share side sheet for current entity or a row parameter.</summary>
+    public ICommand OpenShareCommand { get; }
+    public ShareSheetViewModel ShareSheet { get; }
+    public string ShareButtonLabel =>
+        ShareSheetStrings.ShareButton(_settingsService.LoadSettings().UiLanguage);
     public ICommand SyncCurrentMappingCommand { get; }
     public ICommand ForceUploadCurrentMappingCommand { get; }
     public ICommand ForceDownloadCurrentMappingCommand { get; }
@@ -306,9 +324,15 @@ public partial class CloudViewModel : ViewModelBase
             ShowEntityInCompact = false;
     }
 
-    /// <summary>Esc: leave entity focus in compact layout; caller focuses the list.</summary>
+    /// <summary>Esc: close Share sheet, or leave entity focus in compact layout; caller focuses the list.</summary>
     public bool HandleEscape()
     {
+        if (ShareSheet.IsOpen)
+        {
+            ShareSheet.CloseCommand.Execute(null);
+            return true;
+        }
+
         if (IsCompactLayout && ShowEntityInCompact)
         {
             ShowEntityInCompact = false;
@@ -425,9 +449,11 @@ public partial class CloudViewModel : ViewModelBase
                     Id = e.Id,
                     Name = CloudApiService.GetDisplayName(e),
                     IsFolder = e.Code == CloudEntityCodes.CloudFolder,
-                    IsSynced = e.Code == CloudEntityCodes.CloudFolder && syncedIds.Contains(e.Id)
+                    IsSynced = e.Code == CloudEntityCodes.CloudFolder && syncedIds.Contains(e.Id),
+                    UpdateTime = e.UpdateTime
                 })
                 .OrderByDescending(x => x.IsFolder)
+                .ThenByDescending(x => x.UpdateTime)
                 .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -486,6 +512,7 @@ public partial class CloudViewModel : ViewModelBase
             existing.Name = want.Name;
             existing.IsFolder = want.IsFolder;
             existing.IsSynced = want.IsSynced;
+            existing.UpdateTime = want.UpdateTime;
             if (currentIndex != target)
             {
                 Items.RemoveAt(currentIndex);

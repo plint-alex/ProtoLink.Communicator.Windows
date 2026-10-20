@@ -84,6 +84,47 @@ public partial class CloudViewModel
 
     private Guid? LinkTargetId(object? parameter) => parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
 
+    private Guid? ShareTargetId(object? parameter) =>
+        parameter is CloudItemViewModel item ? item.Id : CurrentEntity?.Id;
+
+    private async Task OpenShareAsync(Guid? entityId)
+    {
+        if (entityId is not { } id) return;
+
+        string name;
+        bool isFolder;
+        int childCount;
+        if (CurrentEntity?.Id == id)
+        {
+            name = CurrentEntity.Name;
+            isFolder = CurrentEntity.IsFolder;
+            childCount = isFolder ? ListedChildCount : 0;
+        }
+        else if (Items.FirstOrDefault(i => i.Id == id) is { } row)
+        {
+            name = row.Name;
+            isFolder = row.IsFolder;
+            childCount = 0;
+        }
+        else
+        {
+            name = id.ToString("D");
+            isFolder = true;
+            childCount = 0;
+        }
+
+        // Cycle 1: any signed-in Cloud user who can open the entity may attempt share;
+        // API returns 403 when the caller cannot write (sheet shows viewer footer after load fail).
+        await ShareSheet.OpenAsync(
+            id,
+            name,
+            isFolder,
+            childCount,
+            canEdit: true,
+            isOnline: !_showNetworkBanner);
+        OnPropertyChanged(nameof(ShareSheet));
+    }
+
     private string BuildLink(Guid entityId)
     {
         var settings = _settingsService.LoadSettings();

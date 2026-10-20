@@ -9,23 +9,33 @@
             BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,10">
         <DockPanel LastChildFill="True">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="{Binding ShareButtonLabel, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        Command="{Binding ShareCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        Style="{DynamicResource GhostButton}" Margin="0,0,4,0"
+                        ToolTip="{Binding ShareToolTip, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                        ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="Share"
+                        Visibility="{Binding ShowShare, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 <Button Content="Copy link" Command="{Binding CopyLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                        Style="{DynamicResource IgGhostButton}" Margin="0,0,4,0"
+                        Style="{DynamicResource GhostButton}" Margin="0,0,4,0"
                         ToolTip="{Binding CopyLinkToolTip, RelativeSource={RelativeSource AncestorType=UserControl}}"
                         ToolTipService.ShowOnDisabled="True"
+                        AutomationProperties.Name="Copy link"
                         Visibility="{Binding ShowCopyLink, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 <Button x:Name="MoreButton" Content="⋮" Width="36" Height="32" FontSize="16"
-                        Style="{DynamicResource IgGhostButton}" ToolTip="More"
+                        Style="{DynamicResource GhostButton}" ToolTip="More"
+                        AutomationProperties.Name="More"
                         Click="OnMoreClick"
                         Visibility="{Binding ShowMoreMenu, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
             </StackPanel>
 
             <Button DockPanel.Dock="Left" Content="←" Width="36" Height="32" FontSize="16" Margin="0,0,8,0"
                     Command="{Binding BackCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    Style="{DynamicResource IgGhostButton}" ToolTip="Back (Alt+←)"
+                    Style="{DynamicResource GhostButton}" ToolTip="Back (Alt+←)"
+                    AutomationProperties.Name="Back"
                     Visibility="{Binding ShowBack, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
-            <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="10" Margin="0,0,10,0"
+            <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="20" Margin="0,0,10,0"
                     Background="{DynamicResource AccentSoftBrush}"
                     Visibility="{Binding TypeGlyph, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StringToVisibilityConverter}}">
                 <TextBlock Text="{Binding TypeGlyph, RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -38,9 +48,10 @@
                            Foreground="{DynamicResource ForegroundBrush}"/>
                 <Button x:Name="SubtitleButton"
                         Command="{Binding NavigateParentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                        Style="{DynamicResource IgGhostButton}" Padding="0,2" HorizontalAlignment="Left"
+                        Style="{DynamicResource GhostButton}" Padding="0,2" HorizontalAlignment="Left"
                         Visibility="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StringToVisibilityConverter}}"
-                        ToolTip="Open parent">
+                        ToolTip="Open parent"
+                        AutomationProperties.Name="Open parent">
                     <TextBlock Text="{Binding Subtitle, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                FontSize="12" Foreground="{DynamicResource ForegroundMutedBrush}"
                                TextTrimming="CharacterEllipsis"/>

@@ -1,0 +1,70 @@
+namespace ProtoLink.Communicator.Windows.Models.Share;
+
+public sealed class CreateShareLinkContract
+{
+    public Guid EntityId { get; set; }
+    public string? Label { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public bool NeverExpires { get; set; }
+    public bool IncludeSubtree { get; set; }
+    public bool CanWrite { get; set; }
+}
+
+public sealed class CreateShareLinkResult
+{
+    public Guid Id { get; set; }
+    public string Url { get; set; } = string.Empty;
+    public string TokenPrefix { get; set; } = string.Empty;
+    public string? Label { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public bool IncludeSubtree { get; set; }
+    public bool CanWrite { get; set; }
+    public Guid PrincipalEntityId { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public int UseCount { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+public sealed class ShareLinkListItemResult
+{
+    public Guid Id { get; set; }
+    public string TokenPrefix { get; set; } = string.Empty;
+    public string? Label { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public bool IncludeSubtree { get; set; }
+    public bool CanWrite { get; set; }
+    public Guid PrincipalEntityId { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public string? CreatedByDisplayName { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public int UseCount { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+    public bool IsLive { get; set; }
+}
+
+public sealed class UpdateShareLinkContract
+{
+    public Guid ShareLinkId { get; set; }
+    public string? Label { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public bool NeverExpires { get; set; }
+}
+
+public sealed class RevokeShareLinkContract
+{
+    public Guid ShareLinkId { get; set; }
+}
+
+public sealed class ShareGrantResult
+{
+    public Guid PermissionId { get; set; }
+    public Guid PermissionForId { get; set; }
+    public string PrincipalKind { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool CanWrite { get; set; }
+    public Guid? ShareLinkId { get; set; }
+    public string? TokenPrefix { get; set; }
+    public string? Label { get; set; }
+}

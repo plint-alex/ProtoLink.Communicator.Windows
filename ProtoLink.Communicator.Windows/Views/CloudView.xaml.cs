@@ -224,6 +224,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
         }
 
         var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand });
         menu.Items.Add(new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand });
         if (_vm.IsFileOpen)
         {
@@ -442,7 +443,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
             AddDeleteMenuItem(menu, item);
         }
         menu.Items.Insert(1, new MenuItem { Header = "Copy link", Command = _vm.CopyLinkCommand, CommandParameter = item });
-        menu.Items.Insert(2, new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand, CommandParameter = item });
+        menu.Items.Insert(2, new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand, CommandParameter = item });
+        menu.Items.Insert(3, new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand, CommandParameter = item });
         return menu;
     }
 

@@ -91,6 +91,7 @@ public partial class CloudViewModel
         _showNetworkBanner = false;
         OnPropertyChanged(nameof(ShowNetworkBanner));
         OnPropertyChanged(nameof(ShowStatusBanner));
+        ShareSheet.IsOnline = true;
     }
 
     private void SetNetworkBanner()
@@ -101,6 +102,7 @@ public partial class CloudViewModel
         _showNetworkBanner = true;
         OnPropertyChanged(nameof(ShowNetworkBanner));
         OnPropertyChanged(nameof(ShowStatusBanner));
+        ShareSheet.IsOnline = false;
     }
 
     private void ShowErrorDetails()

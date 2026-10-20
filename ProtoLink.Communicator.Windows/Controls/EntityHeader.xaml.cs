@@ -29,6 +29,20 @@ public partial class EntityHeader : System.Windows.Controls.UserControl
         DependencyProperty.Register(nameof(CopyLinkToolTip), typeof(string), typeof(EntityHeader),
             new PropertyMetadata("Copy link (Ctrl+Shift+C)"));
 
+    public static readonly DependencyProperty ShowShareProperty =
+        DependencyProperty.Register(nameof(ShowShare), typeof(bool), typeof(EntityHeader), new PropertyMetadata(false));
+
+    public static readonly DependencyProperty ShareButtonLabelProperty =
+        DependencyProperty.Register(nameof(ShareButtonLabel), typeof(string), typeof(EntityHeader),
+            new PropertyMetadata("Share"));
+
+    public static readonly DependencyProperty ShareToolTipProperty =
+        DependencyProperty.Register(nameof(ShareToolTip), typeof(string), typeof(EntityHeader),
+            new PropertyMetadata("Share"));
+
+    public static readonly DependencyProperty ShareCommandProperty =
+        DependencyProperty.Register(nameof(ShareCommand), typeof(ICommand), typeof(EntityHeader));
+
     public static readonly DependencyProperty ShowMoreMenuProperty =
         DependencyProperty.Register(nameof(ShowMoreMenu), typeof(bool), typeof(EntityHeader), new PropertyMetadata(true));
 
@@ -85,6 +99,30 @@ public partial class EntityHeader : System.Windows.Controls.UserControl
     {
         get => (string)GetValue(CopyLinkToolTipProperty);
         set => SetValue(CopyLinkToolTipProperty, value);
+    }
+
+    public bool ShowShare
+    {
+        get => (bool)GetValue(ShowShareProperty);
+        set => SetValue(ShowShareProperty, value);
+    }
+
+    public string ShareButtonLabel
+    {
+        get => (string)GetValue(ShareButtonLabelProperty);
+        set => SetValue(ShareButtonLabelProperty, value);
+    }
+
+    public string ShareToolTip
+    {
+        get => (string)GetValue(ShareToolTipProperty);
+        set => SetValue(ShareToolTipProperty, value);
+    }
+
+    public ICommand? ShareCommand
+    {
+        get => (ICommand?)GetValue(ShareCommandProperty);
+        set => SetValue(ShareCommandProperty, value);
     }
 
     public bool ShowMoreMenu
