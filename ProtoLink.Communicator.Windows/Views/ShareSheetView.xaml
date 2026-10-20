@@ -44,6 +44,83 @@
 
             <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12">
                 <StackPanel>
+                    <!-- ADD PEOPLE (UX §4) -->
+                    <StackPanel Visibility="{Binding ShowAddPeople, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{Binding AddPeopleTitleLabel}" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                        <TextBlock Text="{Binding SearchContactsLabel}" FontSize="11" Margin="0,0,0,4"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <TextBox Text="{Binding ContactSearch, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,0,0,8"
+                                 AutomationProperties.Name="Search contacts"/>
+                        <TextBlock Text="{Binding NoContactsYetLabel}" FontSize="12" Margin="0,0,0,8"
+                                   Visibility="{Binding ShowNoContacts, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <ItemsControl ItemsSource="{Binding ContactPickerItems}" Margin="0,0,0,12" MaxHeight="180">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <CheckBox DockPanel.Dock="Right" IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Name}" FontSize="13" TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="{Binding PasteIdHintLabel}" FontSize="11" Margin="0,4,0,6"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}" TextWrapping="Wrap"/>
+                        <DockPanel Margin="0,0,0,6">
+                            <Button DockPanel.Dock="Right" Content="…" Width="36" Height="28" Margin="6,0,0,0"
+                                    Style="{DynamicResource GhostButton}"
+                                    Command="{Binding ResolvePasteCommand}"
+                                    ToolTip="{Binding MutationTooltip}"
+                                    ToolTipService.ShowOnDisabled="True"
+                                    AutomationProperties.Name="Resolve pasted user id"/>
+                            <TextBox Text="{Binding PasteId, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Paste user id"/>
+                        </DockPanel>
+                        <TextBlock Text="{Binding PastePreviewName}" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"
+                                   Visibility="{Binding HasPastePreview, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <TextBlock Text="{Binding PastePreviewError}" FontSize="12" Margin="0,0,0,8"
+                                   Visibility="{Binding HasPastePreviewError, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <TextBlock Text="{Binding AccessLabel}" FontSize="11" FontWeight="SemiBold" Margin="0,4,0,6"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <RadioButton Content="{Binding CanViewLabel}" IsChecked="{Binding AddCanView}" Margin="0,0,12,0"/>
+                            <RadioButton Content="{Binding CanEditLabel}" IsChecked="{Binding AddCanWrite}"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding CanEditHelperLabel}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"
+                                   Visibility="{Binding ShowCanEditHelper, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
+                            <Button Content="{Binding CancelLabel}" Style="{DynamicResource GhostButton}" Margin="0,0,8,0"
+                                    Command="{Binding CancelAddPeopleCommand}"/>
+                            <Button Content="{Binding AddLabel}"
+                                    Command="{Binding AddPeopleCommand}"
+                                    ToolTip="{Binding MutationTooltip}"
+                                    ToolTipService.ShowOnDisabled="True"
+                                    AutomationProperties.Name="Add people confirm"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- POST-ADD TOAST -->
+                    <Border Padding="10,8" Margin="0,0,0,12" CornerRadius="8"
+                            Background="{DynamicResource AccentSoftBrush}"
+                            Visibility="{Binding ShowAddedBanner, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding AddedBannerText}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="{Binding CopyLinkLabel}" Style="{DynamicResource GhostButton}" Margin="0,0,8,0"
+                                        Command="{Binding CopyCanonicalFromAddedCommand}"/>
+                                <Button Content="{Binding SendInMessengerLabel}" Style="{DynamicResource GhostButton}" Margin="0,0,8,0"
+                                        Command="{Binding SendCanonicalInMessengerCommand}"/>
+                                <Button Content="{Binding DoneLabel}" Style="{DynamicResource GhostButton}"
+                                        Command="{Binding DismissAddedBannerCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Visibility="{Binding ShowMainShareBody, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <!-- LINK -->
                     <TextBlock Text="{Binding LinkSectionLabel}" FontSize="11" FontWeight="SemiBold"
                                Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,6"/>
@@ -259,11 +336,19 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
+                    <Button Content="{Binding AddPeopleButtonLabel}" HorizontalAlignment="Left"
+                            Style="{DynamicResource GhostButton}" Margin="0,0,0,12"
+                            Command="{Binding BeginAddPeopleCommand}"
+                            ToolTip="{Binding MutationTooltip}"
+                            ToolTipService.ShowOnDisabled="True"
+                            AutomationProperties.Name="Add people"/>
+
                     <TextBlock Text="{Binding FooterLagText}" FontSize="11" TextWrapping="Wrap"
                                Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,8"/>
                     <TextBlock Text="{Binding ViewerFooterText}" FontSize="11" TextWrapping="Wrap"
                                Visibility="{Binding ShowViewerFooter, Converter={StaticResource BooleanToVisibilityConverter}}"
                                Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </DockPanel>

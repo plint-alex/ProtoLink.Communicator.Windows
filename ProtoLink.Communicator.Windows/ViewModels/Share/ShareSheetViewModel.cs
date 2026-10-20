@@ -7,7 +7,7 @@ using ProtoLink.Communicator.Windows.Services;
 namespace ProtoLink.Communicator.Windows.ViewModels.Share;
 
 /// <summary>Native Cloud Share side sheet (UX §§2–3 / AT-S41).</summary>
-public sealed class ShareSheetViewModel : ViewModelBase
+public sealed partial class ShareSheetViewModel : ViewModelBase
 {
     public const int MaxLiveGuestLinks = 20;
 
@@ -37,11 +37,13 @@ public sealed class ShareSheetViewModel : ViewModelBase
     public ShareSheetViewModel(
         CloudApiService api,
         Func<string?> uiLanguage,
+        Func<Guid?>? currentUserId = null,
         Action<string>? onStatus = null,
         Action<string>? onSendInMessenger = null)
     {
         _api = api;
         _uiLanguage = uiLanguage;
+        _currentUserId = currentUserId ?? (() => null);
         _onStatus = onStatus;
         _onSendInMessenger = onSendInMessenger;
 
@@ -64,7 +66,7 @@ public sealed class ShareSheetViewModel : ViewModelBase
                 NewLabel = null;
                 ExpiryChoice = 30;
             },
-            _ => CanMutate && !ShowCreateForm && !ShowCreatedPanel && LiveLinks.Count < MaxLiveGuestLinks);
+            _ => CanMutate && !ShowCreateForm && !ShowCreatedPanel && !ShowAddPeople && LiveLinks.Count < MaxLiveGuestLinks);
         CancelCreateCommand = new RelayCommand(_ =>
         {
             ShowCreateForm = false;
@@ -92,6 +94,7 @@ public sealed class ShareSheetViewModel : ViewModelBase
             _ => !string.IsNullOrEmpty(CreatedUrl) && _onSendInMessenger != null);
         ToggleInactiveCommand = new RelayCommand(_ => ShowInactiveExpanded = !ShowInactiveExpanded);
         RetryLoadCommand = new RelayCommand(async _ => await LoadAsync(), _ => IsOpen && IsOnline);
+        InitAddPeopleCommands();
     }
 
     public ObservableCollection<ShareGuestLinkItemViewModel> LiveLinks { get; }
@@ -112,6 +115,7 @@ public sealed class ShareSheetViewModel : ViewModelBase
     public ICommand RetryLoadCommand { get; }
 
     public Action? CopyCanonicalLink { get; set; }
+    public Func<string?>? GetCanonicalLink { get; set; }
     public event Action? Closed;
 
     public Guid EntityId => _entityId;
@@ -371,7 +375,9 @@ public sealed class ShareSheetViewModel : ViewModelBase
         CanEdit = canEdit;
         IsOnline = isOnline;
         ShowCreateForm = false;
+        ResetAddPeoplePanel();
         ShowCreatedPanel = false;
+        ShowAddedBanner = false;
         ShowCloseWithoutCopy = false;
         CreatedUrl = null;
         CreatedUrlCopied = false;
@@ -387,7 +393,9 @@ public sealed class ShareSheetViewModel : ViewModelBase
         if (!IsOpen) return;
         IsOpen = false;
         ShowCreateForm = false;
+        ResetAddPeoplePanel();
         ShowCreatedPanel = false;
+        ShowAddedBanner = false;
         ShowCloseWithoutCopy = false;
         CreatedUrl = null;
         LiveLinks.Clear();
@@ -566,7 +574,7 @@ public sealed class ShareSheetViewModel : ViewModelBase
         People.Clear();
         foreach (var g in grants)
         {
-            if (string.Equals(g.PrincipalKind, "guest_link", StringComparison.OrdinalIgnoreCase))
+            if (!Utilities.ShareAddPeople.IsPeopleListPrincipal(g.PrincipalKind))
                 continue;
 
             // Creator heuristic: first user with CanWrite and empty ShareLinkId — sheet marks via display
@@ -617,6 +625,7 @@ public sealed class ShareSheetViewModel : ViewModelBase
         OnPropertyChanged(nameof(CopyAndCloseLabel));
         OnPropertyChanged(nameof(CloseAnywayLabel));
         OnPropertyChanged(nameof(SendInMessengerLabel));
+        NotifyAddPeopleChrome();
         OnPropertyChanged(nameof(ShowSubtreeLine));
         OnPropertyChanged(nameof(ShowCreateButton));
         OnPropertyChanged(nameof(ShowEmptyGuestLinks));

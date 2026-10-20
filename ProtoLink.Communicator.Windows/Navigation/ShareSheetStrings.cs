@@ -165,6 +165,48 @@ public static class ShareSheetStrings
     public static string SendInMessenger(string? lang) =>
         IsRussian(lang) ? "Отправить в Мессенджере" : "Send in Messenger";
 
+
+    public static string AddPeopleButton(string? lang) =>
+        IsRussian(lang) ? "+ Добавить людей" : "+ Add people";
+
+    public static string AddPeopleTitle(string? lang) =>
+        IsRussian(lang) ? "Добавить людей" : "Add people";
+
+    public static string SearchContacts(string? lang) =>
+        IsRussian(lang) ? "Поиск по контактам…" : "Search your contacts…";
+
+    public static string PasteIdHint(string? lang) =>
+        IsRussian(lang) ? "Нет в контактах? Вставьте их ID пользователя" : "Not in your contacts? Paste their user ID";
+
+    public static string PasteIdPlaceholder(string? lang) =>
+        IsRussian(lang) ? "ID пользователя или ссылка /{id}" : "User ID or /{id} link";
+
+    public static string NoUserWithId(string? lang) =>
+        IsRussian(lang) ? "Нет пользователя ProtoLink с таким ID" : "No ProtoLink user with this ID";
+
+    public static string CanEditHelper(string? lang) =>
+        IsRussian(lang)
+            ? "Редактирование также позволяет делиться и отключать ссылки."
+            : "Can edit also lets them share and turn off links.";
+
+    public static string Access(string? lang) =>
+        IsRussian(lang) ? "Доступ" : "Access";
+
+    public static string Add(string? lang) =>
+        IsRussian(lang) ? "Добавить" : "Add";
+
+    public static string AddedToast(string? lang, string name, bool canWrite)
+    {
+        var level = canWrite
+            ? (IsRussian(lang) ? "редактировать" : "edit")
+            : (IsRussian(lang) ? "смотреть" : "view");
+        return IsRussian(lang)
+            ? $"{name} теперь может {level}. Отправьте ссылку, чтобы найти."
+            : $"{name} can now {level}. Send them the link so they can find it.";
+    }
+
+    public static string NoContactsYet(string? lang) =>
+        IsRussian(lang) ? "Пока нет контактов в Мессенджере." : "No Messenger contacts yet.";
     // --- Shared with me (UX §7 / AT-S17 / AT-S42) ---
 
     public static string SharedWithMe(string? lang) =>

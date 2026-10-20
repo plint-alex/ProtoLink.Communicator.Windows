@@ -87,9 +87,11 @@ public partial class CloudViewModel : ViewModelBase
         ShareSheet = new ShareSheetViewModel(
             _api,
             () => _settingsService.LoadSettings().UiLanguage,
+            () => _authService.CurrentToken?.UserId,
             s => StatusText = s,
             url => _onSendShareLinkInMessenger?.Invoke(url));
         ShareSheet.CopyCanonicalLink = () => CopyLink(CurrentEntity?.Id);
+        ShareSheet.GetCanonicalLink = () => CurrentEntity?.Id is { } id ? BuildLink(id) : null;
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());
         NewFolderCommand = new RelayCommand(_ => NewFolder(), _ => CanMutateListedFolder);
         UploadCommand = new RelayCommand(_ => Upload(), _ => CanMutateListedFolder);

@@ -50,4 +50,19 @@ public class ShareSheetViewModelOfflineTests
         Assert.True(vm.ShowViewerFooter);
         Assert.Contains("редакт", vm.ViewerFooterText, StringComparison.OrdinalIgnoreCase);
     }
+    [Fact]
+    public async Task Offline_DisablesAddPeople_ButCopyLinkWorks()
+    {
+        var api = new CloudApiService(new HttpClient { BaseAddress = new Uri("https://example.invalid/") });
+        var vm = new ShareSheetViewModel(api, () => "en-US", currentUserId: () => Guid.NewGuid());
+        await vm.OpenAsync(Guid.NewGuid(), "Demo", isFolder: true, childCount: 1, canEdit: true, isOnline: false);
+
+        Assert.False(vm.CanMutate);
+        Assert.False(vm.BeginAddPeopleCommand.CanExecute(null));
+        Assert.False(vm.AddPeopleCommand.CanExecute(null));
+
+        vm.CopyCanonicalLink = () => { };
+        Assert.True(vm.CopyCanonicalLinkCommand.CanExecute(null));
+        Assert.True(vm.CopyCanonicalFromAddedCommand.CanExecute(null));
+    }
 }

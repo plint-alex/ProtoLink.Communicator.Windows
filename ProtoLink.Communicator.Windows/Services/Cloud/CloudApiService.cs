@@ -407,6 +407,42 @@ public class CloudApiService
         await EnsureSuccessAsync(response);
     }
 
+    /// <summary>GetEntity card for paste-ID resolve (share-sheet-ux §4). Null when not found.</summary>
+    public async Task<GetEntityCardResult?> GetEntityCardAsync(Guid id, bool fromCache = true)
+    {
+        var response = await _http.GetAsync($"api/Entities/GetEntity/{id:D}?fromCache={fromCache.ToString().ToLowerInvariant()}");
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+            return null;
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<GetEntityCardResult>();
+    }
+
+    /// <summary>Messenger contact user ids under the caller's UserContacts node (no new search API).</summary>
+    public async Task<List<(Guid UserId, string ProvisionalName)>> ListMessengerContactUsersAsync(Guid currentUserId)
+    {
+        var roots = await GetEntitiesAsync(new[] { SystemEntities.Contacts, currentUserId }, includeValues: false);
+        var userContacts = roots.FirstOrDefault();
+        if (userContacts == null)
+            return new List<(Guid, string)>();
+
+        var contacts = await GetEntitiesAsync(new[] { userContacts.Id }, includeValues: true);
+        var result = new List<(Guid, string)>();
+        var seen = new HashSet<Guid>();
+        foreach (var c in contacts)
+        {
+            var uid = Utilities.ShareAddPeople.ExtractContactUserId(c);
+            if (uid is not { } id || id == Guid.Empty || !seen.Add(id))
+                continue;
+            var provisional = !string.IsNullOrWhiteSpace(c.Code) && !Utilities.ShareAddPeople.IsGuidText(c.Code)
+                ? c.Code!.Trim()
+                : id.ToString("D");
+            result.Add((id, provisional));
+        }
+        return result;
+    }
+
     /// <summary>Push a SignalR command so other devices refresh (messenger/cloud/notes).</summary>
     public async Task SendRealtimeCommandAsync(string commandType, string targetUserId, object? parameters = null)
     {
