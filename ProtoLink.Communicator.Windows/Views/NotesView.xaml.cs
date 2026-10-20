@@ -60,7 +60,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
         PopulateTree();
         StartRootWatcher();
         ApplyResponsiveLayout();
-        RebuildEntityMoreMenu();
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -84,7 +83,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm = null;
         }
         HookViewModel(e.NewValue as NotesViewModel);
-        RebuildEntityMoreMenu();
     }
 
     private void HookViewModel(NotesViewModel? vm)
@@ -120,11 +118,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(NotesViewModel.HasCloudLink)
-            or nameof(NotesViewModel.HasOpenPage)
-            or nameof(NotesViewModel.CurrentRemoteId))
-            RebuildEntityMoreMenu();
-
         if (e.PropertyName is nameof(NotesViewModel.IsCompactLayout)
             or nameof(NotesViewModel.ShowEditorInCompact))
             ApplyColumnLayout();
@@ -190,21 +183,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             TreePane.Visibility = Visibility.Visible;
             EditorPane.Visibility = Visibility.Visible;
         }
-    }
-
-    private void RebuildEntityMoreMenu()
-    {
-        if (_vm == null || EntityHeaderControl == null)
-            return;
-
-        var menu = new ContextMenu();
-        menu.Items.Add(new MenuItem
-        {
-            Header = "Open in browser",
-            Command = _vm.OpenInBrowserCommand
-        });
-        EntityHeaderControl.MoreMenu = menu;
-        EntityHeaderControl.ShowMoreMenu = true;
     }
 
     private void OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -403,7 +381,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
                     ApplyColumnLayout();
                 }
             }
-            RebuildEntityMoreMenu();
         }
         else
             Dispatcher.BeginInvoke(new Action(() => OnNotesPagePathChanged(newFolderPath)));
@@ -1208,7 +1185,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm.StatusText = "Ready";
 
             AttachIndexWatcher(folderPath);
-            RebuildEntityMoreMenu();
         }
         finally
         {
@@ -1355,8 +1331,13 @@ public partial class NotesView : System.Windows.Controls.UserControl
             NotesTreeOpenInExplorerMenuItem.IsEnabled =
                 !string.IsNullOrEmpty(path) && Directory.Exists(path);
             var hasCloudId = _vm?.TryResolveRemoteId(path) is not null;
+            var notInCloudTip = "Not in Cloud yet";
+            NotesTreeCopyLinkMenuItem.IsEnabled = hasCloudId;
+            NotesTreeCopyLinkMenuItem.ToolTip = hasCloudId ? "Copy canonical Cloud link" : notInCloudTip;
+            NotesTreeOpenInBrowserMenuItem.IsEnabled = hasCloudId;
+            NotesTreeOpenInBrowserMenuItem.ToolTip = hasCloudId ? "Open note in browser" : notInCloudTip;
             NotesTreeCopyIdMenuItem.IsEnabled = hasCloudId;
-            NotesTreeCopyIdMenuItem.ToolTip = hasCloudId ? "Copy Cloud RemoteId" : "Not in Cloud yet";
+            NotesTreeCopyIdMenuItem.ToolTip = hasCloudId ? "Copy Cloud RemoteId" : notInCloudTip;
         }
         else
         {
@@ -1399,6 +1380,22 @@ public partial class NotesView : System.Windows.Controls.UserControl
         NotesTreeContextMenu.Tag = null;
         if (!WindowsExplorer.TryOpenFolderSelected(folderPath))
             _vm.StatusText = "Folder not found";
+    }
+
+    private void OnCopyLinkClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        var folderPath = vm.Item.FullPath;
+        NotesTreeContextMenu.Tag = null;
+        _vm.CopyLinkForPath(folderPath);
+    }
+
+    private void OnOpenInBrowserClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        var folderPath = vm.Item.FullPath;
+        NotesTreeContextMenu.Tag = null;
+        _vm.OpenInBrowserForPath(folderPath);
     }
 
     private void OnCopyIdClick(object sender, RoutedEventArgs e)

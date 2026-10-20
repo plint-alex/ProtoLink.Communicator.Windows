@@ -107,8 +107,9 @@ public partial class NotesViewModel
     private void InitNavigationCommands()
     {
         BackCommand = new RelayCommand(_ => HandleBack(), _ => CanGoBack);
-        CopyLinkCommand = new RelayCommand(_ => CopyLink(), _ => HasCloudLink);
-        OpenInBrowserCommand = new RelayCommand(_ => OpenInBrowser(), _ => HasCloudLink);
+        // Parameter: note folder full path (tree menu) or null for the open page (Ctrl+Shift+C).
+        CopyLinkCommand = new RelayCommand(p => CopyLinkForPath(p as string), p => ResolveLinkTargetId(p as string).HasValue);
+        OpenInBrowserCommand = new RelayCommand(p => OpenInBrowserForPath(p as string), p => ResolveLinkTargetId(p as string).HasValue);
         NavigateParentCommand = new RelayCommand(_ => NavigateParent(), _ => CanNavigateParent);
         _history.Changed += () =>
         {
@@ -189,12 +190,34 @@ public partial class NotesViewModel
         return EntityLinks.Build(settings.PublicSiteBaseUrl, entityId, settings.UiLanguage);
     }
 
-    private void CopyLink()
+    /// <summary>
+    /// Canonical URL for a note folder path, or for the open page when <paramref name="noteFolderFullPath"/> is null/empty.
+    /// Null when the note is not synced (no fake URL).
+    /// </summary>
+    public string? TryBuildCanonicalLink(string? noteFolderFullPath)
     {
-        if (CurrentRemoteId is not { } id) return;
+        var id = ResolveLinkTargetId(noteFolderFullPath);
+        return id is { } remoteId ? BuildLink(remoteId) : null;
+    }
+
+    private Guid? ResolveLinkTargetId(string? noteFolderFullPath) =>
+        !string.IsNullOrWhiteSpace(noteFolderFullPath)
+            ? TryResolveRemoteId(noteFolderFullPath)
+            : CurrentRemoteId;
+
+    /// <summary>Copy canonical link for a tree note path, or the open page when path is null.</summary>
+    public void CopyLinkForPath(string? noteFolderFullPath)
+    {
+        var id = ResolveLinkTargetId(noteFolderFullPath);
+        if (id is not { } remoteId)
+        {
+            StatusText = "Not in Cloud yet";
+            return;
+        }
+
         try
         {
-            System.Windows.Clipboard.SetText(BuildLink(id));
+            System.Windows.Clipboard.SetText(BuildLink(remoteId));
             StatusText = "Link copied";
         }
         catch (Exception ex)
@@ -203,12 +226,19 @@ public partial class NotesViewModel
         }
     }
 
-    private void OpenInBrowser()
+    /// <summary>Open canonical URL for a tree note path, or the open page when path is null.</summary>
+    public void OpenInBrowserForPath(string? noteFolderFullPath)
     {
-        if (CurrentRemoteId is not { } id) return;
+        var id = ResolveLinkTargetId(noteFolderFullPath);
+        if (id is not { } remoteId)
+        {
+            StatusText = "Not in Cloud yet";
+            return;
+        }
+
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = BuildLink(id), UseShellExecute = true });
+            Process.Start(new ProcessStartInfo { FileName = BuildLink(remoteId), UseShellExecute = true });
         }
         catch (Exception ex)
         {
