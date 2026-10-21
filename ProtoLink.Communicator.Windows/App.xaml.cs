@@ -117,7 +117,8 @@ public partial class App : System.Windows.Application
             var logger = LoggerFactory.CreateLogger<App>();
             logger.LogError(e.Exception, "Unobserved task exception");
 
-            if (ApiExceptionHelper.IndicatesUnauthorizedHttp(e.Exception))
+            if (ApiExceptionHelper.IndicatesUnauthorizedHttp(e.Exception)
+                || ApiExceptionHelper.IsExpectedConnectivityFailure(e.Exception))
             {
                 e.SetObserved();
                 return;

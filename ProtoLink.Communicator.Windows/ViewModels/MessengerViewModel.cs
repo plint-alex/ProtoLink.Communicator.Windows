@@ -504,6 +504,11 @@ public partial class MessengerViewModel : ViewModelBase
             }
             while (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1);
         }
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+        {
+            // Fire-and-forget select/poll/SignalR: keep cache UI; do not fault the Task.
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
         finally
         {
             System.Threading.Interlocked.Exchange(ref _loadMessagesBusy, 0);
