@@ -1,8 +1,11 @@
 using Amazon.S3;
 using Amazon.S3.Model;
 
-// Uploads a file to MinIO/S3 with object key = entity id (FilesService convention).
-// Usage: CloudBlobUpload --key <guid> --file <path> [--content-type ...] [--endpoint ...] ...
+// MinIO/S3 helpers for publish (object key = CloudFile entity id, FilesService convention).
+// Usage:
+//   CloudBlobUpload --key <guid> --file <path> [--content-type ...]   # upload (default)
+//   CloudBlobUpload --key <destGuid> --copy-from <sourceGuid> [...]   # server-side copy
+//   CloudBlobUpload --key <guid> --delete [...]                       # delete object
 
 static string? Arg(string name)
 {
@@ -13,20 +16,27 @@ static string? Arg(string name)
     return null;
 }
 
+static bool HasFlag(string name) =>
+    Environment.GetCommandLineArgs().Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase));
+
 var key = Arg("--key") ?? throw new ArgumentException("--key required");
-var file = Arg("--file") ?? throw new ArgumentException("--file required");
-if (!File.Exists(file))
-{
-    Console.Error.WriteLine($"File not found: {file}");
-    return 1;
-}
+var copyFrom = Arg("--copy-from");
+var file = Arg("--file");
+var delete = HasFlag("--delete");
 
 var endpoint = Arg("--endpoint") ?? "plintec.ru:9000";
 var accessKey = Arg("--access-key") ?? "minioadmin";
 var secretKey = Arg("--secret-key") ?? "minioadmin";
 var bucket = Arg("--bucket") ?? "protolink-files";
 var contentType = Arg("--content-type") ?? "application/octet-stream";
-var useSsl = Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--ssl", StringComparison.OrdinalIgnoreCase));
+var useSsl = HasFlag("--ssl");
+
+var modeCount = (file != null ? 1 : 0) + (copyFrom != null ? 1 : 0) + (delete ? 1 : 0);
+if (modeCount != 1)
+{
+    Console.Error.WriteLine("Specify exactly one of: --file, --copy-from, or --delete");
+    return 1;
+}
 
 var config = new AmazonS3Config
 {
@@ -36,7 +46,39 @@ var config = new AmazonS3Config
 };
 
 using var s3 = new AmazonS3Client(accessKey, secretKey, config);
-await using var fs = File.OpenRead(file);
+
+if (delete)
+{
+    await s3.DeleteObjectAsync(new DeleteObjectRequest
+    {
+        BucketName = bucket,
+        Key = key
+    });
+    Console.WriteLine($"Deleted s3://{bucket}/{key}");
+    return 0;
+}
+
+if (copyFrom != null)
+{
+    await s3.CopyObjectAsync(new CopyObjectRequest
+    {
+        SourceBucket = bucket,
+        SourceKey = copyFrom,
+        DestinationBucket = bucket,
+        DestinationKey = key,
+        ContentType = contentType
+    });
+    Console.WriteLine($"Copied s3://{bucket}/{copyFrom} -> s3://{bucket}/{key}");
+    return 0;
+}
+
+if (!File.Exists(file!))
+{
+    Console.Error.WriteLine($"File not found: {file}");
+    return 1;
+}
+
+await using var fs = File.OpenRead(file!);
 await s3.PutObjectAsync(new PutObjectRequest
 {
     BucketName = bucket,
@@ -45,5 +87,5 @@ await s3.PutObjectAsync(new PutObjectRequest
     ContentType = contentType
 });
 
-Console.WriteLine($"Uploaded {file} -> s3://{bucket}/{key} ({new FileInfo(file).Length} bytes)");
+Console.WriteLine($"Uploaded {file} -> s3://{bucket}/{key} ({new FileInfo(file!).Length} bytes)");
 return 0;

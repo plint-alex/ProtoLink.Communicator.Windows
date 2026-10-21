@@ -4,11 +4,15 @@
   Publishes Communicator installer/APK to ProtoLink cloud via Files API and updates release version values.
 
 .DESCRIPTION
-  Does not use MinIO access keys. Authenticates to ProtoLink.Api, resolves CloudFile and
-  per-platform version entities (from communicator/ids.generated.json or by scanning release
-  children), uploads via addFile, and writes each uploaded platform's version into
+  Does not use MinIO access keys for the Files API path. Authenticates to ProtoLink.Api, resolves
+  CloudFile and per-platform version entities (from communicator/ids.generated.json or by scanning
+  release children), uploads via addFile, and writes each uploaded platform's version into
   communicator-version-windows / communicator-version-android (not the release name slot).
   Optional -Notes go to the release entity description slot only.
+
+  Cycle-2 / D10: when a platform's version entity semver changes, the current latest CloudFile blob
+  is snapshotted into communicator-release-history (public read, platform parent, versioned name)
+  and that platform's archive is pruned to at most 5 rows, before overwriting the stable latest id.
 
   -BaseUrl is required (no production default). Production:
     -BaseUrl https://protolink.ru/
@@ -86,8 +90,10 @@ Examples:
 function Find-NewestArtifact {
     param([string] $Directory, [string] $Filter)
     if (-not (Test-Path -LiteralPath $Directory)) { return "" }
+    # Exclude sibling meta JSON and LocalStand stubs (*-stand*) so a careless default
+    # publish cannot overwrite public latest with a stand build. Prefer explicit paths.
     $hit = Get-ChildItem -LiteralPath $Directory -Filter $Filter -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notlike "*.release.json" } |
+        Where-Object { $_.Name -notlike "*.release.json" -and $_.Name -notlike "*-stand*" } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($hit) { return $hit.FullName }
@@ -141,7 +147,10 @@ $NameSlot = "00010003-0000-0000-0000-000000000000"
 $DescSlot = "00010004-0000-0000-0000-000000000000"
 $MimeSlot = "00010012-0000-0000-0000-000000000000"
 $EnUs = "00010002-0002-0000-0000-000000000000"
+$PublicId = "00000000-0000-0000-0000-000000000001"
 $BlobUploader = Join-Path $PSScriptRoot "CloudBlobUpload\CloudBlobUpload.csproj"
+$ArchiveRulesProject = Join-Path $PSScriptRoot "PublishReleaseArchive\PublishReleaseArchive.csproj"
+$MaxArchivePerPlatform = 5
 
 $BaseUrl = $BaseUrl.TrimEnd('/') + "/"
 
@@ -234,24 +243,40 @@ if (Test-Path $IdsFile) {
 }
 
 $releaseId = $null
+$releaseHistoryId = $null
 $artifactWindowsId = $null
 $artifactAndroidId = $null
 $versionWindowsId = $null
 $versionAndroidId = $null
+$platformWindowsId = $null
+$platformAndroidId = $null
 
 if ($ids) {
     $releaseId = [string]$ids.release
     $artifactWindowsId = [string]$ids.artifactWindows
     $artifactAndroidId = [string]$ids.artifactAndroid
+    if ($ids.PSObject.Properties.Name -contains "releaseHistory") {
+        $releaseHistoryId = [string]$ids.releaseHistory
+    }
     if ($ids.PSObject.Properties.Name -contains "versionWindows") {
         $versionWindowsId = [string]$ids.versionWindows
     }
     if ($ids.PSObject.Properties.Name -contains "versionAndroid") {
         $versionAndroidId = [string]$ids.versionAndroid
     }
+    if ($ids.PSObject.Properties.Name -contains "platformWindows") {
+        $platformWindowsId = [string]$ids.platformWindows
+    }
+    if ($ids.PSObject.Properties.Name -contains "platformAndroid") {
+        $platformAndroidId = [string]$ids.platformAndroid
+    }
+    if ($ids.PSObject.Properties.Name -contains "public") {
+        $fromIds = [string]$ids.public
+        if ($fromIds) { $PublicId = $fromIds }
+    }
 }
 
-if (-not $releaseId) {
+if (-not $releaseId -or -not $releaseHistoryId) {
     # Resolve host by GetView/code then children
     $viewDoc = Invoke-RestMethod -Method GET -Uri ($BaseUrl + "api/Entities/GetView/communicator?lang=en-US") -Headers @{ Accept = "application/json" }
     $mappings = $viewDoc.entityViews
@@ -271,14 +296,78 @@ if (-not $releaseId) {
     }
     foreach ($c in @($children)) {
         $code = $c.code; if (-not $code) { $code = $c.Code }
-        if ($code -eq "communicator-release-latest") {
-            $releaseId = [string]$c.id
-            if (-not $releaseId) { $releaseId = [string]$c.Id }
+        $id = [string]$c.id; if (-not $id) { $id = [string]$c.Id }
+        if ($code -eq "communicator-release-latest" -and -not $releaseId) {
+            $releaseId = $id
+        }
+        if ($code -eq "communicator-release-history" -and -not $releaseHistoryId) {
+            $releaseHistoryId = $id
         }
     }
 }
 
 if (-not $releaseId) { throw "communicator-release-latest not found. Run Apply-CommunicatorPage.ps1 first." }
+if (($uploadWindows -or $uploadAndroid) -and -not $releaseHistoryId) {
+    throw "communicator-release-history not found. Run Apply-CommunicatorPage.ps1 first (D10 history folder)."
+}
+
+if ((-not $platformWindowsId -and $uploadWindows) -or (-not $platformAndroidId -and $uploadAndroid)) {
+    # Platform dimension lives under communicator-catalog (sibling taxonomy), not under host.
+    $catalogList = Invoke-Json -Method POST -Url ($BaseUrl + "api/Entities/GetEntities?fromCache=false") -Token $token -Body @{
+        parentIds = @($PublicId)
+        skip = 0
+        take = 200
+        includeValues = $false
+        showHidden = $true
+    }
+    $catalogId = $null
+    foreach ($c in @($catalogList)) {
+        $code = $c.code; if (-not $code) { $code = $c.Code }
+        if ($code -eq "communicator-catalog") {
+            $catalogId = [string]$c.id; if (-not $catalogId) { $catalogId = [string]$c.Id }
+            break
+        }
+    }
+    if ($catalogId) {
+        $dims = Invoke-Json -Method POST -Url ($BaseUrl + "api/Entities/GetEntities?fromCache=false") -Token $token -Body @{
+            parentIds = @($catalogId)
+            skip = 0
+            take = 50
+            includeValues = $false
+            showHidden = $true
+        }
+        $dimPlatformId = $null
+        foreach ($d in @($dims)) {
+            $code = $d.code; if (-not $code) { $code = $d.Code }
+            if ($code -eq "communicator-dim-platform") {
+                $dimPlatformId = [string]$d.id; if (-not $dimPlatformId) { $dimPlatformId = [string]$d.Id }
+                break
+            }
+        }
+        if ($dimPlatformId) {
+            $plats = Invoke-Json -Method POST -Url ($BaseUrl + "api/Entities/GetEntities?fromCache=false") -Token $token -Body @{
+                parentIds = @($dimPlatformId)
+                skip = 0
+                take = 20
+                includeValues = $false
+                showHidden = $true
+            }
+            foreach ($p in @($plats)) {
+                $code = $p.code; if (-not $code) { $code = $p.Code }
+                $id = [string]$p.id; if (-not $id) { $id = [string]$p.Id }
+                if ($code -eq "communicator-platform-windows" -and -not $platformWindowsId) { $platformWindowsId = $id }
+                if ($code -eq "communicator-platform-android" -and -not $platformAndroidId) { $platformAndroidId = $id }
+            }
+        }
+    }
+}
+
+if ($uploadWindows -and -not $platformWindowsId) {
+    throw "communicator-platform-windows not found. Run Apply-CommunicatorPage.ps1 first."
+}
+if ($uploadAndroid -and -not $platformAndroidId) {
+    throw "communicator-platform-android not found. Run Apply-CommunicatorPage.ps1 first."
+}
 
 $needWindowsId = $uploadWindows -and -not $artifactWindowsId
 $needAndroidId = $uploadAndroid -and -not $artifactAndroidId
@@ -406,6 +495,373 @@ function Set-CloudFileUploadMetadata {
     Write-Host "  mimeType/name values updated on entity -> $FileName"
 }
 
+function Invoke-ArchiveRulesCli {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]] $CliArgs)
+    if (-not (Test-Path -LiteralPath $ArchiveRulesProject)) {
+        throw "Missing $ArchiveRulesProject"
+    }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $argList = @("run", "--project", $ArchiveRulesProject, "-c", "Release", "--no-launch-profile", "--") + @($CliArgs)
+        $output = & dotnet @argList 2>&1
+        $exit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($exit -ne 0) {
+        throw "PublishReleaseArchive failed ($exit): $($output | Out-String)"
+    }
+    return @($output | ForEach-Object { "$_" } | Where-Object { $_ -ne $null })
+}
+
+function Test-ShouldSnapshotVersion {
+    param([string] $CurrentVersion, [string] $NewVersion)
+    $lines = Invoke-ArchiveRulesCli -CliArgs @("should-snapshot", $CurrentVersion, $NewVersion)
+    $answer = ($lines | Select-Object -Last 1).Trim().ToLowerInvariant()
+    return $answer -eq "true"
+}
+
+function Get-SemverFromArtifactFileName {
+    param([string] $FileName)
+    $lines = Invoke-ArchiveRulesCli -CliArgs @("parse-semver", $FileName)
+    $v = ($lines | Select-Object -Last 1).Trim()
+    if (-not $v) { return $null }
+    return $v
+}
+
+function Get-ValueParentIdStrings {
+    param($ValueRow)
+    # GetEntities returns value.parents; some contracts use parentIds.
+    $parents = $ValueRow.parents
+    if (-not $parents) { $parents = $ValueRow.Parents }
+    if (-not $parents) { $parents = $ValueRow.parentIds }
+    if (-not $parents) { $parents = $ValueRow.ParentIds }
+    return @($parents | ForEach-Object { [string]$_ })
+}
+
+function Get-RemoteEntityNameSlotValue {
+    # Named distinctly from Publish-Release-Verify.ps1 Get-EntityNameSlotValue (Entity object).
+    param([string] $EntityId, [string] $Token, [string] $Base)
+    $ents = Invoke-Json -Method POST -Url ($Base + "api/Entities/GetEntities?fromCache=false") -Token $Token -Body @{
+        ids = @($EntityId)
+        skip = 0
+        take = 1
+        includeValues = $true
+        showHidden = $true
+    }
+    $e = @($ents)[0]
+    if (-not $e) { return $null }
+    $vals = $e.values; if (-not $vals) { $vals = $e.Values }
+    foreach ($v in @($vals)) {
+        $parentStrs = Get-ValueParentIdStrings -ValueRow $v
+        if ($parentStrs -contains $NameSlot) {
+            $raw = $v.value; if ($null -eq $raw) { $raw = $v.Value }
+            if ($raw -is [string]) { return $raw }
+        }
+    }
+    return $null
+}
+
+function Get-CloudFileLeafAndMime {
+    param([string] $EntityId, [string] $Token, [string] $Base)
+    $ents = Invoke-Json -Method POST -Url ($Base + "api/Entities/GetEntities?fromCache=false") -Token $Token -Body @{
+        ids = @($EntityId)
+        skip = 0
+        take = 1
+        includeValues = $true
+        showHidden = $true
+    }
+    $e = @($ents)[0]
+    if (-not $e) { return $null }
+    $vals = $e.values; if (-not $vals) { $vals = $e.Values }
+    $fileName = $null
+    $mime = "application/octet-stream"
+    foreach ($v in @($vals)) {
+        $parentStrs = Get-ValueParentIdStrings -ValueRow $v
+        $raw = $v.value; if ($null -eq $raw) { $raw = $v.Value }
+        if ($raw -isnot [string] -or -not $raw) { continue }
+        if ($parentStrs -contains $NameSlot) { $fileName = $raw }
+        if ($parentStrs -contains $MimeSlot) { $mime = $raw }
+    }
+    if (-not $fileName) {
+        foreach ($v in @($vals)) {
+            $raw = $v.value; if ($null -eq $raw) { $raw = $v.Value }
+            if ($raw -is [string] -and ($raw.EndsWith(".exe") -or $raw.EndsWith(".apk"))) {
+                $fileName = $raw
+                break
+            }
+        }
+    }
+    if (-not $fileName) { return $null }
+    return @{ FileName = $fileName; ContentType = $mime }
+}
+
+function Get-PlatformChildIdSet {
+    param([string] $PlatformId, [string] $Token, [string] $Base)
+    $platList = Invoke-Json -Method POST -Url ($Base + "api/Entities/GetEntities?fromCache=false") -Token $Token -Body @{
+        parentIds = @($PlatformId)
+        skip = 0
+        take = 500
+        includeValues = $false
+        showHidden = $true
+    }
+    $set = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($p in @($platList)) {
+        $id = [string]$p.id; if (-not $id) { $id = [string]$p.Id }
+        if ($id) { [void]$set.Add($id) }
+    }
+    return $set
+}
+
+function Find-HistoryArchiveForSemver {
+    param(
+        [string] $HistoryId,
+        [string] $PlatformId,
+        [string] $Semver,
+        [string] $Token,
+        [string] $Base
+    )
+    $list = Invoke-Json -Method POST -Url ($Base + "api/Entities/GetEntities?fromCache=false") -Token $Token -Body @{
+        parentIds = @($HistoryId)
+        skip = 0
+        take = 500
+        includeValues = $true
+        showHidden = $true
+    }
+    $onPlatform = Get-PlatformChildIdSet -PlatformId $PlatformId -Token $Token -Base $Base
+    foreach ($item in @($list)) {
+        $code = $item.code; if (-not $code) { $code = $item.Code }
+        if ($code -ne "CloudFile") { continue }
+        $id = [string]$item.id; if (-not $id) { $id = [string]$item.Id }
+        if (-not $id -or -not $onPlatform.Contains($id)) { continue }
+        $meta = Get-CloudFileLeafAndMime -EntityId $id -Token $Token -Base $Base
+        if (-not $meta) { continue }
+        $parsed = Get-SemverFromArtifactFileName -FileName $meta.FileName
+        if ($parsed -and ($parsed -eq $Semver)) { return $id }
+    }
+    return $null
+}
+
+function Get-HistoryArchiveRowsForPlatform {
+    param(
+        [string] $HistoryId,
+        [string] $PlatformId,
+        [string] $Token,
+        [string] $Base
+    )
+    $list = Invoke-Json -Method POST -Url ($Base + "api/Entities/GetEntities?fromCache=false") -Token $Token -Body @{
+        parentIds = @($HistoryId)
+        skip = 0
+        take = 500
+        includeValues = $true
+        showHidden = $true
+    }
+    $onPlatform = Get-PlatformChildIdSet -PlatformId $PlatformId -Token $Token -Base $Base
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($item in @($list)) {
+        $code = $item.code; if (-not $code) { $code = $item.Code }
+        if ($code -ne "CloudFile") { continue }
+        $id = [string]$item.id; if (-not $id) { $id = [string]$item.Id }
+        if (-not $id -or -not $onPlatform.Contains($id)) { continue }
+        $meta = Get-CloudFileLeafAndMime -EntityId $id -Token $Token -Base $Base
+        $fileName = ""
+        if ($meta -and $meta.FileName) { $fileName = [string]$meta.FileName }
+        $semver = Get-SemverFromArtifactFileName -FileName $fileName
+        if (-not $semver) { $semver = $fileName }
+        $created = $item.creationTime
+        if (-not $created) { $created = $item.CreationTime }
+        if (-not $created) { $created = [datetime]::MinValue }
+        $createdUtc = ([datetime]$created).ToUniversalTime().ToString("o")
+        $row = New-Object psobject -Property @{
+            id = $id
+            semver = $semver
+            creationTimeUtc = $createdUtc
+        }
+        [void]$rows.Add($row)
+    }
+    return $rows
+}
+
+function Copy-CloudBlobObject {
+    param(
+        [string] $SourceEntityId,
+        [string] $DestEntityId,
+        [string] $ContentType
+    )
+    if (-not (Test-Path $BlobUploader)) { throw "Missing $BlobUploader" }
+    & dotnet run --project $BlobUploader -c Release --no-launch-profile -- `
+        --key $DestEntityId `
+        --copy-from $SourceEntityId `
+        --content-type $ContentType `
+        --endpoint $MinioEndpoint `
+        --access-key $MinioAccessKey `
+        --secret-key $MinioSecretKey `
+        --bucket $MinioBucket
+    if ($LASTEXITCODE -ne 0) { throw "CloudBlobUpload --copy-from failed with exit code $LASTEXITCODE" }
+}
+
+function New-HistoryArchiveCloudFile {
+    param(
+        [string] $HistoryId,
+        [string] $PlatformId,
+        [string] $FileName,
+        [string] $ContentType,
+        [string] $Token,
+        [string] $Base,
+        [string] $Description = ""
+    )
+    $body = @{
+        name = $FileName
+        description = $Description
+        code = "CloudFile"
+        codeIsUnique = $false
+        order = 0
+        hidden = $false
+        parentIds = @($HistoryId)
+        values = @(
+            @{
+                type = 0
+                order = 0
+                hidden = $false
+                parentIds = @($MimeSlot)
+                value = $ContentType
+            },
+            @{
+                type = 0
+                order = 1
+                hidden = $false
+                parentIds = @($NameSlot)
+                value = $FileName
+            }
+        )
+        permissions = @(@{
+            id = [guid]::Empty
+            permissionForId = $PublicId
+            canWrite = $false
+        })
+    }
+    $resp = Invoke-Json -Method POST -Url ($Base + "api/Entities/AddEntity") -Token $Token -Body $body
+    $id = [string]$resp.id
+    if (-not $id) { $id = [string]$resp.Id }
+    if (-not $id) { throw "AddEntity CloudFile archive returned no id" }
+    Invoke-Json -Method POST -Url ($Base + "api/Entities/AddParent") -Token $Token -Body @{
+        id = $id
+        parentId = $PlatformId
+    } | Out-Null
+    return $id
+}
+
+function Remove-HistoryArchiveCloudFile {
+    param(
+        [string] $EntityId,
+        [string] $Token,
+        [string] $Base
+    )
+    try {
+        Invoke-Json -Method POST -Url ($Base + "api/Entities/RemovePermission") -Token $Token -Body @{
+            entityId = $EntityId
+            permissionForId = $PublicId
+        } | Out-Null
+    } catch {
+        Write-Host "  warn: RemovePermission on archive $EntityId : $($_.Exception.Message)"
+    }
+    # DeleteEntity also deletes the MinIO object when code=CloudFile (FilesService).
+    Invoke-Json -Method POST -Url ($Base + "api/Entities/DeleteEntity") -Token $Token -Body @{
+        id = $EntityId
+    } | Out-Null
+    Write-Host "  pruned archive CloudFile $EntityId"
+}
+
+function Invoke-PrunePlatformHistory {
+    param(
+        [string] $HistoryId,
+        [string] $PlatformId,
+        [string] $PlatformLabel,
+        [string] $Token,
+        [string] $Base
+    )
+    $rows = @(Get-HistoryArchiveRowsForPlatform -HistoryId $HistoryId -PlatformId $PlatformId -Token $Token -Base $Base)
+    if ($rows.Count -le $MaxArchivePerPlatform) {
+        Write-Host "  history $PlatformLabel : $($rows.Count) archive row(s) (cap $MaxArchivePerPlatform) - no prune"
+        return
+    }
+    $json = ($rows | ConvertTo-Json -Depth 5 -Compress)
+    if ($rows.Count -eq 1) {
+        # ConvertTo-Json unwraps single object; wrap as array for CLI.
+        $json = "[$json]"
+    }
+    $pruneIds = Invoke-ArchiveRulesCli -CliArgs @("select-prune", "$MaxArchivePerPlatform", $json)
+    foreach ($line in @($pruneIds)) {
+        $pidToDelete = "$line".Trim()
+        if (-not $pidToDelete) { continue }
+        # Avoid $pid (PowerShell automatic variable).
+        Remove-HistoryArchiveCloudFile -EntityId $pidToDelete -Token $Token -Base $Base
+    }
+    Write-Host "  history $PlatformLabel : pruned $($pruneIds.Count) oldest; target cap $MaxArchivePerPlatform"
+}
+
+function Invoke-SnapshotPreviousLatestToHistory {
+    param(
+        [string] $LatestCloudFileId,
+        [string] $VersionEntityId,
+        [string] $NewVersion,
+        [string] $HistoryId,
+        [string] $PlatformId,
+        [string] $PlatformLabel,
+        [string] $Token,
+        [string] $Base,
+        [string] $ContentTypeDefault
+    )
+    $currentVersion = Get-RemoteEntityNameSlotValue -EntityId $VersionEntityId -Token $Token -Base $Base
+    if (-not (Test-ShouldSnapshotVersion -CurrentVersion "$currentVersion" -NewVersion $NewVersion)) {
+        Write-Host "History $PlatformLabel : no snapshot (current='$currentVersion' new='$NewVersion')"
+        return
+    }
+
+    $leaf = Get-CloudFileLeafAndMime -EntityId $LatestCloudFileId -Token $Token -Base $Base
+    if (-not $leaf -or -not $leaf.FileName) {
+        Write-Host "WARNING: History $PlatformLabel : semver change $currentVersion -> $NewVersion but latest CloudFile has no filename; skip snapshot"
+        return
+    }
+
+    $archiveFileName = [string]$leaf.FileName
+    $archiveSemver = Get-SemverFromArtifactFileName -FileName $archiveFileName
+    if (-not $archiveSemver) {
+        # Apply seed uses unversioned leaf; archive rows need a versioned name (D10).
+        $archiveSemver = "$currentVersion".Trim()
+        if ($PlatformLabel -eq "Windows") {
+            $archiveFileName = "ProtoLink.Communicator.Windows-Setup-$archiveSemver.exe"
+        } elseif ($PlatformLabel -eq "Android") {
+            $archiveFileName = "ProtoLink.Communicator.Android-$archiveSemver.apk"
+        }
+        Write-Host "  latest leaf was unversioned; archive will use $archiveFileName"
+    }
+
+    $contentType = $leaf.ContentType
+    if (-not $contentType) { $contentType = $ContentTypeDefault }
+
+    $existing = Find-HistoryArchiveForSemver -HistoryId $HistoryId -PlatformId $PlatformId `
+        -Semver $archiveSemver -Token $Token -Base $Base
+    if ($existing) {
+        Write-Host "History $PlatformLabel : reuse archive for $archiveSemver -> $existing (idempotent)"
+        $archiveId = $existing
+    } else {
+        Write-Host "History $PlatformLabel : snapshot $currentVersion ($archiveFileName) -> new archive under history"
+        $archiveId = New-HistoryArchiveCloudFile -HistoryId $HistoryId -PlatformId $PlatformId `
+            -FileName $archiveFileName -ContentType $contentType -Token $Token -Base $Base `
+            -Description "Archived from latest before $NewVersion"
+    }
+
+    Copy-CloudBlobObject -SourceEntityId $LatestCloudFileId -DestEntityId $archiveId -ContentType $contentType
+    Set-CloudFileUploadMetadata -EntityId $archiveId -FileName $archiveFileName -ContentType $contentType `
+        -Token $Token -Base $Base
+    Write-Host "  archive blob ready: $($Base)api/Files/getFile/$archiveId/$archiveFileName"
+
+    Invoke-PrunePlatformHistory -HistoryId $HistoryId -PlatformId $PlatformId `
+        -PlatformLabel $PlatformLabel -Token $Token -Base $Base
+}
+
 function Publish-File {
     param(
         [string] $EntityId,
@@ -469,12 +925,33 @@ function Publish-File {
 $windowsFileName = $null
 $androidFileName = $null
 
+# D10: snapshot previous latest into history (+ prune ≤5) before overwriting stable latest ids.
 if ($uploadWindows) {
+    Invoke-SnapshotPreviousLatestToHistory `
+        -LatestCloudFileId $artifactWindowsId `
+        -VersionEntityId $versionWindowsId `
+        -NewVersion $windowsVersion `
+        -HistoryId $releaseHistoryId `
+        -PlatformId $platformWindowsId `
+        -PlatformLabel "Windows" `
+        -Token $token `
+        -Base $BaseUrl `
+        -ContentTypeDefault "application/octet-stream"
     Publish-File -EntityId $artifactWindowsId -Path $WindowsSetupPath -Token $token -Base $BaseUrl -ContentType "application/octet-stream"
     $windowsFileName = [System.IO.Path]::GetFileName($WindowsSetupPath)
 }
 
 if ($uploadAndroid) {
+    Invoke-SnapshotPreviousLatestToHistory `
+        -LatestCloudFileId $artifactAndroidId `
+        -VersionEntityId $versionAndroidId `
+        -NewVersion $androidVersion `
+        -HistoryId $releaseHistoryId `
+        -PlatformId $platformAndroidId `
+        -PlatformLabel "Android" `
+        -Token $token `
+        -Base $BaseUrl `
+        -ContentTypeDefault "application/vnd.android.package-archive"
     Publish-File -EntityId $artifactAndroidId -Path $AndroidApkPath -Token $token -Base $BaseUrl -ContentType "application/vnd.android.package-archive"
     $androidFileName = [System.IO.Path]::GetFileName($AndroidApkPath)
 }
@@ -588,8 +1065,7 @@ function Set-ReleaseNotesIfAny {
     $nameLabel = "Latest release"
     $vals = $e.values; if (-not $vals) { $vals = $e.Values }
     foreach ($v in @($vals)) {
-        $parents = $v.parentIds; if (-not $parents) { $parents = $v.ParentIds }
-        $parentStrs = @($parents | ForEach-Object { [string]$_ })
+        $parentStrs = Get-ValueParentIdStrings -ValueRow $v
         if ($parentStrs -contains $NameSlot) {
             $raw = $v.value; if ($null -eq $raw) { $raw = $v.Value }
             if ($raw -is [string] -and $raw) { $nameLabel = $raw; break }

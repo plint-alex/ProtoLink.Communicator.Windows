@@ -42,7 +42,9 @@ dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Li
 
 `PROTOLINK_TEST_LOGIN` overrides the default login (`alex.plint@gmail.com`). Optional: `PROTOLINK_TEST_CLOUD_FOLDER_ID`, `PROTOLINK_COMPARE_REL_PATH`, `PROTOLINK_TEST_HTTP_TIMEOUT_SEC`.
 
-Login-based live tests (`Messenger*`, `CloudGetEntities*`, `CloudSyncRoundtrip*`, `CloudFileNameAfterUpload*`, `SyncEngineE2E*`, `CloudSyntheticTrashCleanup*`) need `PROTOLINK_TEST_PASSWORD`. Several others use the desktop app's `token.dat` and local notes folder (`SyncWalkDiagnostics*`, `SyncRootListing*`, `SyncFolderTiming*`, `FilmsOnlyUpload*`, `MyNotesFolderReconcile*`, `LocalNotesVsCloud*`, `CleanupMyNotesTrash*`).
+Login-based live tests (`Messenger*`, `CloudGetEntities*`, `CloudSyncRoundtrip*`, `CloudFileNameAfterUpload*`, `SyncEngineE2E*`, `CloudSyntheticTrashCleanup*`, `SignalRCommandsHubLiveTests`) need `PROTOLINK_TEST_PASSWORD`. Several others use the desktop app's `token.dat` and local notes folder (`SyncWalkDiagnostics*`, `SyncRootListing*`, `SyncFolderTiming*`, `FilmsOnlyUpload*`, `MyNotesFolderReconcile*`, `LocalNotesVsCloud*`, `CleanupMyNotesTrash*`).
+
+SignalR hub (LocalStand): `SignalRCommandsHubLiveTests` connects via app `SignalRService` (SignalR.Client 10.0.13) to `/hubs/commands`, asserts `message_sent` / `data_changed` / `message_read`, and Disconnect→Connect receive. Optional API process recycle: `$env:PROTOLINK_SIGNALR_API_RESTART=1` then filter `SignalRService_AutomaticReconnect_After_LocalStandApiRestart` (kills/restarts `ProtoLink.Api.exe` briefly).
 
 Trash deletion stays behind a second switch: `PROTOLINK_CLEANUP_TRASH=1`.
 

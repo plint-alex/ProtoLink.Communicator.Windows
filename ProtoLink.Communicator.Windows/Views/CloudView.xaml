@@ -102,6 +102,17 @@
                              ItemContainerStyle="{StaticResource CloudListBoxItemStyle}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
+                        <ListBox.Style>
+                            <Style TargetType="ListBox">
+                                <Setter Property="Padding" Value="0"/>
+                                <Style.Triggers>
+                                    <!-- Leave room so FAB does not cover the last list rows (UX-C-F4). -->
+                                    <DataTrigger Binding="{Binding ShowCreateFab}" Value="True">
+                                        <Setter Property="Padding" Value="0,0,0,72"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ListBox.Style>
                         <ListBox.ItemTemplate>
                             <!-- Pattern 1: avatar · title · muted subtitle · right meta (time + sync badge) -->
                             <DataTemplate>
@@ -154,6 +165,48 @@
                                 AutomationProperties.Name="Upload into empty folder"
                                 Visibility="{Binding ShowEmptyUpload, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
+
+                    <!-- Pattern 1 Create FAB (cycle1-next-polish UX-C-F1…F4); AccentBrush = #2AABEE -->
+                    <Button x:Name="CreateFabButton"
+                            Width="56" Height="56"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Margin="0,0,16,16"
+                            Panel.ZIndex="2"
+                            Cursor="Hand"
+                            Background="{DynamicResource AccentBrush}"
+                            Foreground="White"
+                            BorderThickness="0"
+                            Click="OnCreateFabClick"
+                            ToolTip="{Binding CreateFabToolTip}"
+                            AutomationProperties.Name="{Binding CreateFabAutomationName}"
+                            Visibility="{Binding ShowCreateFab, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Grid>
+                                    <Ellipse x:Name="FabBg" Fill="{TemplateBinding Background}"/>
+                                    <TextBlock Text="+" FontSize="28" FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Foreground="{TemplateBinding Foreground}" Margin="0,-2,0,0"/>
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="FabBg" Property="Opacity" Value="0.92"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="FabBg" Property="Opacity" Value="0.84"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="{Binding CreateFabNewFolderLabel}"
+                                          Command="{Binding NewFolderCommand}"/>
+                                <MenuItem Header="{Binding CreateFabUploadLabel}"
+                                          Command="{Binding UploadCommand}"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                 </Grid>
             </Grid>
 

@@ -8,6 +8,7 @@ using System.Text.Json;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Models.Share;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.Services;
 
@@ -344,6 +345,92 @@ public class CloudApiService
             && !string.Equals(fileName, $"file-{entityId:N}", StringComparison.OrdinalIgnoreCase))
         {
             await AddValueAsync(entityId, fileName);
+        }
+    }
+
+    /// <summary>
+    /// Cycle-2 atomic messenger media send (client-contract §9). Server creates CloudFiles + Message
+    /// and emits <c>message_sent</c>; mid-flight failure rolls back so the peer sees nothing.
+    /// </summary>
+    public async Task<MessengerSendWithAttachmentsResult> SendWithAttachmentsAsync(
+        Guid partnerUserId,
+        Guid? chatFolderId,
+        string? bodyText,
+        IReadOnlyList<Guid> existingAttachmentIds,
+        IReadOnlyList<(string FileName, string MimeType, Stream Content, long? Length)> newFiles,
+        IProgress<CloudUploadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(partnerUserId.ToString("D")), "partnerUserId");
+        if (chatFolderId is { } folder && folder != Guid.Empty)
+            form.Add(new StringContent(folder.ToString("D")), "chatFolderId");
+        if (!string.IsNullOrWhiteSpace(bodyText))
+            form.Add(new StringContent(bodyText), "bodyText");
+        form.Add(
+            new StringContent(MessengerAtomicSend.FormatExistingAttachmentIds(existingAttachmentIds)),
+            "existingAttachmentIds");
+
+        long grandTotal = 0;
+        var lengths = new long?[newFiles.Count];
+        for (var i = 0; i < newFiles.Count; i++)
+        {
+            var len = newFiles[i].Length;
+            if (len is null && newFiles[i].Content.CanSeek)
+            {
+                try { len = newFiles[i].Content.Length; }
+                catch { /* leave null */ }
+            }
+
+            lengths[i] = len;
+            if (len is > 0)
+                grandTotal += len.Value;
+        }
+
+        long byteOffset = 0;
+        var wrappers = new List<ProgressReadStream>();
+        try
+        {
+            for (var i = 0; i < newFiles.Count; i++)
+            {
+                var file = newFiles[i];
+                var fileLen = lengths[i];
+                IProgress<CloudUploadProgress>? fileProgress = null;
+                if (progress != null && grandTotal > 0)
+                {
+                    var offset = byteOffset;
+                    fileProgress = new Progress<CloudUploadProgress>(p =>
+                        progress.Report(new CloudUploadProgress(offset + p.BytesSent, grandTotal)));
+                }
+
+                Stream uploadBody = fileProgress != null
+                    ? new ProgressReadStream(file.Content, fileProgress, fileLen)
+                    : file.Content;
+                if (uploadBody is ProgressReadStream wrapped)
+                    wrappers.Add(wrapped);
+
+                var streamContent = new StreamContent(uploadBody);
+                streamContent.Headers.ContentType = new MediaTypeHeaderValue(
+                    string.IsNullOrWhiteSpace(file.MimeType) ? "application/octet-stream" : file.MimeType);
+                if (fileLen is > 0)
+                    streamContent.Headers.ContentLength = fileLen;
+                form.Add(streamContent, "files", file.FileName);
+
+                if (fileLen is > 0)
+                    byteOffset += fileLen.Value;
+            }
+
+            var response = await _http.PostAsync(MessengerAtomicSend.EndpointPath, form, cancellationToken)
+                .ConfigureAwait(false);
+            await EnsureSuccessAsync(response).ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return MessengerAtomicSend.ParseResponse(json);
+        }
+        finally
+        {
+            // Progress wrappers only — caller owns source file streams.
+            foreach (var w in wrappers)
+                w.Dispose();
         }
     }
 

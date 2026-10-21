@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProtoLink.Communicator.Windows\ProtoLink.Communicator.Windows.csproj" />
+    <ProjectReference Include="..\tools\PublishReleaseArchive\PublishReleaseArchive.csproj" />
   </ItemGroup>
 
 </Project>

@@ -123,6 +123,41 @@ var r=document.createRange();r.selectNodeContents(next);r.collapse(true);
 sel.removeAllRanges();sel.addRange(r);
 });
 window.getHtml=function(){return editor.innerHTML||'';};
+function postNoteMsg(payload){
+if(window.chrome&&window.chrome.webview)window.chrome.webview.postMessage(JSON.stringify(payload));
+}
+function reportSelection(){
+var sel=window.getSelection();
+if(!sel||!sel.rangeCount||sel.isCollapsed){
+postNoteMsg({type:'selectionChanged',hasSelection:false});
+return;
+}
+var range=sel.getRangeAt(0);
+if(!editor.contains(range.commonAncestorContainer)){
+postNoteMsg({type:'selectionChanged',hasSelection:false});
+return;
+}
+var rect=range.getBoundingClientRect();
+postNoteMsg({
+type:'selectionChanged',
+hasSelection:true,
+x:rect.left+rect.width/2,
+y:rect.top,
+bottom:rect.bottom,
+width:rect.width,
+height:rect.height
+});
+}
+document.addEventListener('selectionchange',function(){
+clearTimeout(window._noteSelT);
+window._noteSelT=setTimeout(reportSelection,150);
+});
+editor.addEventListener('keydown',function(e){
+if(e.key!=='Escape')return;
+postNoteMsg({type:'dismissFormatBar'});
+var sel=window.getSelection();
+if(sel)sel.removeAllRanges();
+});
 </script>
 </body>
 </html>

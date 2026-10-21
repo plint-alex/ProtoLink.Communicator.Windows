@@ -66,6 +66,67 @@ public class MessengerMediaSendPipelineTests
     }
 
     [Fact]
+    public void AtomicSend_FormatExistingIds_JsonArray()
+    {
+        var a = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var b = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        Assert.Equal("[]", MessengerAtomicSend.FormatExistingAttachmentIds(Array.Empty<Guid>()));
+        var json = MessengerAtomicSend.FormatExistingAttachmentIds(new[] { a, b });
+        Assert.Contains(a.ToString("D"), json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(b.ToString("D"), json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AtomicSend_ParseResponse_MessageAndAttachments()
+    {
+        var messageId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var att = Guid.Parse("3f2b1c44-9a0e-4f2b-8b1e-7a0c5d2e9f10");
+        var result = MessengerAtomicSend.ParseResponse(
+            $"{{\"messageId\":\"{messageId:D}\",\"attachmentIds\":[\"{att:D}\"]}}");
+        Assert.Equal(messageId, result.MessageId);
+        Assert.Equal(new[] { att }, result.AttachmentIds);
+    }
+
+    [Fact]
+    public void AtomicSend_PrepareRetry_ClearsNewUploadIds_KeepsCloudPick()
+    {
+        var pickId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var drafts = new List<PendingAttachmentDraft>
+        {
+            new()
+            {
+                LocalPath = @"C:\tmp\a.png",
+                FileName = "a.png",
+                CloudFileEntityId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                UploadCompleted = false,
+                IsCloudPick = false
+            },
+            new()
+            {
+                LocalPath = string.Empty,
+                FileName = "cloud.bin",
+                CloudFileEntityId = pickId,
+                UploadCompleted = true,
+                IsCloudPick = true
+            }
+        };
+
+        MessengerAtomicSend.PrepareDraftsForAtomicRetry(drafts);
+
+        Assert.Equal(Guid.Empty, drafts[0].CloudFileEntityId);
+        Assert.False(drafts[0].UploadCompleted);
+        Assert.Equal(pickId, drafts[1].CloudFileEntityId);
+        Assert.True(drafts[1].UploadCompleted);
+    }
+
+    [Fact]
+    public void AtomicSend_LooksLikeFileTooLarge()
+    {
+        Assert.True(MessengerAtomicSend.LooksLikeFileTooLarge("HTTP 413 Payload Too Large. Response: {\"code\":\"file_too_large\"}"));
+        Assert.False(MessengerAtomicSend.LooksLikeFileTooLarge("HTTP 500"));
+    }
+
+    [Fact]
     public void ProgressReadStream_ReportsBytes()
     {
         // Use a sync IProgress — System.Progress<T> posts via SynchronizationContext and

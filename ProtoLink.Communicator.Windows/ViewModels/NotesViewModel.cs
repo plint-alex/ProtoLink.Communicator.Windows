@@ -88,6 +88,7 @@ public partial class NotesViewModel : ViewModelBase
     public string CurrentPageTitle =>
         string.IsNullOrEmpty(_currentPagePath) ? "Select a note" : Path.GetFileName(_currentPagePath);
     public bool HasOpenPage => !string.IsNullOrEmpty(_currentPagePath);
+    public string? UiLanguage => _settingsService.LoadSettings().UiLanguage;
     public string StatusText { get => _statusText; set { _statusText = value; OnPropertyChanged(); } }
     public ICommand NewFolderCommand { get; }
     public ICommand CreateFirstNoteCommand { get; }

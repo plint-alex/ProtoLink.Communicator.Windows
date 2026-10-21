@@ -50,6 +50,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         DataContextChanged += OnDataContextChanged;
         IsVisibleChanged += OnNotesVisibilityChanged;
         NotesWebView.SizeChanged += OnNotesWebViewSizeChanged;
+        EditorHost.SizeChanged += OnEditorHostSizeChangedForFormatBar;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -121,6 +122,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (e.PropertyName is nameof(NotesViewModel.IsCompactLayout)
             or nameof(NotesViewModel.ShowEditorInCompact))
             ApplyColumnLayout();
+        if (e.PropertyName is nameof(NotesViewModel.HasOpenPage) or nameof(NotesViewModel.CurrentPagePath))
+            HideFormatBar();
     }
 
     private void OnNavigateToNoteRequested(string path) =>
@@ -195,10 +198,18 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 _vm.BackCommand.Execute(null);
             e.Handled = true;
         }
-        else if (key == Key.Escape && _vm.IsCompactLayout && _vm.ShowEditorInCompact)
+        else if (key == Key.Escape)
         {
-            _vm.ReturnToListInCompact();
-            e.Handled = true;
+            if (FormatBarPopup.IsOpen)
+            {
+                HideFormatBar();
+                e.Handled = true;
+            }
+            else if (_vm.IsCompactLayout && _vm.ShowEditorInCompact)
+            {
+                _vm.ReturnToListInCompact();
+                e.Handled = true;
+            }
         }
         else if (key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
@@ -531,6 +542,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (!root.TryGetProperty("type", out var typeEl))
             return;
         var type = typeEl.GetString();
+        if (type is "selectionChanged" or "dismissFormatBar")
+        {
+            HandleFormatBarWebMessage(root, type);
+            return;
+        }
+
         if (type == "contentChanged")
         {
             Dispatcher.BeginInvoke(new Action(() => _ = OnContentChangedFromEditorAsync()));
@@ -1017,6 +1034,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void OnTreePreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        HideFormatBar();
         _treeDragStartPoint = e.GetPosition(null);
         _treeDragSourceItem = FindAncestorTreeViewItem(e.OriginalSource as DependencyObject);
     }

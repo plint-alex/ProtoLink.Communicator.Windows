@@ -9,6 +9,7 @@ using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels.Share;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -166,6 +167,21 @@ public partial class CloudViewModel : ViewModelBase
         && !CloudVirtualNodes.IsVirtual(id);
 
     public bool ShowEmptyUpload => IsEmpty && CanMutateListedFolder;
+
+    /// <summary>Pattern 1 create FAB — mutable non-empty list only (empty keeps centered Upload).</summary>
+    public bool ShowCreateFab => CloudCreateFabVisibility.IsVisible(CanMutateListedFolder, IsEmpty);
+
+    public string CreateFabAutomationName =>
+        CloudCreateFabStrings.FabName(_settingsService.LoadSettings().UiLanguage);
+
+    public string CreateFabToolTip =>
+        CloudCreateFabStrings.FabToolTip(_settingsService.LoadSettings().UiLanguage);
+
+    public string CreateFabNewFolderLabel =>
+        CloudCreateFabStrings.NewFolder(_settingsService.LoadSettings().UiLanguage);
+
+    public string CreateFabUploadLabel =>
+        CloudCreateFabStrings.UploadFile(_settingsService.LoadSettings().UiLanguage);
 
     public string EmptyListTitle
     {
@@ -547,6 +563,11 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsSharedWithMeListing));
         OnPropertyChanged(nameof(IsCloudHubListing));
         OnPropertyChanged(nameof(ShowEmptyUpload));
+        OnPropertyChanged(nameof(ShowCreateFab));
+        OnPropertyChanged(nameof(CreateFabAutomationName));
+        OnPropertyChanged(nameof(CreateFabToolTip));
+        OnPropertyChanged(nameof(CreateFabNewFolderLabel));
+        OnPropertyChanged(nameof(CreateFabUploadLabel));
         OnPropertyChanged(nameof(EmptyListTitle));
         OnPropertyChanged(nameof(EmptyListBody));
         OnPropertyChanged(nameof(EmptyListGlyph));

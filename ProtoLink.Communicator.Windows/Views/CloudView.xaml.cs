@@ -482,4 +482,15 @@ public partial class CloudView : System.Windows.Controls.UserControl
         menu.Items.Add(new MenuItem { Header = "Refresh", Command = _vm.RefreshCommand });
         return menu;
     }
+
+    private void OnCreateFabClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn || btn.ContextMenu is null) return;
+        // ContextMenu is not in the visual tree — inherit VM for command/header bindings.
+        btn.ContextMenu.DataContext = DataContext;
+        btn.ContextMenu.PlacementTarget = btn;
+        btn.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+        btn.ContextMenu.IsOpen = true;
+        e.Handled = true;
+    }
 }

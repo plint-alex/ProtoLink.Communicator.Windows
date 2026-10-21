@@ -126,73 +126,88 @@
                       VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
                       ResizeBehavior="PreviousAndNext" ShowsPreview="True"/>
 
-        <!-- Editor pane (no EntityHeader — Copy link / Open in browser live on the tree context menu) -->
+        <!-- Editor pane: no permanent format strip (Pattern 2 floating bar on selection) -->
         <Grid x:Name="EditorPane" Grid.Column="2">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Background="{DynamicResource NotesToolbarBackground}" Padding="8,6"
-                    BorderBrush="{DynamicResource NotesToolbarSeparatorBrush}" BorderThickness="0,0,0,1"
-                    Visibility="{Binding HasOpenPage, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBold"
-                            ToolTip="Bold (Ctrl+B)" AutomationProperties.Name="Bold">
-                        <TextBlock Text="B" FontWeight="Bold" FontSize="14"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatItalic"
-                            ToolTip="Italic (Ctrl+I)" AutomationProperties.Name="Italic">
-                        <TextBlock Text="I" FontStyle="Italic" FontSize="14"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatUnderline"
-                            ToolTip="Underline (Ctrl+U)" AutomationProperties.Name="Underline">
-                        <TextBlock Text="U" TextDecorations="Underline" FontSize="14"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatStrikethrough"
-                            ToolTip="Strikethrough" AutomationProperties.Name="Strikethrough">
-                        <TextBlock Text="S" TextDecorations="Strikethrough" FontSize="14"/>
-                    </Button>
-                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                    <ComboBox x:Name="HeadingCombo" Width="110" Height="32" Margin="2,0"
-                              SelectionChanged="OnHeadingComboSelectionChanged" ToolTip="Text style"
-                              AutomationProperties.Name="Text style">
-                        <ComboBoxItem Content="Normal" Tag=""/>
-                        <ComboBoxItem Content="Heading 1" Tag="h1"/>
-                        <ComboBoxItem Content="Heading 2" Tag="h2"/>
-                        <ComboBoxItem Content="Heading 3" Tag="h3"/>
-                    </ComboBox>
-                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatBulletList"
-                            ToolTip="Bullet list" AutomationProperties.Name="Bullet list">
-                        <TextBlock Text="•" FontSize="16" TextAlignment="Center"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatNumberedList"
-                            ToolTip="Numbered list" AutomationProperties.Name="Numbered list">
-                        <TextBlock Text="1." FontSize="12" TextAlignment="Center"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCheckboxList"
-                            ToolTip="Checkbox list" AutomationProperties.Name="Checkbox list">
-                        <TextBlock Text="☐" FontSize="14" TextAlignment="Center"/>
-                    </Button>
-                    <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatInsertLink"
-                            ToolTip="Insert link" AutomationProperties.Name="Insert link">
-                        <TextBlock Text="Link" FontSize="11" FontWeight="SemiBold"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatCode"
-                            ToolTip="Code block" AutomationProperties.Name="Code block">
-                        <TextBlock Text="&lt;/&gt;" FontSize="12" FontFamily="Consolas"/>
-                    </Button>
-                    <Button Style="{StaticResource NotesToolbarButton}" Click="OnFormatTable"
-                            ToolTip="Insert table" AutomationProperties.Name="Insert table">
-                        <TextBlock Text="Table" FontSize="10" FontWeight="SemiBold"/>
-                    </Button>
-                </StackPanel>
-            </Border>
-            <wv2:WebView2 x:Name="NotesWebView" Grid.Row="1"/>
-            <Border Grid.Row="2" Background="{DynamicResource StatusBarBackground}"
+            <Grid x:Name="EditorHost" Grid.Row="0">
+                <wv2:WebView2 x:Name="NotesWebView"/>
+                <Popup x:Name="FormatBarPopup"
+                       PlacementTarget="{Binding ElementName=EditorHost}"
+                       Placement="Relative"
+                       AllowsTransparency="True"
+                       StaysOpen="True"
+                       Focusable="False"
+                       IsOpen="False"
+                       PopupAnimation="Fade">
+                    <Border Background="{DynamicResource NotesToolbarBackground}"
+                            BorderBrush="{DynamicResource NotesToolbarSeparatorBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="6,4">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.28" Direction="270"/>
+                        </Border.Effect>
+                        <StackPanel x:Name="FormatBarPanel" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="FormatBoldButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatBold"
+                                    ToolTip="Bold (Ctrl+B)" AutomationProperties.Name="Bold">
+                                <TextBlock Text="B" FontWeight="Bold" FontSize="14"/>
+                            </Button>
+                            <Button x:Name="FormatItalicButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatItalic"
+                                    ToolTip="Italic (Ctrl+I)" AutomationProperties.Name="Italic">
+                                <TextBlock Text="I" FontStyle="Italic" FontSize="14"/>
+                            </Button>
+                            <Button x:Name="FormatUnderlineButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatUnderline"
+                                    ToolTip="Underline (Ctrl+U)" AutomationProperties.Name="Underline">
+                                <TextBlock Text="U" TextDecorations="Underline" FontSize="14"/>
+                            </Button>
+                            <Button x:Name="FormatStrikeButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatStrikethrough"
+                                    ToolTip="Strikethrough" AutomationProperties.Name="Strikethrough">
+                                <TextBlock Text="S" TextDecorations="Strikethrough" FontSize="14"/>
+                            </Button>
+                            <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                            <ComboBox x:Name="HeadingCombo" Width="110" Height="32" Margin="2,0"
+                                      SelectionChanged="OnHeadingComboSelectionChanged" ToolTip="Text style"
+                                      AutomationProperties.Name="Text style">
+                                <ComboBoxItem x:Name="HeadingNormalItem" Content="Normal" Tag=""/>
+                                <ComboBoxItem x:Name="Heading1Item" Content="Heading 1" Tag="h1"/>
+                                <ComboBoxItem x:Name="Heading2Item" Content="Heading 2" Tag="h2"/>
+                                <ComboBoxItem x:Name="Heading3Item" Content="Heading 3" Tag="h3"/>
+                            </ComboBox>
+                            <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                            <Button x:Name="FormatBulletButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatBulletList"
+                                    ToolTip="Bullet list" AutomationProperties.Name="Bullet list">
+                                <TextBlock Text="•" FontSize="16" TextAlignment="Center"/>
+                            </Button>
+                            <Button x:Name="FormatNumberedButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatNumberedList"
+                                    ToolTip="Numbered list" AutomationProperties.Name="Numbered list">
+                                <TextBlock Text="1." FontSize="12" TextAlignment="Center"/>
+                            </Button>
+                            <Button x:Name="FormatCheckboxButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatCheckboxList"
+                                    ToolTip="Checkbox list" AutomationProperties.Name="Checkbox list">
+                                <TextBlock Text="☐" FontSize="14" TextAlignment="Center"/>
+                            </Button>
+                            <Rectangle Width="1" Height="24" Fill="{DynamicResource NotesToolbarSeparatorBrush}" Margin="8,0"/>
+                            <Button x:Name="FormatLinkButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatInsertLink"
+                                    ToolTip="Insert link" AutomationProperties.Name="Insert link">
+                                <TextBlock Text="Link" FontSize="11" FontWeight="SemiBold"/>
+                            </Button>
+                            <Button x:Name="FormatCodeButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatCode"
+                                    ToolTip="Code block" AutomationProperties.Name="Code block">
+                                <TextBlock Text="&lt;/&gt;" FontSize="12" FontFamily="Consolas"/>
+                            </Button>
+                            <Button x:Name="FormatTableButton" Style="{StaticResource NotesToolbarButton}" Click="OnFormatTable"
+                                    ToolTip="Insert table" AutomationProperties.Name="Insert table">
+                                <TextBlock Text="Table" FontSize="10" FontWeight="SemiBold"/>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+            </Grid>
+            <Border Grid.Row="1" Background="{DynamicResource StatusBarBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
                 <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
             </Border>

@@ -318,114 +318,23 @@ public partial class MessengerViewModel
     {
         try
         {
-            var attachmentIds = new List<Guid>();
             if (drafts.Count > 0)
             {
-                var needsUpload = drafts.Any(d => !d.IsCloudPick);
-                optimistic.DeliveryStatus = needsUpload
-                    ? MessageDeliveryStatus.Uploading
-                    : MessageDeliveryStatus.Sending;
-
-                Guid chatFolderId = Guid.Empty;
-                if (needsUpload)
-                {
-                    if (_chatFolders == null)
-                        throw new InvalidOperationException("Chat folder resolver is not configured.");
-
-                    try
-                    {
-                        chatFolderId = await _chatFolders.ResolveOrCreateAsync(myUserId, partnerUserId, partnerName)
-                            .ConfigureAwait(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
-                        System.Diagnostics.Debug.WriteLine(ex);
-                        return;
-                    }
-                }
-
-                foreach (var draft in drafts)
-                {
-                    if (draft.IsCloudPick)
-                    {
-                        if (draft.CloudFileEntityId == Guid.Empty)
-                        {
-                            MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
-                            return;
-                        }
-
-                        try
-                        {
-                            // M3/M4 — grant on existing entity only (no copy, no AddEntity).
-                            if (partnerUserId != myUserId)
-                            {
-                                await _cloudApi.AddPermissionAsync(
-                                        draft.CloudFileEntityId,
-                                        partnerUserId,
-                                        canWrite: false)
-                                    .ConfigureAwait(true);
-                            }
-
-                            draft.UploadCompleted = true;
-                            attachmentIds.Add(draft.CloudFileEntityId);
-                        }
-                        catch (Exception ex)
-                        {
-                            MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
-                            System.Diagnostics.Debug.WriteLine(ex);
-                            return;
-                        }
-
-                        continue;
-                    }
-
-                    if (MessengerMediaLimits.IsOversize(draft.ByteLength))
-                    {
-                        AttachStatusMessage = MessengerMediaLimits.OversizeMessageEn;
-                        MarkFailed(optimistic, MessengerMediaLimits.OversizeMessageEn);
-                        return;
-                    }
-
-                    try
-                    {
-                        await UploadOneAttachmentAsync(
-                                optimistic,
-                                draft,
-                                chatFolderId,
-                                myUserId,
-                                partnerUserId)
-                            .ConfigureAwait(true);
-                    }
-                    catch (Exception ex) when (allowFolderReresolve && MessengerChatFolderResolver.IsStaleFolderFailure(ex))
-                    {
-                        chatFolderId = await _chatFolders!.ReResolveAndCreateAsync(myUserId, partnerUserId, partnerName)
-                            .ConfigureAwait(true);
-                        // One silent retry of this file create/upload after folder re-resolve.
-                        await UploadOneAttachmentAsync(
-                                optimistic,
-                                draft,
-                                chatFolderId,
-                                myUserId,
-                                partnerUserId)
-                            .ConfigureAwait(true);
-                    }
-
-                    if (draft.CloudFileEntityId != Guid.Empty)
-                        attachmentIds.Add(draft.CloudFileEntityId);
-                }
-
-                optimistic.AttachmentIds = attachmentIds;
-                optimistic.PendingLocalAttachments = drafts;
-                SyncOptimisticAttachmentEntityIds(optimistic, drafts);
-                optimistic.DeliveryStatus = MessengerSendStateMachine.OnUploadFinished();
-            }
-            else
-            {
-                optimistic.DeliveryStatus = MessageDeliveryStatus.Sending;
+                await ExecuteAtomicMediaSendAsync(
+                        optimistic,
+                        myUserId,
+                        partnerUserId,
+                        partnerName,
+                        text,
+                        drafts,
+                        allowFolderReresolve)
+                    .ConfigureAwait(true);
+                return;
             }
 
-            // Existing Sent/Received container bootstrap (text and attachment messages).
+            // Text-only: cycle-1 AddEntity Message + message_sent (no attachments).
+            optimistic.DeliveryStatus = MessageDeliveryStatus.Sending;
+
             var sentTask = GetOrCreateUserContainer(SystemEntities.Sent, myUserId, "Sent");
             var receivedTask = GetOrCreateUserContainer(SystemEntities.Received, partnerUserId, "Received", grantWrite: true);
             await Task.WhenAll(sentTask, receivedTask).ConfigureAwait(true);
@@ -449,16 +358,6 @@ public partial class MessengerViewModel
                 {
                     Type = TypeOfValue.String,
                     Value = text,
-                    ParentIds = new[] { SystemEntities.Message }
-                });
-            }
-
-            foreach (var id in attachmentIds)
-            {
-                values.Add(new AddValueContract
-                {
-                    Type = TypeOfValue.String,
-                    Value = MessengerMediaLimits.FormatAttachmentValue(id),
                     ParentIds = new[] { SystemEntities.Message }
                 });
             }
@@ -510,52 +409,161 @@ public partial class MessengerViewModel
         }
     }
 
-    private async Task UploadOneAttachmentAsync(
+    /// <summary>
+    /// Cycle-2: one <c>POST api/Messenger/sendWithAttachments</c> for new uploads and/or M3 picks.
+    /// Peer never sees a message until the Api commits (grants + attachment: wire + message_sent).
+    /// </summary>
+    private async Task ExecuteAtomicMediaSendAsync(
         MessageViewModel optimistic,
-        PendingAttachmentDraft draft,
-        Guid chatFolderId,
         Guid myUserId,
-        Guid partnerUserId)
+        Guid partnerUserId,
+        string partnerName,
+        string text,
+        List<PendingAttachmentDraft> drafts,
+        bool allowFolderReresolve)
     {
-        if (draft.UploadCompleted)
-            return;
-
-        if (draft.CloudFileEntityId == Guid.Empty)
+        var newUploads = MessengerAtomicSend.CollectNewUploads(drafts);
+        var existingIds = MessengerAtomicSend.CollectExistingIds(drafts);
+        if (existingIds.Count != drafts.Count(d => d.IsCloudPick))
         {
-            IReadOnlyList<AddPermissionContract>? perms = null;
-            if (partnerUserId != myUserId)
-            {
-                perms = new[]
-                {
-                    new AddPermissionContract { PermissionForId = partnerUserId, CanWrite = false }
-                };
-            }
-
-            draft.CloudFileEntityId = await _cloudApi.AddEntityAsync(
-                    CloudEntityCodes.CloudFile,
-                    new[] { chatFolderId },
-                    draft.FileName,
-                    permissions: perms,
-                    mimeType: draft.MimeType)
-                .ConfigureAwait(true);
+            MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
+            return;
         }
 
-        var progress = new Progress<CloudUploadProgress>(p =>
+        foreach (var draft in newUploads)
         {
-            if (p.Fraction is double f)
-                optimistic.UploadProgress = f;
-        });
+            if (MessengerMediaLimits.IsOversize(draft.ByteLength))
+            {
+                AttachStatusMessage = MessengerMediaLimits.OversizeMessageEn;
+                MarkFailed(optimistic, MessengerMediaLimits.OversizeMessageEn);
+                return;
+            }
+        }
 
-        await using var stream = File.OpenRead(draft.LocalPath);
-        await _cloudApi.AddFileAsync(
-                draft.CloudFileEntityId,
-                draft.FileName,
-                stream,
-                draft.MimeType,
-                progress)
-            .ConfigureAwait(true);
-        draft.UploadCompleted = true;
+        var needsUpload = newUploads.Count > 0;
+        optimistic.DeliveryStatus = needsUpload
+            ? MessageDeliveryStatus.Uploading
+            : MessageDeliveryStatus.Sending;
+
+        Guid? chatFolderId = null;
+        if (needsUpload)
+        {
+            if (_chatFolders == null)
+                throw new InvalidOperationException("Chat folder resolver is not configured.");
+
+            try
+            {
+                chatFolderId = await _chatFolders.ResolveOrCreateAsync(myUserId, partnerUserId, partnerName)
+                    .ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
+                System.Diagnostics.Debug.WriteLine(ex);
+                return;
+            }
+        }
+
+        try
+        {
+            try
+            {
+                await PostAtomicSendAsync(
+                        optimistic, partnerUserId, chatFolderId, text, existingIds, newUploads, drafts)
+                    .ConfigureAwait(true);
+            }
+            catch (Exception ex) when (allowFolderReresolve
+                                       && needsUpload
+                                       && MessengerChatFolderResolver.IsStaleFolderFailure(ex))
+            {
+                chatFolderId = await _chatFolders!.ReResolveAndCreateAsync(myUserId, partnerUserId, partnerName)
+                    .ConfigureAwait(true);
+                await PostAtomicSendAsync(
+                        optimistic, partnerUserId, chatFolderId, text, existingIds, newUploads, drafts)
+                    .ConfigureAwait(true);
+            }
+        }
+        catch (Exception ex) when (MessengerAtomicSend.LooksLikeFileTooLarge(ex.Message))
+        {
+            AttachStatusMessage = MessengerMediaLimits.OversizeMessageEn;
+            MarkFailed(optimistic, MessengerMediaLimits.OversizeMessageEn);
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        catch (Exception ex)
+        {
+            MarkFailed(optimistic, MessengerMediaLimits.UploadFailedEn);
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+    }
+
+    private async Task PostAtomicSendAsync(
+        MessageViewModel optimistic,
+        Guid partnerUserId,
+        Guid? chatFolderId,
+        string text,
+        IReadOnlyList<Guid> existingIds,
+        IReadOnlyList<PendingAttachmentDraft> newUploads,
+        List<PendingAttachmentDraft> allDrafts)
+    {
+        var openStreams = new List<FileStream>();
+        try
+        {
+            var files = new List<(string FileName, string MimeType, Stream Content, long? Length)>();
+            foreach (var draft in newUploads)
+            {
+                var stream = File.OpenRead(draft.LocalPath);
+                openStreams.Add(stream);
+                files.Add((draft.FileName, draft.MimeType, stream, draft.ByteLength > 0 ? draft.ByteLength : null));
+            }
+
+            var progress = new Progress<CloudUploadProgress>(p =>
+            {
+                if (p.Fraction is double f)
+                    optimistic.UploadProgress = f;
+            });
+
+            var result = await _cloudApi.SendWithAttachmentsAsync(
+                    partnerUserId,
+                    chatFolderId,
+                    string.IsNullOrWhiteSpace(text) ? null : text,
+                    existingIds,
+                    files,
+                    progress)
+                .ConfigureAwait(true);
+
+            ApplyAtomicSendSuccess(optimistic, allDrafts, newUploads, result);
+        }
+        finally
+        {
+            foreach (var s in openStreams)
+                await s.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    private static void ApplyAtomicSendSuccess(
+        MessageViewModel optimistic,
+        List<PendingAttachmentDraft> allDrafts,
+        IReadOnlyList<PendingAttachmentDraft> newUploads,
+        MessengerSendWithAttachmentsResult result)
+    {
+        // Api order: new CloudFiles first, then existingAttachmentIds (MessengerSendService).
+        var attachmentIds = result.AttachmentIds.ToList();
+        for (var i = 0; i < newUploads.Count && i < attachmentIds.Count; i++)
+        {
+            newUploads[i].CloudFileEntityId = attachmentIds[i];
+            newUploads[i].UploadCompleted = true;
+        }
+
+        foreach (var pick in allDrafts.Where(d => d.IsCloudPick))
+            pick.UploadCompleted = true;
+
+        optimistic.EntityId = result.MessageId;
+        optimistic.AttachmentIds = attachmentIds;
+        optimistic.PendingLocalAttachments = allDrafts;
+        SyncOptimisticAttachmentEntityIds(optimistic, allDrafts);
         optimistic.UploadProgress = 1;
+        optimistic.StatusLine = null;
+        optimistic.DeliveryStatus = MessengerSendStateMachine.OnMessageCommitted();
     }
 
     private static void SyncOptimisticAttachmentEntityIds(
@@ -600,16 +608,8 @@ public partial class MessengerViewModel
         optimistic.DeliveryStatus = MessengerSendStateMachine.OnRetry();
 
         var drafts = optimistic.PendingLocalAttachments ?? new List<PendingAttachmentDraft>();
-        // Ensure entity ids are reused (AT-M26 / AT-M27).
-        foreach (var d in drafts)
-        {
-            d.CloudFileEntityId = MessengerSendStateMachine.ResolveEntityIdForRetry(d.CloudFileEntityId, null);
-            // Re-upload if previous attempt failed before/during addFile; keep entity id.
-            if (!d.UploadCompleted && d.CloudFileEntityId != Guid.Empty)
-            {
-                // stay Uploading and call addFile again on same id
-            }
-        }
+        // Atomic Api: new uploads get fresh CloudFile ids — full re-send. Cloud picks keep ids.
+        MessengerAtomicSend.PrepareDraftsForAtomicRetry(drafts);
 
         var gate = GateFor(partnerUserId);
         await gate.WaitAsync().ConfigureAwait(true);
@@ -635,9 +635,11 @@ public partial class MessengerViewModel
     {
         if (optimistic == null || !optimistic.ShowFailedActions) return;
 
+        // Atomic send rolls back on failure — no server orphans. Never delete M3 cloud picks.
+        // Best-effort cleanup only if a legacy multi-call path left a new CloudFile id.
         foreach (var draft in optimistic.PendingLocalAttachments ?? new List<PendingAttachmentDraft>())
         {
-            if (draft.CloudFileEntityId == Guid.Empty) continue;
+            if (draft.IsCloudPick || draft.CloudFileEntityId == Guid.Empty) continue;
             try
             {
                 await _cloudApi.DeleteEntityAsync(draft.CloudFileEntityId).ConfigureAwait(true);

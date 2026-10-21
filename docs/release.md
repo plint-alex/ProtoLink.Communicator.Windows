@@ -21,6 +21,10 @@ Expected output:
 
 Uploads Windows and/or Android artifacts via the Files API and writes each uploaded platform’s version into `communicator-version-windows` / `communicator-version-android` (ids: `versionWindows` / `versionAndroid` in `ids.generated.json`, else scan release children by code). The release entity name slot is **not** overwritten with a version; optional `-Notes` still go to the release description. A missing version entity fails with “Run Apply-CommunicatorPage.ps1 first”. **Never run against production while testing.**
 
+### Version history (D10)
+
+When a platform’s version entity semver **changes**, the script first snapshots the current latest CloudFile into `communicator-release-history` (new CloudFile: history + platform parents, public read, versioned filename, MinIO object copy), then prunes that platform to at most **5** archive rows (lowest semver first; `DeleteEntity` also removes the MinIO object). Same-version re-upload skips archive creation. Idempotent: an existing archive for the same platform+semver is reused (blob re-copied). Latest stable CloudFile ids are unchanged after the snapshot (D3). Rules live in `tools/PublishReleaseArchive` (unit-tested).
+
 ### Required: `-BaseUrl`
 
 There is **no default**. Omitting `-BaseUrl` fails with a clear error. Production must be explicit:
@@ -46,8 +50,9 @@ Non-production examples:
 
 ### Optional Windows / Android-only
 
-- Default Windows path: newest `artifacts/ProtoLink.Communicator.Windows-Setup-*.exe`.
-- Default Android path: newest `artifacts/ProtoLink.Communicator.Android-*.apk`.
+- Default Windows path: newest `artifacts/ProtoLink.Communicator.Windows-Setup-*.exe` (excludes `*-stand*` LocalStand stubs and `*.release.json`).
+- Default Android path: newest `artifacts/ProtoLink.Communicator.Android-*.apk` (same exclusions).
+- Prefer explicit `-WindowsSetupPath` / `-AndroidApkPath` for real cuts (still the operator-safe path).
 - `-SkipWindows` — Android-only publish.
 - Omit or leave Android unset when only Windows should upload.
 - Override with `-WindowsSetupPath` / `-AndroidApkPath`.
