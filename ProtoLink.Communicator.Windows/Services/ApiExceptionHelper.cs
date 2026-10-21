@@ -19,8 +19,8 @@ internal static class ApiExceptionHelper
     }
 
     /// <summary>
-    /// Transient network / unreachable API failures that background loads should soft-fail
-    /// (keep cache UI; do not surface as UnobservedTaskException dialogs).
+    /// Transient network / unreachable API failures that background loads and Cloud auto-sync
+    /// should soft-fail (keep cache UI; no Background task / Sync error modals).
     /// </summary>
     public static bool IsExpectedConnectivityFailure(Exception? ex)
     {

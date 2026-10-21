@@ -166,6 +166,13 @@ public partial class MainWindow : Window
             _settingsService,
             ex =>
             {
+                // Auto-sync / mapped sync: connectivity refuse is expected offline — status already set; no modal spam.
+                if (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+                {
+                    System.Diagnostics.Debug.WriteLine(ex);
+                    return;
+                }
+
                 Dispatcher.InvokeAsync(() =>
                     ProtoLink.Communicator.Windows.Dialogs.ErrorDetailDialog.Show("Sync error", ex));
             },

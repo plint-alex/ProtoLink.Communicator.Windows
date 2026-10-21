@@ -6,7 +6,9 @@ using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
-/// <summary>Messenger/background loads soft-fail expected connectivity faults (no Background task dialog).</summary>
+/// <summary>
+/// Expected connectivity faults soft-fail Messenger LoadMessages / App unobserved and MainWindow Sync error modal.
+/// </summary>
 [Trait("Category", "Offline")]
 public class ApiExceptionHelperTests
 {
