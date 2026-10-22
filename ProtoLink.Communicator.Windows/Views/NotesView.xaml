@@ -4,6 +4,7 @@
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
              Foreground="{DynamicResource ForegroundBrush}"
              SizeChanged="OnRootSizeChanged"
@@ -26,6 +27,7 @@
             </Style.Triggers>
         </Style>
     </UserControl.Resources>
+    <Grid Background="{DynamicResource ContentBackground}">
     <Grid Background="{DynamicResource ContentBackground}" x:Name="PanesGrid">
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="TreeColumn" Width="320" MinWidth="280" MaxWidth="420"/>
@@ -83,6 +85,7 @@
                             <Separator/>
                             <MenuItem x:Name="NotesTreeOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnOpenInExplorerClick"/>
                             <MenuItem x:Name="NotesTreeCopyLinkMenuItem" Header="Copy link" Click="OnCopyLinkClick"/>
+                            <MenuItem x:Name="NotesTreeShareMenuItem" Header="Share…" Click="OnShareClick"/>
                             <MenuItem x:Name="NotesTreeOpenInBrowserMenuItem" Header="Open in browser" Click="OnOpenInBrowserClick"/>
                             <MenuItem x:Name="NotesTreeCopyIdMenuItem" Header="Copy id" Click="OnCopyIdClick"/>
                             <Separator/>
@@ -275,5 +278,12 @@
                 <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
             </Border>
         </Grid>
+    </Grid>
+
+        <!-- Notes tree Share sheet (notes-tree-share AC-NS-2) — same ShareSheetView as Cloud -->
+        <Border HorizontalAlignment="Right" Panel.ZIndex="20"
+                Visibility="{Binding ShareSheet.IsOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <views:ShareSheetView DataContext="{Binding ShareSheet}"/>
+        </Border>
     </Grid>
 </UserControl>

@@ -8,6 +8,13 @@ public static class ShareSheetStrings
     public static string ShareButton(string? lang) =>
         IsRussian(lang) ? "Поделиться" : "Share";
 
+    /// <summary>Notes/Cloud context menu (UX-NS-1).</summary>
+    public static string ShareMenu(string? lang) =>
+        IsRussian(lang) ? "Поделиться…" : "Share…";
+
+    public static string NotInCloudYet(string? lang) =>
+        IsRussian(lang) ? "Ещё не в облаке" : "Not in Cloud yet";
+
     public static string SheetTitle(string? lang, string entityName) =>
         IsRussian(lang) ? $"Доступ · {entityName}" : $"Share “{entityName}”";
 

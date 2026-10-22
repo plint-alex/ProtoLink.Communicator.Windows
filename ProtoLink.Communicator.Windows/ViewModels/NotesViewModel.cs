@@ -34,7 +34,11 @@ public partial class NotesViewModel : ViewModelBase
     public NotesViewModel(
         ISettingsService settingsService,
         INoteRemoteIdResolver? remoteIdResolver = null,
-        ISyncMappingStore? syncStore = null)
+        ISyncMappingStore? syncStore = null,
+        CloudApiService? shareApi = null,
+        Func<Guid?>? shareCurrentUserId = null,
+        Func<bool>? shareIsOnline = null,
+        Action<string>? onSendShareLinkInMessenger = null)
     {
         _settingsService = settingsService;
         _remoteIdResolver = remoteIdResolver;
@@ -55,6 +59,7 @@ public partial class NotesViewModel : ViewModelBase
             p => OpenSiblingPath(p as string),
             p => p is string path && File.Exists(path));
         InitNavigationCommands();
+        InitShare(shareApi, shareCurrentUserId, shareIsOnline, onSendShareLinkInMessenger);
         RefreshTree();
         RefreshMapToCloudNudge();
     }

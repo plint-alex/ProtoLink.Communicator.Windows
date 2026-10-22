@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -82,6 +83,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             oldVm.ContentSaved -= OnContentSaved;
             oldVm.NavigateToNoteRequested -= OnNavigateToNoteRequested;
             oldVm.ReturnToListRequested -= OnReturnToListRequested;
+            oldVm.ShareAffordanceChanged -= OnShareAffordanceChanged;
             oldVm.PropertyChanged -= OnViewModelPropertyChanged;
             _treeEventsHooked = false;
             _vm = null;
@@ -108,8 +110,29 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _vm.ContentSaved += OnContentSaved;
         _vm.NavigateToNoteRequested += OnNavigateToNoteRequested;
         _vm.ReturnToListRequested += OnReturnToListRequested;
+        _vm.ShareAffordanceChanged += OnShareAffordanceChanged;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         _treeEventsHooked = true;
+    }
+
+    private void OnShareAffordanceChanged()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(OnShareAffordanceChanged);
+            return;
+        }
+
+        foreach (TreeViewItem root in NotesTreeView.Items.OfType<TreeViewItem>())
+            RefreshShareGlyphRecursive(root);
+    }
+
+    private void RefreshShareGlyphRecursive(TreeViewItem node)
+    {
+        if (node.Tag is TreeItemViewModel vm)
+            ApplyTreeItemHeader(node, vm);
+        foreach (var child in node.Items.OfType<TreeViewItem>())
+            RefreshShareGlyphRecursive(child);
     }
 
     private void OnRequestChooseNotesRoot()
@@ -804,7 +827,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void MergeTreeItem(TreeViewItem tvi, TreeItemViewModel vm)
     {
         tvi.Tag = vm;
-        UpdateTreeItemHeader(tvi, vm.Name);
+        ApplyTreeItemHeader(tvi, vm);
 
         // Index live children by normalized path; drop UI duplicates immediately.
         var byPath = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
@@ -909,6 +932,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
             return;
         }
 
+        if (tvi.Header is StackPanel panel
+            && panel.Children.OfType<TextBlock>().FirstOrDefault() is { } title)
+        {
+            if (!string.Equals(title.Text, name, StringComparison.Ordinal))
+                title.Text = name;
+            return;
+        }
+
         if (tvi.Header is string s)
         {
             if (!string.Equals(s, name, StringComparison.Ordinal))
@@ -968,18 +999,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
             CollectExpandedRecursive(child, set);
     }
 
-    private static TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
+    private TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
     {
-        var title = new TextBlock
-        {
-            Text = vm.Name,
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        var item = new TreeViewItem { Header = title, Tag = vm };
+        var item = new TreeViewItem { Tag = vm };
+        ApplyTreeItemHeader(item, vm);
         if (expandedPaths != null)
         {
             var pathKey = NormalizePathKey(vm.Item.FullPath);
@@ -991,6 +1014,43 @@ public partial class NotesView : System.Windows.Controls.UserControl
         foreach (var child in vm.Children)
             item.Items.Add(CreateTreeItem(child, expandedPaths));
         return item;
+    }
+
+    private void ApplyTreeItemHeader(TreeViewItem tvi, TreeItemViewModel vm)
+    {
+        var title = new TextBlock
+        {
+            Text = vm.Name,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
+        var showShared = _vm?.ShowsExternalShareAffordance(vm.Item.FullPath) == true;
+        if (!showShared)
+        {
+            tvi.Header = title;
+            return;
+        }
+
+        var people = new TextBlock
+        {
+            Text = "\uE716",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+            FontSize = 12,
+            Opacity = 0.55,
+            Margin = new Thickness(6, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = TryFindResource("ForegroundMutedBrush") as System.Windows.Media.Brush,
+            ToolTip = ShareSheetStrings.ShareMenu(_vm?.ShareSheet?.Lang)
+        };
+        System.Windows.Automation.AutomationProperties.SetName(people, "Shared");
+
+        var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        row.Children.Add(title);
+        row.Children.Add(people);
+        tvi.Header = row;
     }
 
     private void TryReselectCurrentPage(bool focusTree = false)
@@ -1449,13 +1509,20 @@ public partial class NotesView : System.Windows.Controls.UserControl
             NotesTreeOpenInExplorerMenuItem.IsEnabled =
                 !string.IsNullOrEmpty(path) && Directory.Exists(path);
             var hasCloudId = _vm?.TryResolveRemoteId(path) is not null;
-            var notInCloudTip = "Not in Cloud yet";
+            var uiLang = _vm?.ShareSheet?.Lang;
+            var notInCloudTip = ShareSheetStrings.NotInCloudYet(uiLang);
+            NotesTreeShareMenuItem.Header = ShareSheetStrings.ShareMenu(uiLang);
             NotesTreeCopyLinkMenuItem.IsEnabled = hasCloudId;
             NotesTreeCopyLinkMenuItem.ToolTip = hasCloudId ? "Copy canonical Cloud link" : notInCloudTip;
+            NotesTreeShareMenuItem.IsEnabled = hasCloudId && _vm?.ShareSheet != null;
+            NotesTreeShareMenuItem.ToolTip = hasCloudId ? NotesTreeShareMenuItem.Header : notInCloudTip;
             NotesTreeOpenInBrowserMenuItem.IsEnabled = hasCloudId;
             NotesTreeOpenInBrowserMenuItem.ToolTip = hasCloudId ? "Open note in browser" : notInCloudTip;
             NotesTreeCopyIdMenuItem.IsEnabled = hasCloudId;
             NotesTreeCopyIdMenuItem.ToolTip = hasCloudId ? "Copy Cloud RemoteId" : notInCloudTip;
+
+            if (hasCloudId && _vm != null)
+                _ = _vm.PrefetchShareAffordanceAsync(path);
         }
         else
         {
@@ -1506,6 +1573,14 @@ public partial class NotesView : System.Windows.Controls.UserControl
         var folderPath = vm.Item.FullPath;
         NotesTreeContextMenu.Tag = null;
         _vm.CopyLinkForPath(folderPath);
+    }
+
+    private void OnShareClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        var folderPath = vm.Item.FullPath;
+        NotesTreeContextMenu.Tag = null;
+        _ = _vm.OpenShareForPathAsync(folderPath);
     }
 
     private void OnOpenInBrowserClick(object sender, RoutedEventArgs e)
