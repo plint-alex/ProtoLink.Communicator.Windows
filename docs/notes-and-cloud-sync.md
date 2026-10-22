@@ -7,7 +7,7 @@
 - Notes primarily **reads and writes the local filesystem** (Windows folder / Android SAF tree).
 - Notes must not show **sync status** (no badges, no sync progress in the Notes tab).
 - **Exception (decision E2):** Copy link / Open in browser may reflect **link availability** only — enabled when the open note folder has a synced Cloud entity id (`SyncItemMeta.RemoteId` for that folder under a mapped root), otherwise disabled with “Not in Cloud yet”. The id is re-resolved after each sync completes without reopening the note. No other cloud-aware chrome in Notes.
-- **Sibling files (decision E5):** Notes may show a local **Folder files** tree under the open page (non-`index.html`/`index.htm` children). Still no sync chrome in that panel — local FS list + shell open only.
+- **Sibling files (decision E5 / E5a):** Notes may show a local **Folder files** list under the open page — **direct-child files only** (exclude `index.html`/`index.htm`; do not list directories already in the left Notes tree). Still no sync chrome in that panel — local FS list + shell open only.
 - When the open page’s file changes on disk, Notes reloads:
   - **Windows:** `NotesIndexFileWatcher` + reload when Notes tab activates (if editor is clean)
   - **Android:** disk hash poller (~1.5s) on the open note URI

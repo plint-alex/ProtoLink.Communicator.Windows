@@ -4,8 +4,9 @@ using ProtoLink.Communicator.Windows.Models;
 namespace ProtoLink.Communicator.Windows.Navigation;
 
 /// <summary>
-/// Pure enumerator for Notes E5: local children under the open note folder,
-/// excluding Notes-owned index.html / index.htm (case-insensitive).
+/// Pure enumerator for Notes E5/E5a: direct-child files under the open note folder,
+/// excluding Notes-owned index.html / index.htm (case-insensitive). Directories are
+/// omitted — the left Notes tree already owns folder navigation.
 /// </summary>
 public static class NotesSiblingFiles
 {
@@ -17,8 +18,9 @@ public static class NotesSiblingFiles
     }
 
     /// <summary>
-    /// Filtered recursive tree of siblings. Returns null when the folder is missing,
-    /// inaccessible, or has no non-owned children (panel should hide).
+    /// Filtered list of direct-child files. Returns null when the folder is missing,
+    /// inaccessible, or has no qualifying files (panel should hide). Child directories
+    /// alone never keep the panel open (E5a).
     /// </summary>
     public static FileSystemItem? BuildTree(string? noteFolderPath)
     {
@@ -39,7 +41,7 @@ public static class NotesSiblingFiles
         try
         {
             var root = FileSystemItem.CreateFolder(full);
-            BuildChildren(root);
+            AddDirectChildFiles(root);
             return root.Children.Count == 0 ? null : root;
         }
         catch (IOException)
@@ -52,16 +54,14 @@ public static class NotesSiblingFiles
         }
     }
 
-    private static void BuildChildren(FileSystemItem folder)
+    private static void AddDirectChildFiles(FileSystemItem folder)
     {
-        IEnumerable<string> dirs;
-        IEnumerable<string> files;
+        string[] files;
         try
         {
-            dirs = Directory.GetDirectories(folder.FullPath)
-                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
             files = Directory.GetFiles(folder.FullPath)
-                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
+                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
         catch (IOException)
         {
@@ -70,16 +70,6 @@ public static class NotesSiblingFiles
         catch (UnauthorizedAccessException)
         {
             return;
-        }
-
-        foreach (var dir in dirs)
-        {
-            string full;
-            try { full = Path.GetFullPath(dir); }
-            catch { full = dir; }
-            var child = FileSystemItem.CreateFolder(full, folder);
-            BuildChildren(child);
-            folder.Children.Add(child);
         }
 
         foreach (var file in files)

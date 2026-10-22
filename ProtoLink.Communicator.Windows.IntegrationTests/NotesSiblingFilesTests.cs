@@ -9,7 +9,7 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 public class NotesSiblingFilesTests
 {
     [Fact]
-    public void BuildTree_ExcludesIndexNames_IncludesFilesAndNested()
+    public void BuildTree_ExcludesIndexAndDirs_IncludesDirectFilesOnly()
     {
         var root = CreateTempFolder();
         try
@@ -25,10 +25,11 @@ public class NotesSiblingFilesTests
             var tree = NotesSiblingFiles.BuildTree(root);
             Assert.NotNull(tree);
             Assert.DoesNotContain(tree!.Children, c => NotesSiblingFiles.IsNotesOwnedFileName(c.Name));
+            Assert.DoesNotContain(tree.Children, c => c.Type == FileSystemItemType.Folder);
+            Assert.DoesNotContain(tree.Children, c => c.Name == "sub");
             Assert.Contains(tree.Children, c => c.Name == "a.pdf" && c.Type == FileSystemItemType.File);
-            var nested = Assert.Single(tree.Children, c => c.Name == "sub" && c.Type == FileSystemItemType.Folder);
-            Assert.Contains(nested.Children, c => c.Name == "b.txt");
-            Assert.DoesNotContain(nested.Children, c => NotesSiblingFiles.IsNotesOwnedFileName(c.Name));
+            Assert.DoesNotContain(tree.Children, c => c.Name == "b.txt");
+            Assert.All(tree.Children, c => Assert.Equal(FileSystemItemType.File, c.Type));
         }
         finally
         {
@@ -43,6 +44,23 @@ public class NotesSiblingFilesTests
         try
         {
             File.WriteAllText(Path.Combine(root, "index.html"), "<p>x</p>", Encoding.UTF8);
+            Assert.Null(NotesSiblingFiles.BuildTree(root));
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    [Fact]
+    public void BuildTree_OnlyDirsAndIndex_ReturnsNull()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "index.html"), "<p>x</p>", Encoding.UTF8);
+            Directory.CreateDirectory(Path.Combine(root, "child-note"));
+            Directory.CreateDirectory(Path.Combine(root, "other"));
             Assert.Null(NotesSiblingFiles.BuildTree(root));
         }
         finally

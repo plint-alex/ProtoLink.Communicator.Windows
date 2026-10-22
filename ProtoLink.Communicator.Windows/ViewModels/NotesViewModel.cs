@@ -288,7 +288,7 @@ public partial class NotesViewModel : ViewModelBase
         _ = Task.Run(() => ApplyBuiltTree(path));
     }
 
-    /// <summary>Re-enumerate Folder files under the open note (E5). Soft-empty on errors.</summary>
+    /// <summary>Re-enumerate Folder files under the open note (E5/E5a files-only). Soft-empty on errors.</summary>
     public void RefreshSiblingFiles()
     {
         if (string.IsNullOrEmpty(_currentPagePath))
