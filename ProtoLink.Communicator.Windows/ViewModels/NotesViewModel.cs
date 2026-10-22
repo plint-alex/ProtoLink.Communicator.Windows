@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -20,6 +22,7 @@ public partial class NotesViewModel : ViewModelBase
     private readonly NotesPageTitleRenameService _titleRename;
     private string? _rootPath;
     private TreeItemViewModel? _treeRoot;
+    private TreeItemViewModel? _siblingTreeRoot;
     private string? _currentPagePath;
     private string _currentHtml = string.Empty;
     private string _htmlSyncedToDisk = string.Empty;
@@ -40,6 +43,9 @@ public partial class NotesViewModel : ViewModelBase
         CreateFirstNoteCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => IsNotesEmpty);
         ChooseNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
         RefreshCommand = new RelayCommand(_ => RefreshTree());
+        OpenSiblingFileCommand = new RelayCommand(
+            p => OpenSiblingPath(p as string),
+            p => p is string path && File.Exists(path));
         InitNavigationCommands();
         RefreshTree();
     }
@@ -83,8 +89,23 @@ public partial class NotesViewModel : ViewModelBase
             OnPropertyChanged(nameof(CanNavigateParent));
             if (string.IsNullOrEmpty(value))
                 CurrentRemoteId = null;
+            RefreshSiblingFiles();
         }
     }
+
+    /// <summary>Local FS children under the open note folder (E5); null when empty / no page.</summary>
+    public TreeItemViewModel? SiblingTreeRoot
+    {
+        get => _siblingTreeRoot;
+        private set
+        {
+            _siblingTreeRoot = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowSiblingFiles));
+        }
+    }
+
+    public bool ShowSiblingFiles => SiblingTreeRoot != null && SiblingTreeRoot.Children.Count > 0;
     public string CurrentPageTitle =>
         string.IsNullOrEmpty(_currentPagePath) ? "Select a note" : Path.GetFileName(_currentPagePath);
     public bool HasOpenPage => !string.IsNullOrEmpty(_currentPagePath);
@@ -94,6 +115,7 @@ public partial class NotesViewModel : ViewModelBase
     public ICommand CreateFirstNoteCommand { get; }
     public ICommand ChooseNotesRootCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand OpenSiblingFileCommand { get; }
     public event Action? TreeRefreshed;
     public event Action? RequestNewFolder;
     public event Action? RequestChooseNotesRoot;
@@ -208,6 +230,7 @@ public partial class NotesViewModel : ViewModelBase
             TreeRoot = null;
             CommandManager.InvalidateRequerySuggested();
             TreeRefreshed?.Invoke();
+            RefreshSiblingFiles();
             return;
         }
 
@@ -220,6 +243,47 @@ public partial class NotesViewModel : ViewModelBase
         }
 
         _ = Task.Run(() => ApplyBuiltTree(path));
+    }
+
+    /// <summary>Re-enumerate Folder files under the open note (E5). Soft-empty on errors.</summary>
+    public void RefreshSiblingFiles()
+    {
+        if (string.IsNullOrEmpty(_currentPagePath))
+        {
+            SiblingTreeRoot = null;
+            return;
+        }
+
+        try
+        {
+            var built = NotesSiblingFiles.BuildTree(_currentPagePath);
+            SiblingTreeRoot = built != null ? new TreeItemViewModel(built) : null;
+        }
+        catch
+        {
+            SiblingTreeRoot = null;
+            StatusText = "Could not list folder files.";
+        }
+    }
+
+    public void OpenSiblingPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            StatusText = "File not found";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+            StatusText = "Opened";
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Could not open file.";
+            ErrorDetailDialog.Show("Open file", ex);
+        }
     }
 
     private void ApplyBuiltTree(string path)

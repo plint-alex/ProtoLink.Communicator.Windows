@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Dialogs;
+using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -37,6 +38,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     /// <summary>Ignore TreeView selection changes while restoring selection after refresh.</summary>
     private bool _suppressTreeSelectionNavigate;
     private GridLength _treeColumnWidth = new(320);
+    private GridLength _siblingPanelHeight = new(220);
     private const string NotesFolderDragFormat = "ProtoLink.NotesFolderPath";
     private System.Windows.Point _treeDragStartPoint;
     private TreeViewItem? _treeDragSourceItem;
@@ -61,6 +63,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         PopulateTree();
         StartRootWatcher();
         ApplyResponsiveLayout();
+        ApplySiblingPanelLayout();
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -124,6 +127,29 @@ public partial class NotesView : System.Windows.Controls.UserControl
             ApplyColumnLayout();
         if (e.PropertyName is nameof(NotesViewModel.HasOpenPage) or nameof(NotesViewModel.CurrentPagePath))
             HideFormatBar();
+        if (e.PropertyName is nameof(NotesViewModel.ShowSiblingFiles))
+            ApplySiblingPanelLayout();
+    }
+
+    private void ApplySiblingPanelLayout()
+    {
+        if (_vm?.ShowSiblingFiles == true)
+        {
+            if (SiblingPanelRow.Height.Value > 0)
+                _siblingPanelHeight = SiblingPanelRow.Height;
+            SiblingSplitterRow.Height = new GridLength(4);
+            SiblingPanelRow.MinHeight = 120;
+            SiblingPanelRow.MaxHeight = 320;
+            SiblingPanelRow.Height = _siblingPanelHeight.Value > 0 ? _siblingPanelHeight : new GridLength(220);
+        }
+        else
+        {
+            if (SiblingPanelRow.Height.Value > 0)
+                _siblingPanelHeight = SiblingPanelRow.Height;
+            SiblingSplitterRow.Height = new GridLength(0);
+            SiblingPanelRow.MinHeight = 0;
+            SiblingPanelRow.Height = new GridLength(0);
+        }
     }
 
     private void OnNavigateToNoteRequested(string path) =>
@@ -375,7 +401,81 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             if (_isInternalSave) return;
             _vm?.RefreshTree();
+            _vm?.RefreshSiblingFiles();
         }));
+    }
+
+    private void OnSiblingTreeDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_vm == null) return;
+        if (SiblingFilesTreeView.SelectedItem is not TreeItemViewModel item) return;
+        if (item.Item.Type != FileSystemItemType.File) return;
+        _vm.OpenSiblingPath(item.Item.FullPath);
+        e.Handled = true;
+    }
+
+    private void OnSiblingTreeContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        var vm = FindSiblingTreeItem(e.OriginalSource as DependencyObject);
+        SiblingTreeContextMenu.Tag = vm;
+        var isFile = vm?.Item.Type == FileSystemItemType.File;
+        SiblingOpenMenuItem.IsEnabled = isFile;
+        SiblingOpenInExplorerMenuItem.IsEnabled = vm != null;
+        if (vm == null)
+            e.Handled = true;
+    }
+
+    private void OnSiblingOpenClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || SiblingTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        SiblingTreeContextMenu.Tag = null;
+        if (vm.Item.Type == FileSystemItemType.File)
+            _vm.OpenSiblingPath(vm.Item.FullPath);
+    }
+
+    private void OnSiblingOpenInExplorerClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || SiblingTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        SiblingTreeContextMenu.Tag = null;
+        var path = vm.Item.FullPath;
+        if (vm.Item.Type == FileSystemItemType.Folder)
+        {
+            if (!WindowsExplorer.TryOpenFolderSelected(path))
+                _vm.StatusText = "Folder not found";
+            return;
+        }
+
+        var dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            _vm.StatusText = "Folder not found";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = WindowsExplorer.BuildSelectArguments(path),
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            _vm.StatusText = "Could not open Explorer";
+        }
+    }
+
+    private static TreeItemViewModel? FindSiblingTreeItem(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is TreeViewItem { DataContext: TreeItemViewModel vm })
+                return vm;
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return null;
     }
 
     private void OnNotesPagePathChanged(string newFolderPath)

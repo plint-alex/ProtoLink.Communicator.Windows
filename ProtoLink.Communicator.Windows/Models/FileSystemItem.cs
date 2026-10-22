@@ -27,4 +27,15 @@ public class FileSystemItem
             Parent = parent
         };
     }
+
+    public static FileSystemItem CreateFile(string path, FileSystemItem? parent = null)
+    {
+        return new FileSystemItem
+        {
+            Name = Path.GetFileName(path),
+            FullPath = path,
+            Type = FileSystemItemType.File,
+            Parent = parent
+        };
+    }
 }
