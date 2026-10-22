@@ -23,7 +23,9 @@ public partial class CloudViewModel : ViewModelBase
     private readonly ISyncMappingStore _syncStore;
     private readonly Action<Exception>? _syncFullErrorReporter;
     private readonly Action? _onAuthRequired;
+    private readonly Action? _onAfterMappedSync;
     private readonly Action<string>? _onSendShareLinkInMessenger;
+    private readonly ICloudRecentStore _recentStore;
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
     private CloudEntityRef? _currentEntity;
@@ -48,7 +50,8 @@ public partial class CloudViewModel : ViewModelBase
         Action<Exception>? syncFullErrorReporter = null,
         Action? onAuthRequired = null,
         Action? onAfterMappedSync = null,
-        Action<string>? onSendShareLinkInMessenger = null)
+        Action<string>? onSendShareLinkInMessenger = null,
+        ICloudRecentStore? recentStore = null)
     {
         _authService = authService;
         _settingsService = settingsService;
@@ -57,7 +60,9 @@ public partial class CloudViewModel : ViewModelBase
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
+        _onAfterMappedSync = onAfterMappedSync;
         _onSendShareLinkInMessenger = onSendShareLinkInMessenger;
+        _recentStore = recentStore ?? new CloudRecentStore();
         Items = new ObservableCollection<CloudItemViewModel>();
         FilteredItems = CollectionViewSource.GetDefaultView(Items);
         FilteredItems.Filter = MatchesSearchFilter;
@@ -140,6 +145,9 @@ public partial class CloudViewModel : ViewModelBase
         ForceUploadCurrentMappingCommand = new RelayCommand(_ => ForceUploadCurrentMapping(), _ => HasCurrentFolderMapping);
         ForceDownloadCurrentMappingCommand = new RelayCommand(_ => ForceDownloadCurrentMapping(), _ => HasCurrentFolderMapping);
         UnmapCurrentFolderCommand = new RelayCommand(_ => UnmapCurrentFolder(), _ => HasCurrentFolderMapping);
+        AddLocalFolderCommand = new RelayCommand(
+            _ => _ = RunAddLocalFolderWizardAsync(),
+            _ => ShowAddLocalFolderCta);
         ShowErrorDetailsCommand = new RelayCommand(_ => ShowErrorDetails(), _ => HasErrorDetails);
         _history.Changed += () =>
         {
@@ -158,10 +166,13 @@ public partial class CloudViewModel : ViewModelBase
     public bool IsSharedWithMeListing =>
         CurrentEntity?.Id == CloudVirtualNodes.SharedWithMeId;
 
+    public bool IsRecentListing =>
+        CurrentEntity?.Id == CloudVirtualNodes.RecentId;
+
     public bool IsCloudHubListing =>
         CurrentEntity?.Id == CloudVirtualNodes.HubId;
 
-    /// <summary>Real Cloud folders only — not hub / Shared with me virtual nodes.</summary>
+    /// <summary>Real Cloud folders only — not hub / Shared with me / Recent virtual nodes.</summary>
     public bool CanMutateListedFolder =>
         ListedFolderId is { } id
         && !CloudVirtualNodes.IsVirtual(id);
@@ -188,9 +199,9 @@ public partial class CloudViewModel : ViewModelBase
         get
         {
             var lang = _settingsService.LoadSettings().UiLanguage;
-            return IsSharedWithMeListing
-                ? ShareSheetStrings.EmptySharedTitle(lang)
-                : ShareSheetStrings.EmptyFolderTitle(lang);
+            if (IsSharedWithMeListing) return ShareSheetStrings.EmptySharedTitle(lang);
+            if (IsRecentListing) return ShareSheetStrings.EmptyRecentTitle(lang);
+            return ShareSheetStrings.EmptyFolderTitle(lang);
         }
     }
 
@@ -199,13 +210,16 @@ public partial class CloudViewModel : ViewModelBase
         get
         {
             var lang = _settingsService.LoadSettings().UiLanguage;
-            return IsSharedWithMeListing
-                ? ShareSheetStrings.EmptySharedBody(lang)
-                : ShareSheetStrings.EmptyFolderBody(lang);
+            if (IsSharedWithMeListing) return ShareSheetStrings.EmptySharedBody(lang);
+            if (IsRecentListing) return ShareSheetStrings.EmptyRecentBody(lang);
+            return ShareSheetStrings.EmptyFolderBody(lang);
         }
     }
 
-    public string EmptyListGlyph => IsSharedWithMeListing ? "👥" : "📁";
+    public string EmptyListGlyph =>
+        IsSharedWithMeListing ? "👥"
+        : IsRecentListing ? "🕒"
+        : "📁";
 
     /// <summary>Open entity (folder or file). Not the same as <see cref="SelectedItem"/>.</summary>
     public CloudEntityRef? CurrentEntity
@@ -309,6 +323,7 @@ public partial class CloudViewModel : ViewModelBase
     public string HeaderTypeGlyph =>
         CurrentEntity is null ? ""
         : CurrentEntity.Id == CloudVirtualNodes.SharedWithMeId ? "👥"
+        : CurrentEntity.Id == CloudVirtualNodes.RecentId ? "🕒"
         : CurrentEntity.IsFolder ? "📁" : "📄";
     public string HeaderSubtitle
     {
@@ -370,6 +385,7 @@ public partial class CloudViewModel : ViewModelBase
     public ShareSheetViewModel ShareSheet { get; }
     public string ShareButtonLabel =>
         ShareSheetStrings.ShareButton(_settingsService.LoadSettings().UiLanguage);
+    public ICommand AddLocalFolderCommand { get; }
     public ICommand SyncCurrentMappingCommand { get; }
     public ICommand ForceUploadCurrentMappingCommand { get; }
     public ICommand ForceDownloadCurrentMappingCommand { get; }
@@ -449,6 +465,10 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(CurrentFolderMappingPath));
         OnPropertyChanged(nameof(FolderSizeSummary));
         OnPropertyChanged(nameof(CanMapCurrentFolder));
+        OnPropertyChanged(nameof(ShowAddLocalFolderCta));
+        OnPropertyChanged(nameof(AddLocalFolderCtaLabel));
+        OnPropertyChanged(nameof(AddLocalFolderAutomationName));
+        OnPropertyChanged(nameof(MapThisFolderLabel));
         OnPropertyChanged(nameof(IsInSharedWithMeScope));
         OnPropertyChanged(nameof(ShowSharedBrowseOnlyHint));
         OnPropertyChanged(nameof(SharedBrowseOnlyHintText));
@@ -524,6 +544,10 @@ public partial class CloudViewModel : ViewModelBase
             {
                 fresh = await LoadSharedWithMeListingAsync();
             }
+            else if (folderId == CloudVirtualNodes.RecentId)
+            {
+                fresh = await LoadRecentListingAsync();
+            }
             else
             {
                 var list = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
@@ -561,6 +585,7 @@ public partial class CloudViewModel : ViewModelBase
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsSharedWithMeListing));
+        OnPropertyChanged(nameof(IsRecentListing));
         OnPropertyChanged(nameof(IsCloudHubListing));
         OnPropertyChanged(nameof(ShowEmptyUpload));
         OnPropertyChanged(nameof(ShowCreateFab));
@@ -572,6 +597,9 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(EmptyListBody));
         OnPropertyChanged(nameof(EmptyListGlyph));
         OnPropertyChanged(nameof(CanMutateListedFolder));
+        OnPropertyChanged(nameof(ShowAddLocalFolderCta));
+        OnPropertyChanged(nameof(AddLocalFolderCtaLabel));
+        OnPropertyChanged(nameof(AddLocalFolderAutomationName));
         OnPropertyChanged(nameof(ListedChildCount));
         OnPropertyChanged(nameof(ListedChildCountText));
         OnPropertyChanged(nameof(FolderSizeSummary));
@@ -605,8 +633,72 @@ public partial class CloudViewModel : ViewModelBase
                 TypeGlyphOverride = "👥",
                 SubtitleOverride = string.Empty,
                 UpdateTime = DateTime.UtcNow
+            },
+            new()
+            {
+                Id = CloudVirtualNodes.RecentId,
+                Name = ShareSheetStrings.Recent(lang),
+                IsFolder = true,
+                IsVirtualEntry = true,
+                TypeGlyphOverride = "🕒",
+                SubtitleOverride = string.Empty,
+                UpdateTime = DateTime.UtcNow
             }
         };
+    }
+
+    /// <summary>
+    /// Recent (C6): show durable MRU; silently drop deleted/forbidden (prune store).
+    /// </summary>
+    private async Task<List<CloudItemViewModel>> LoadRecentListingAsync()
+    {
+        var stored = _recentStore.Load();
+        if (stored.Count == 0)
+            return new List<CloudItemViewModel>();
+
+        var ids = stored.Select(e => e.EntityId).ToArray();
+        List<GetEntitiesResult> found;
+        try
+        {
+            found = await _api.GetEntitiesByIdsAsync(ids, includeValues: true);
+        }
+        catch
+        {
+            // Offline / transient: show cached names without crashing chrome.
+            return stored.Select(e => new CloudItemViewModel
+            {
+                Id = e.EntityId,
+                Name = e.Name,
+                IsFolder = e.IsFolder,
+                UpdateTime = e.OpenedUtc
+            }).ToList();
+        }
+
+        var byId = found
+            .Where(e => CloudEntityRestore.IsNavigableCloudCode(e.Code))
+            .ToDictionary(e => e.Id);
+        var fresh = new List<CloudItemViewModel>();
+        var pruned = new List<CloudRecentEntry>();
+        foreach (var entry in stored)
+        {
+            if (!byId.TryGetValue(entry.EntityId, out var entity))
+                continue;
+            var name = CloudApiService.GetDisplayName(entity);
+            var isFolder = entity.Code is CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot;
+            fresh.Add(new CloudItemViewModel
+            {
+                Id = entity.Id,
+                Name = name,
+                IsFolder = isFolder,
+                UpdateTime = entry.OpenedUtc
+            });
+            pruned.Add(entry with { Name = name, IsFolder = isFolder });
+        }
+
+        if (pruned.Count != stored.Count)
+            _recentStore.Replace(pruned);
+
+        return fresh;
     }
 
     private async Task<List<CloudItemViewModel>> LoadSharedWithMeListingAsync()

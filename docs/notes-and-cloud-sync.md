@@ -21,7 +21,7 @@ Cloud owns mapped folders: **FS ↔ local sync metadata ↔ server file entities
 | Trigger | Mode |
 |---------|------|
 | App start / login | **Full reconcile** (scan local + remote → upload / download / Conflict) |
-| **Map local folder** | **Full reconcile** into the **existing** cloud folder id (never creates a new mapped-root folder) |
+| **Map local folder** | **Full reconcile** into the **existing** cloud folder id (never creates a new mapped-root folder). **E6 discoverability:** Cloud hub “Add local folder to Cloud…” may create a normal Cloud folder first, then call the same map API — see Agents `docs/features/entity-navigation/map-local-folder-ux`. |
 | SignalR `data_changed` | **Full reconcile** (same as start) |
 | Manual Sync | **Full reconcile** |
 | Periodic timer (**15s**) | **Local-only push** (no remote scan/download; upload when local ≠ meta). If metadata for a mapping is empty, upgrades to **full reconcile** for that mapping first. |
@@ -96,7 +96,7 @@ Messenger uses the same SignalR hub for inbound commands (`message_sent`, etc.) 
 ## Related code
 
 - Windows Notes: `NotesViewModel`, `NotesView` + `NotesIndexFileWatcher`
-- Windows Notes root: `AppSettings.NotesRootPath`. When unset or missing, Notes shows **Choose a Notes folder** (not “No notes yet”); Settings → Notes root folder Browse uses `FolderPicker` (`OpenFolderDialog`). Browse/edit stay offline on the local tree.
+- Windows Notes root: `AppSettings.NotesRootPath`. When unset or missing, Notes shows **Choose a Notes folder** (not “No notes yet”); Settings → Notes root folder Browse uses `FolderPicker` (`OpenFolderDialog`). Browse/edit stay offline on the local tree. When the Notes root is set but **not** under any Cloud mapping, Notes shows a one-line nudge to the same E6 wizard (no sync badges).
 - Windows Cloud: `CloudMappedSyncCoordinator`, `SyncEngine.PushLocalChangesAsync` / `ReconcileAllAsync`
 - Android Notes: `MainViewModel` persist + disk poller → `requestLocalPush`
 - Android Cloud: `:sync` `SyncEngine`, `requestFullSync` / `requestLocalPush`, Settings force actions

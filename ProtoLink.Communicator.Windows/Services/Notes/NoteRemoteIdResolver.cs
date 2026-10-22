@@ -1,5 +1,6 @@
 using System.IO;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services.Sync;
 
 namespace ProtoLink.Communicator.Windows.Services.Notes;
@@ -141,7 +142,7 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
                 continue;
             }
 
-            if (!IsUnderOrEqual(noteFull, rootFull))
+            if (!LocalPathCoverage.IsUnderOrEqual(noteFull, rootFull))
                 continue;
             if (rootFull.Length > bestLen)
             {
@@ -151,17 +152,5 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
         }
 
         return best;
-    }
-
-    private static bool IsUnderOrEqual(string noteFull, string rootFull)
-    {
-        if (string.Equals(noteFull, rootFull, StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (!noteFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (noteFull.Length == rootFull.Length)
-            return true;
-        var next = noteFull[rootFull.Length];
-        return next == Path.DirectorySeparatorChar || next == Path.AltDirectorySeparatorChar;
     }
 }

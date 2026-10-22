@@ -134,8 +134,11 @@ public class CloudSharedWithMeScopeTests
     public void VirtualNodeIds_AreDistinctAndFlagged()
     {
         Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.SharedWithMeId);
+        Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.RecentId);
+        Assert.NotEqual(CloudVirtualNodes.SharedWithMeId, CloudVirtualNodes.RecentId);
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.HubId));
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.SharedWithMeId));
+        Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.RecentId));
         Assert.False(CloudVirtualNodes.IsVirtual(Guid.NewGuid()));
     }
 
@@ -146,6 +149,8 @@ public class CloudSharedWithMeScopeTests
         Assert.Equal("Доступные мне", ShareSheetStrings.SharedWithMe("ru-RU"));
         Assert.Equal("My Cloud", ShareSheetStrings.MyCloud("en-US"));
         Assert.Equal("Моё облако", ShareSheetStrings.MyCloud("ru"));
+        Assert.Equal("Recent", ShareSheetStrings.Recent("en"));
+        Assert.Equal("Недавние", ShareSheetStrings.Recent("ru-RU"));
 
         Assert.Equal(
             "Nothing shared with you yet",

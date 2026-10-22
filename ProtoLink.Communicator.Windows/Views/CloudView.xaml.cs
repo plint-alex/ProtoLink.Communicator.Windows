@@ -239,9 +239,18 @@ public partial class CloudView : System.Windows.Controls.UserControl
         {
             if (_vm.CanMapCurrentFolder)
             {
-                var mapItem = new MenuItem { Header = "Map to local folder…" };
+                var mapItem = new MenuItem { Header = _vm.MapThisFolderLabel };
                 mapItem.Click += (_, _) => OnMapCurrentFolderClick(this, new RoutedEventArgs());
                 menu.Items.Add(mapItem);
+            }
+
+            if (_vm.ShowAddLocalFolderCta)
+            {
+                menu.Items.Add(new MenuItem
+                {
+                    Header = _vm.AddLocalFolderCtaLabel,
+                    Command = _vm.AddLocalFolderCommand
+                });
             }
 
             if (_vm.HasCurrentFolderMapping)
@@ -410,7 +419,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
             menu.Items.Add(new Separator());
             if (_vm.CanMapFolder(item))
             {
-                var mapItem = new MenuItem { Header = "Map to local folder…" };
+                var mapItem = new MenuItem { Header = _vm!.MapThisFolderLabel };
                 mapItem.Click += (s, e) => OnMapToLocalFolder(item);
                 menu.Items.Add(mapItem);
             }

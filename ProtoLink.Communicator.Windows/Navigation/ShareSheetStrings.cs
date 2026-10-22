@@ -215,6 +215,9 @@ public static class ShareSheetStrings
     public static string MyCloud(string? lang) =>
         IsRussian(lang) ? "Моё облако" : "My Cloud";
 
+    public static string Recent(string? lang) =>
+        IsRussian(lang) ? "Недавние" : "Recent";
+
     public static string CloudHub(string? lang) =>
         IsRussian(lang) ? "Облако" : "Cloud";
 
@@ -225,6 +228,14 @@ public static class ShareSheetStrings
         IsRussian(lang)
             ? "Когда кто-то даст вам доступ, это появится здесь."
             : "When someone gives you access, it shows up here.";
+
+    public static string EmptyRecentTitle(string? lang) =>
+        IsRussian(lang) ? "Пока нет недавних" : "No recent items yet";
+
+    public static string EmptyRecentBody(string? lang) =>
+        IsRussian(lang)
+            ? "Откройте файл или папку в Облаке — они появятся здесь."
+            : "Open a file or folder in Cloud — it will show up here.";
 
     public static string EmptyFolderTitle(string? lang) =>
         IsRussian(lang) ? "Папка пуста" : "This folder is empty";

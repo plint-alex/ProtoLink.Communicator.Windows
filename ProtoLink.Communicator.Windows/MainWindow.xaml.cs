@@ -48,10 +48,11 @@ public partial class MainWindow : Window
         cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
         _cloudHttpClient = new HttpClient(cloudHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         var noteRemoteIdResolver = new ProtoLink.Communicator.Windows.Services.Notes.NoteRemoteIdResolver(_syncStore);
-        _notesViewModel = new NotesViewModel(_settingsService, noteRemoteIdResolver);
+        _notesViewModel = new NotesViewModel(_settingsService, noteRemoteIdResolver, _syncStore);
         RebuildCloudTab();
         _notesView = new Views.NotesView { DataContext = _notesViewModel };
         _notesViewModel.ContentSaved += _ => _cloudViewModel.RequestLocalPushAfterNoteSave();
+        _notesViewModel.RequestAddNotesRootToCloud += path => _ = OpenAddLocalFolderWizardFromNotesAsync(path);
         NotesTabContent.Children.Add(_notesView);
         _ = EnsureRealtimeConnectedAsync();
     }
@@ -181,8 +182,25 @@ public partial class MainWindow : Window
             {
                 _notesViewModel?.RefreshTree();
                 _notesViewModel?.RefreshRemoteLinkState();
+                _notesViewModel?.RefreshMapToCloudNudge();
             });
         CloudTabContent.Children.Add(new CloudView { DataContext = _cloudViewModel });
+        _notesViewModel?.RefreshMapToCloudNudge();
+    }
+
+    private async Task OpenAddLocalFolderWizardFromNotesAsync(string notesRootPath)
+    {
+        if (!_authService.IsAuthenticated)
+        {
+            OpenSettingsForLogin();
+            return;
+        }
+
+        MainTabControl.SelectedIndex = 2; // Cloud
+        if (_tabToolbarPanel != null)
+            UpdateTabToolbar(_tabToolbarPanel);
+        await _cloudViewModel.RunAddLocalFolderWizardAsync(notesRootPath);
+        _notesViewModel.RefreshMapToCloudNudge();
     }
 
     private void OpenSettingsForLogin()
@@ -243,6 +261,18 @@ public partial class MainWindow : Window
             toolbarPanel.Children.Add(uploadBtn);
             toolbarPanel.Children.Add(downloadBtn);
             toolbarPanel.Children.Add(openWebBtn);
+            if (_cloudViewModel.ShowAddLocalFolderCta)
+            {
+                var addLocalBtn = new System.Windows.Controls.Button
+                {
+                    Content = _cloudViewModel.AddLocalFolderCtaLabel,
+                    Height = h,
+                    Padding = pad,
+                    Margin = margin,
+                    Command = _cloudViewModel.AddLocalFolderCommand
+                };
+                toolbarPanel.Children.Add(addLocalBtn);
+            }
         }
     }
 

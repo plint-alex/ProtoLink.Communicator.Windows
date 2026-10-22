@@ -69,6 +69,13 @@
                                  Foreground="{DynamicResource ForegroundBrush}"
                                  BorderBrush="{DynamicResource BorderBrushStandard}"
                                  ToolTip="Search in this folder (Ctrl+F)"/>
+                        <!-- E6: discoverable local-first map (AT-MAP-1) -->
+                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,10,0,0"
+                                HorizontalAlignment="Left" Padding="10,4"
+                                Style="{DynamicResource GhostButton}"
+                                Command="{Binding AddLocalFolderCommand}"
+                                AutomationProperties.Name="{Binding AddLocalFolderAutomationName}"
+                                Visibility="{Binding ShowAddLocalFolderCta, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
                 </Border>
 
@@ -164,6 +171,12 @@
                                 ToolTip="Upload files into this folder"
                                 AutomationProperties.Name="Upload into empty folder"
                                 Visibility="{Binding ShowEmptyUpload, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,12,0,0"
+                                HorizontalAlignment="Center"
+                                Style="{DynamicResource GhostButton}"
+                                Command="{Binding AddLocalFolderCommand}"
+                                AutomationProperties.Name="{Binding AddLocalFolderAutomationName}"
+                                Visibility="{Binding ShowAddLocalFolderCta, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
 
                     <!-- Pattern 1 Create FAB (cycle1-next-polish UX-C-F1…F4); AccentBrush = #2AABEE -->
@@ -204,6 +217,9 @@
                                           Command="{Binding NewFolderCommand}"/>
                                 <MenuItem Header="{Binding CreateFabUploadLabel}"
                                           Command="{Binding UploadCommand}"/>
+                                <MenuItem Header="{Binding AddLocalFolderCtaLabel}"
+                                          Command="{Binding AddLocalFolderCommand}"
+                                          Visibility="{Binding ShowAddLocalFolderCta, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
@@ -288,7 +304,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Button Content="Map to local folder…" Margin="0,12,0,0" HorizontalAlignment="Left"
+                        <Button Content="{Binding MapThisFolderLabel}" Margin="0,12,0,0" HorizontalAlignment="Left"
                                 Style="{DynamicResource GhostButton}" Click="OnMapCurrentFolderClick"
                                 Visibility="{Binding CanMapCurrentFolder, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 

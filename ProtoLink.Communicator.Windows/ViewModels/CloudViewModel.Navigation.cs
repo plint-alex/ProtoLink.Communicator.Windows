@@ -33,14 +33,42 @@ public partial class CloudViewModel
 
         CurrentEntity = target;
         PersistLastOpenCloudEntityId(target.Id);
+        RecordRecentOpen(target, pushHistory);
         await LoadCurrentAsync(quiet: true, restoreSelectionId);
         if (restoreScrollOffset is { } offset)
             ListScrollRestoreRequested?.Invoke(offset);
     }
 
+    private void RecordRecentOpen(CloudEntityRef target, bool pushHistory)
+    {
+        // Forward navigation only — not Back / cold restore / EnsureRoot. Skip virtual hub nodes.
+        if (!pushHistory || CloudVirtualNodes.IsVirtual(target.Id)) return;
+        try
+        {
+            _recentStore.RecordOpen(new CloudRecentEntry(
+                target.Id,
+                target.Name,
+                target.IsFolder,
+                DateTime.UtcNow));
+        }
+        catch
+        {
+            // Best-effort; navigation must not fail.
+        }
+    }
+
     private async Task OpenItemAsync(CloudItemViewModel item)
     {
         if (ListedFolderId is not { } parentId || CurrentEntity?.Id == item.Id) return;
+
+        // Recent rows are not children of the virtual folder — open via real Cloud path (silent skip if gone).
+        if (parentId == CloudVirtualNodes.RecentId)
+        {
+            if (await TryOpenEntityAsync(item.Id))
+                EntityOpened?.Invoke();
+            return;
+        }
+
         var kind = item.IsFolder ? CloudEntityKind.Folder : CloudEntityKind.File;
         var trail = item.IsFolder
             ? BreadcrumbPath.Append(new CloudBreadcrumbEntry { Id = item.Id, Name = item.Name })

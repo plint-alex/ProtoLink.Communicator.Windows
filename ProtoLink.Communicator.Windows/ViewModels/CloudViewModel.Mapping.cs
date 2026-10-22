@@ -1,14 +1,34 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using ProtoLink.Communicator.Windows.Core;
+using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
+using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
 public partial class CloudViewModel
 {
     public bool IsFolderSynced(Guid folderId) => SyncMappings.Any(m => m.CloudFolderId == folderId);
+
+    /// <summary>E6 hub / writable unmapped folder — not Shared browse-only / Recent / under a mapping.</summary>
+    public bool ShowAddLocalFolderCta =>
+        _authService.IsAuthenticated
+        && (IsCloudHubListing || CanMutateListedFolder)
+        && !ShowSharedBrowseOnlyHint
+        && !BreadcrumbPath.Any(b => IsFolderSynced(b.Id))
+        && !(CurrentEntity is { IsFolder: true } e && IsFolderSynced(e.Id));
+
+    public string AddLocalFolderCtaLabel =>
+        MapLocalFolderStrings.HubCta(_settingsService.LoadSettings().UiLanguage);
+
+    public string AddLocalFolderAutomationName =>
+        MapLocalFolderStrings.HubCtaAutomationName(_settingsService.LoadSettings().UiLanguage);
+
+    public string MapThisFolderLabel =>
+        MapLocalFolderStrings.MapThisFolder(_settingsService.LoadSettings().UiLanguage);
 
     public bool IsInSharedWithMeScope =>
         CloudSharedScope.IsInSharedWithMeScope(BreadcrumbPath.Select(b => b.Id));
@@ -61,6 +81,7 @@ public partial class CloudViewModel
     public void AddMapping(Guid cloudFolderId, string localPath, string? cloudFolderName = null)
     {
         if (string.IsNullOrWhiteSpace(localPath)) return;
+        if (!Directory.Exists(localPath)) return;
         if (SyncMappings.Any(m => m.CloudFolderId == cloudFolderId)) return;
         var ancestorSynced = BreadcrumbPath.Any(b => IsFolderSynced(b.Id));
         if (ancestorSynced) return;
@@ -68,9 +89,84 @@ public partial class CloudViewModel
         _syncStore.Save(SyncMappings);
         StatusText = "Mapped — syncing into existing cloud folder…";
         NotifyHeaderAndInfoChanged();
+        _onAfterMappedSync?.Invoke();
         _ = LoadCurrentAsync();
         // Full reconcile into the existing CloudFolderId — never create a new root folder for the map.
         _ = _mappedSync.RequestFullSyncAsync();
+    }
+
+    /// <summary>
+    /// E6 local-first wizard: pick local → create or pick Cloud folder → <see cref="AddMapping"/> + full reconcile.
+    /// </summary>
+    public async Task RunAddLocalFolderWizardAsync(string? prefilledLocalPath = null)
+    {
+        if (!_authService.IsAuthenticated)
+        {
+            _onAuthRequired?.Invoke();
+            return;
+        }
+
+        // Hub CTA uses CanExecute; Notes nudge may call with a prefilled path from any listing.
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        await EnsureRootAsync().ConfigureAwait(true);
+        var parentId = ResolveWizardParentFolderId();
+        if (parentId == Guid.Empty) return;
+
+        var candidates = await LoadUnmappedChildFoldersAsync(parentId).ConfigureAwait(true);
+        var choice = MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates);
+        if (choice is null) return;
+
+        try
+        {
+            Guid folderId;
+            string folderName;
+            if (choice.CreateNew)
+            {
+                var name = choice.NewFolderName!.Trim();
+                folderId = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, name)
+                    .ConfigureAwait(true);
+                folderName = name;
+            }
+            else
+            {
+                folderId = choice.ExistingFolderId!.Value;
+                folderName = choice.ExistingFolderName ?? "";
+            }
+
+            AddMapping(folderId, choice.LocalPath, folderName);
+            await LoadCurrentAsync(quiet: true).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            ReportCaughtException(ex);
+        }
+    }
+
+    private Guid ResolveWizardParentFolderId()
+    {
+        if (CanMutateListedFolder && ListedFolderId is { } listed)
+            return listed;
+        return _myCloudRootId;
+    }
+
+    private async Task<IReadOnlyList<MapLocalFolderCandidate>> LoadUnmappedChildFoldersAsync(Guid parentId)
+    {
+        var list = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true).ConfigureAwait(true);
+        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var result = new List<MapLocalFolderCandidate>();
+        foreach (var e in list ?? Enumerable.Empty<GetEntitiesResult>())
+        {
+            if (e.Code != CloudEntityCodes.CloudFolder) continue;
+            if (mapped.Contains(e.Id)) continue;
+            if (IsFolderSynced(e.Id)) continue;
+            result.Add(new MapLocalFolderCandidate
+            {
+                Id = e.Id,
+                Name = CloudApiService.GetDisplayName(e)
+            });
+        }
+
+        return result;
     }
 
     public void RemoveMapping(Guid cloudFolderId)
@@ -80,6 +176,7 @@ public partial class CloudViewModel
         SyncMappings.Remove(mapping);
         _syncStore.Save(SyncMappings);
         NotifyHeaderAndInfoChanged();
+        _onAfterMappedSync?.Invoke();
         _ = LoadCurrentAsync();
     }
 

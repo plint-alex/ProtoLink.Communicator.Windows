@@ -16,6 +16,7 @@ public partial class NotesViewModel : ViewModelBase
 {
     private readonly ISettingsService _settingsService;
     private readonly INoteRemoteIdResolver? _remoteIdResolver;
+    private readonly ISyncMappingStore? _syncStore;
     private readonly NotesFileService _fileService;
     private readonly NotesFileSystemService _fsService;
     private readonly EditableMarkdownRenderer _renderer;
@@ -30,10 +31,14 @@ public partial class NotesViewModel : ViewModelBase
     private CancellationTokenSource? _saveCts;
     private bool _pendingDebouncedSave;
 
-    public NotesViewModel(ISettingsService settingsService, INoteRemoteIdResolver? remoteIdResolver = null)
+    public NotesViewModel(
+        ISettingsService settingsService,
+        INoteRemoteIdResolver? remoteIdResolver = null,
+        ISyncMappingStore? syncStore = null)
     {
         _settingsService = settingsService;
         _remoteIdResolver = remoteIdResolver;
+        _syncStore = syncStore;
         _fileService = new NotesFileService();
         _fsService = new NotesFileSystemService();
         _renderer = new EditableMarkdownRenderer();
@@ -42,12 +47,16 @@ public partial class NotesViewModel : ViewModelBase
         NewFolderCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => !NeedsNotesRoot);
         CreateFirstNoteCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => IsNotesEmpty);
         ChooseNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
+        AddNotesRootToCloudCommand = new RelayCommand(
+            _ => RequestAddNotesRootToCloud?.Invoke(_rootPath!),
+            _ => ShowMapToCloudNudge);
         RefreshCommand = new RelayCommand(_ => RefreshTree());
         OpenSiblingFileCommand = new RelayCommand(
             p => OpenSiblingPath(p as string),
             p => p is string path && File.Exists(path));
         InitNavigationCommands();
         RefreshTree();
+        RefreshMapToCloudNudge();
     }
 
     public string? RootPath { get => _rootPath; private set { _rootPath = value; OnPropertyChanged(); } }
@@ -74,6 +83,12 @@ public partial class NotesViewModel : ViewModelBase
 
     /// <summary>Show the Notes tree (not setup / empty states).</summary>
     public bool ShowNotesTree => !NeedsNotesRoot && !IsNotesEmpty;
+
+    /// <summary>E6: Notes root set but not covered by any Cloud mapping LocalPath.</summary>
+    public bool ShowMapToCloudNudge { get; private set; }
+
+    public string MapToCloudNudgeText =>
+        MapLocalFolderStrings.NotesNudgeText(_settingsService.LoadSettings().UiLanguage);
 
     public string? CurrentPagePath
     {
@@ -114,11 +129,13 @@ public partial class NotesViewModel : ViewModelBase
     public ICommand NewFolderCommand { get; }
     public ICommand CreateFirstNoteCommand { get; }
     public ICommand ChooseNotesRootCommand { get; }
+    public ICommand AddNotesRootToCloudCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand OpenSiblingFileCommand { get; }
     public event Action? TreeRefreshed;
     public event Action? RequestNewFolder;
     public event Action? RequestChooseNotesRoot;
+    public event Action<string>? RequestAddNotesRootToCloud;
     public event Action<string>? ContentSaved;
     public event Action? InternalNoteWriteStarting;
     public event Action? InternalNoteWriteCompleted;
@@ -194,7 +211,32 @@ public partial class NotesViewModel : ViewModelBase
         OnPropertyChanged(nameof(RootPath));
         NotifyNotesListStateChanged();
         RefreshTree();
+        RefreshMapToCloudNudge();
         NotesRootPathChanged?.Invoke();
+    }
+
+    /// <summary>Recompute E6 Notes→Cloud nudge after mappings change (or Notes root change).</summary>
+    public void RefreshMapToCloudNudge()
+    {
+        var covered = false;
+        if (!NeedsNotesRoot && _syncStore != null)
+        {
+            var paths = _syncStore.Load().Select(m => m.LocalPath);
+            covered = LocalPathCoverage.IsCoveredByAnyMappingRoot(_rootPath, paths);
+        }
+
+        var show = !NeedsNotesRoot && !covered;
+        if (ShowMapToCloudNudge == show)
+        {
+            OnPropertyChanged(nameof(MapToCloudNudgeText));
+            CommandManager.InvalidateRequerySuggested();
+            return;
+        }
+
+        ShowMapToCloudNudge = show;
+        OnPropertyChanged(nameof(ShowMapToCloudNudge));
+        OnPropertyChanged(nameof(MapToCloudNudgeText));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     /// <summary>Persist Notes root from the Notes setup CTA (Settings Browse uses SettingsViewModel).</summary>
@@ -217,6 +259,7 @@ public partial class NotesViewModel : ViewModelBase
         OnPropertyChanged(nameof(NeedsNotesRoot));
         OnPropertyChanged(nameof(IsNotesEmpty));
         OnPropertyChanged(nameof(ShowNotesTree));
+        RefreshMapToCloudNudge();
         CommandManager.InvalidateRequerySuggested();
     }
 
