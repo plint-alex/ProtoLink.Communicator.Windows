@@ -517,6 +517,13 @@ function Invoke-ArchiveRulesCli {
 
 function Test-ShouldSnapshotVersion {
     param([string] $CurrentVersion, [string] $NewVersion)
+    # Match ReleaseArchiveRules.ShouldSnapshot: empty/whitespace → false.
+    # Also avoid calling the CLI with an empty argv: Windows PowerShell 5.1 strips
+    # empty native args, so `dotnet … should-snapshot "" 1.0.x` arrives as 2 args
+    # and the CLI used to exit 1 (usage). pwsh 7 keeps the empty arg.
+    if ([string]::IsNullOrWhiteSpace($CurrentVersion) -or [string]::IsNullOrWhiteSpace($NewVersion)) {
+        return $false
+    }
     $lines = Invoke-ArchiveRulesCli -CliArgs @("should-snapshot", $CurrentVersion, $NewVersion)
     $answer = ($lines | Select-Object -Last 1).Trim().ToLowerInvariant()
     return $answer -eq "true"

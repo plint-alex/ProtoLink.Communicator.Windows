@@ -22,6 +22,25 @@ public class PublishReleaseArchiveScriptTests
     }
 
     [Fact]
+    public void PublishScript_ShortCircuitsEmptyShouldSnapshot_BeforeCli()
+    {
+        // PS 5.1 strips empty native argv; empty current must not call should-snapshot CLI.
+        var publish = File.ReadAllText(Path.Combine(RepoRoot(), "tools", "Publish-Release-To-Cloud.ps1"));
+        var fn = publish.IndexOf("function Test-ShouldSnapshotVersion", StringComparison.Ordinal);
+        Assert.True(fn > 0);
+        var body = publish[fn..];
+        var nextFn = body.IndexOf("\nfunction ", 1, StringComparison.Ordinal);
+        if (nextFn > 0)
+            body = body[..nextFn];
+        Assert.Contains("IsNullOrWhiteSpace($CurrentVersion)", body, StringComparison.Ordinal);
+        Assert.Contains("IsNullOrWhiteSpace($NewVersion)", body, StringComparison.Ordinal);
+        var shortCircuit = body.IndexOf("IsNullOrWhiteSpace($CurrentVersion)", StringComparison.Ordinal);
+        var cliCall = body.IndexOf("@(\"should-snapshot\"", StringComparison.Ordinal);
+        Assert.True(shortCircuit > 0 && cliCall > shortCircuit,
+            "Empty-version short-circuit must run before Invoke-ArchiveRulesCli should-snapshot.");
+    }
+
+    [Fact]
     public void PublishScript_SnapshotsBeforePublishFile()
     {
         var publish = File.ReadAllText(Path.Combine(RepoRoot(), "tools", "Publish-Release-To-Cloud.ps1"));

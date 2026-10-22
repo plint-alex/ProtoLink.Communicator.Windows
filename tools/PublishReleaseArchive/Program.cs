@@ -18,12 +18,13 @@ switch (cmd)
 {
     case "should-snapshot":
     {
-        if (args.Length < 3)
-        {
-            Console.Error.WriteLine("should-snapshot <currentVersion> <newVersion>");
-            return 1;
-        }
-        var ok = ReleaseArchiveRules.ShouldSnapshot(args[1], args[2]);
+        // Windows PowerShell 5.1 strips empty native argv, so empty current may arrive
+        // as only [should-snapshot, newVersion]. Pad missing slots with "" — ShouldSnapshot
+        // is false whenever either side is empty/whitespace (order of a single leftover arg
+        // does not matter).
+        var current = args.Length > 1 ? args[1] : string.Empty;
+        var next = args.Length > 2 ? args[2] : string.Empty;
+        var ok = ReleaseArchiveRules.ShouldSnapshot(current, next);
         Console.WriteLine(ok ? "true" : "false");
         return 0;
     }
