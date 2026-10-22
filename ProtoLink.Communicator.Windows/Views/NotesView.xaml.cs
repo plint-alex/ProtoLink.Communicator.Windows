@@ -54,6 +54,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         IsVisibleChanged += OnNotesVisibilityChanged;
         NotesWebView.SizeChanged += OnNotesWebViewSizeChanged;
         EditorHost.SizeChanged += OnEditorHostSizeChangedForFormatBar;
+        EditorHost.SizeChanged += OnEditorHostSizeChangedForWebViewHwnd;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -165,10 +166,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
 
         var show = _vm?.ShowSiblingFiles == true;
-        // Drive Visibility in code — binding alone left the panel Collapsed while row Height stayed 0
-        // when PropertyChanged was missed across tab unload/reload (AT-N7 FAIL on 1.0.19).
+        // Spacer reserves layout space; Popup (own HWND) draws Folder files above WebView2 airspace.
         var vis = show ? Visibility.Visible : Visibility.Collapsed;
-        SiblingPanel.Visibility = vis;
+        SiblingPanelSpacer.Visibility = vis;
         SiblingSplitter.Visibility = vis;
 
         if (show)
@@ -189,11 +189,53 @@ public partial class NotesView : System.Windows.Controls.UserControl
             SiblingPanelRow.Height = new GridLength(0);
         }
 
-        // WebView2 HWND can keep the pre-split size and cover the Folder files row until remeasured.
-        EditorHost.InvalidateMeasure();
-        NotesWebView.InvalidateMeasure();
         EditorPane.UpdateLayout();
+        EditorHost.UpdateLayout();
+        ForceWebView2LayoutSync();
+
+        // Popup does not inherit DataContext from the visual tree — assign explicitly.
+        SiblingFilesPopup.DataContext = _vm;
+        SiblingFilesPopup.IsOpen = show;
+        if (show)
+        {
+            SiblingPanel.Width = Math.Max(1, SiblingPanelSpacer.ActualWidth);
+            SiblingPanel.Height = Math.Max(1, SiblingPanelSpacer.ActualHeight);
+        }
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (show && SiblingPanelSpacer.ActualWidth > 1)
+            {
+                SiblingPanel.Width = SiblingPanelSpacer.ActualWidth;
+                SiblingPanel.Height = Math.Max(1, SiblingPanelSpacer.ActualHeight);
+            }
+        }, DispatcherPriority.Loaded);
     }
+
+    private void OnEditorHostSizeChangedForWebViewHwnd(object sender, SizeChangedEventArgs e) =>
+        SyncWebView2ToEditorHost();
+
+    /// <summary>
+    /// WebView2 HWND ignores some WPF Grid row shrinks and paints over Folder files.
+    /// Keep explicit Width/Height equal to EditorHost so the interop surface matches the editor row.
+    /// </summary>
+    private void SyncWebView2ToEditorHost()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(SyncWebView2ToEditorHost);
+            return;
+        }
+
+        var hostH = EditorHost.ActualHeight;
+        var hostW = EditorHost.ActualWidth;
+        if (hostH <= 1 || hostW <= 1) return;
+
+        NotesWebView.Width = hostW;
+        NotesWebView.Height = hostH;
+    }
+
+    private void ForceWebView2LayoutSync() => SyncWebView2ToEditorHost();
 
     private void OnNavigateToNoteRequested(string path) =>
         _ = NavigateToAsync(path, forceReload: false, fromHistory: true);
@@ -300,6 +342,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         StopIndexWatcher();
         StopRootWatcher();
+        SiblingFilesPopup.IsOpen = false;
         // Keep TreeRefreshed (and other VM) handlers subscribed across tab switches.
         // TabControl SelectedContent unloads this view when Notes is not selected; unhooking
         // here drops async RefreshTree completions and left users with an empty tree.

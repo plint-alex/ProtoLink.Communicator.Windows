@@ -150,8 +150,10 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Grid x:Name="EditorHost" Grid.Row="0">
-                <wv2:WebView2 x:Name="NotesWebView"/>
+            <!-- ClipToBounds does not clip WebView2 HWND; layout sync is in ApplySiblingPanelLayout. -->
+            <Grid x:Name="EditorHost" Grid.Row="0" ClipToBounds="True">
+                <wv2:WebView2 x:Name="NotesWebView"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
                 <Popup x:Name="FormatBarPopup"
                        PlacementTarget="{Binding ElementName=EditorHost}"
                        Placement="Relative"
@@ -225,54 +227,68 @@
                 </Popup>
             </Grid>
 
-            <!-- E5: Folder files under open note (local FS only; hide when empty) -->
-            <!-- Visibility driven by NotesView.ApplySiblingPanelLayout (not binding-only). -->
+            <!-- Spacer rows reserve editor space; panel UI is a Popup (own HWND) so WebView2 airspace cannot cover it. -->
             <GridSplitter x:Name="SiblingSplitter" Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
                           ResizeDirection="Rows" ShowsPreview="True"
                           Visibility="Collapsed"/>
-            <Border x:Name="SiblingPanel" Grid.Row="2" MinHeight="120" MaxHeight="320"
-                    Background="{DynamicResource ListBackground}"
+            <Border x:Name="SiblingPanelSpacer" Grid.Row="2" Background="{DynamicResource ListBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0"
-                    Visibility="Collapsed">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
-                            BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,6">
-                        <TextBlock Text="Folder files" FontSize="13" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource HeaderTitleBrush}"
-                                   AutomationProperties.Name="Folder files"/>
-                    </Border>
-                    <TreeView x:Name="SiblingFilesTreeView" Grid.Row="1"
-                              ItemsSource="{Binding SiblingFiles}"
-                              Background="{DynamicResource ListBackground}" BorderThickness="0"
-                              Padding="0,2" FontSize="13"
-                              MouseDoubleClick="OnSiblingTreeDoubleClick"
-                              ContextMenuOpening="OnSiblingTreeContextMenuOpening">
-                        <TreeView.Resources>
-                            <Style TargetType="TreeViewItem">
-                                <Setter Property="Padding" Value="6,4"/>
-                                <Setter Property="Margin" Value="0"/>
-                                <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                            </Style>
-                        </TreeView.Resources>
-                        <TreeView.ContextMenu>
-                            <ContextMenu x:Name="SiblingTreeContextMenu">
-                                <MenuItem x:Name="SiblingOpenMenuItem" Header="Open" Click="OnSiblingOpenClick"/>
-                                <MenuItem x:Name="SiblingOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnSiblingOpenInExplorerClick"/>
-                            </ContextMenu>
-                        </TreeView.ContextMenu>
-                        <TreeView.ItemTemplate>
-                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                <TextBlock Text="{Binding Name}"/>
-                            </HierarchicalDataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
-                </Grid>
-            </Border>
+                    Visibility="Collapsed"/>
+            <!-- E5 Folder files: Popup hosts the real chrome above WebView2 HWND (AT-N7 airspace fix). -->
+            <Popup x:Name="SiblingFilesPopup"
+                   PlacementTarget="{Binding ElementName=SiblingPanelSpacer}"
+                   Placement="Relative"
+                   HorizontalOffset="0" VerticalOffset="0"
+                   AllowsTransparency="False"
+                   StaysOpen="True"
+                   Focusable="False"
+                   IsOpen="False">
+                <Border x:Name="SiblingPanel"
+                        Width="{Binding ActualWidth, ElementName=SiblingPanelSpacer}"
+                        Height="{Binding ActualHeight, ElementName=SiblingPanelSpacer}"
+                        Background="{DynamicResource ListBackground}"
+                        BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0"
+                        AutomationProperties.Name="Folder files">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
+                                BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,6">
+                            <TextBlock Text="Folder files" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource HeaderTitleBrush}"
+                                       AutomationProperties.Name="Folder files"/>
+                        </Border>
+                        <TreeView x:Name="SiblingFilesTreeView" Grid.Row="1"
+                                  ItemsSource="{Binding SiblingFiles}"
+                                  Background="{DynamicResource ListBackground}" BorderThickness="0"
+                                  Padding="0,2" FontSize="13"
+                                  MouseDoubleClick="OnSiblingTreeDoubleClick"
+                                  ContextMenuOpening="OnSiblingTreeContextMenuOpening">
+                            <TreeView.Resources>
+                                <Style TargetType="TreeViewItem">
+                                    <Setter Property="Padding" Value="6,4"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
+                                </Style>
+                            </TreeView.Resources>
+                            <TreeView.ContextMenu>
+                                <ContextMenu x:Name="SiblingTreeContextMenu">
+                                    <MenuItem x:Name="SiblingOpenMenuItem" Header="Open" Click="OnSiblingOpenClick"/>
+                                    <MenuItem x:Name="SiblingOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnSiblingOpenInExplorerClick"/>
+                                </ContextMenu>
+                            </TreeView.ContextMenu>
+                            <TreeView.ItemTemplate>
+                                <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                    <TextBlock Text="{Binding Name}"/>
+                                </HierarchicalDataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                    </Grid>
+                </Border>
+            </Popup>
 
             <Border Grid.Row="3" Background="{DynamicResource StatusBarBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
