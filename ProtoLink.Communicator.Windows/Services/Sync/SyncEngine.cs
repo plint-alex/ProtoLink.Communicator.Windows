@@ -157,7 +157,22 @@ public sealed class SyncEngine
                 continue;
             }
 
-            var localHash = ContentHashUtil.Sha256HexFile(full);
+            string localHash;
+            try
+            {
+                var hashed = ContentHashUtil.TrySha256HexFile(full);
+                if (hashed == null)
+                {
+                    SyncMissingLocalPath.Log("ApplyComparePhase", path, full);
+                    continue;
+                }
+                localHash = hashed;
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("ApplyComparePhase", path, full, ex);
+                continue;
+            }
 
             // Always download remote bytes and compare hashes. Never forge remoteHash from
             // meta or upload when remote content is unknown — that left devices on Test4
@@ -172,52 +187,59 @@ public sealed class SyncEngine
             }
 
             var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
-            switch (ContentHashUtil.DecideByHash(
-                localHash,
-                remoteHash,
-                meta.ContentHash,
-                located.Entry.UpdateTime,
-                meta.RemoteUpdateTime))
+            try
             {
-                case SyncDirectionDecide.Action.Write:
+                switch (ContentHashUtil.DecideByHash(
+                    localHash,
+                    remoteHash,
+                    meta.ContentHash,
+                    located.Entry.UpdateTime,
+                    meta.RemoteUpdateTime))
                 {
-                    var name = SyncPathUtil.NameOf(meta.RelativePath);
-                    var len = new FileInfo(full).Length;
-                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-                    await _api.AddFileAsync(meta.RemoteId, name, content, MimeTypes.GetMimeType(name));
-                    meta.SizeBytes = len;
-                    meta.ContentHash = localHash;
-                    // Prefer listing time after upload is unknown; stamp now then next sync verifies.
-                    meta.RemoteUpdateTime = DateTime.UtcNow;
-                    _store.Upsert(meta);
-                    dirty.Add(path);
-                    break;
+                    case SyncDirectionDecide.Action.Write:
+                    {
+                        var name = SyncPathUtil.NameOf(meta.RelativePath);
+                        var len = new FileInfo(full).Length;
+                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                        await _api.AddFileAsync(meta.RemoteId, name, content, MimeTypes.GetMimeType(name));
+                        meta.SizeBytes = len;
+                        meta.ContentHash = localHash;
+                        // Prefer listing time after upload is unknown; stamp now then next sync verifies.
+                        meta.RemoteUpdateTime = DateTime.UtcNow;
+                        _store.Upsert(meta);
+                        dirty.Add(path);
+                        break;
+                    }
+                    case SyncDirectionDecide.Action.Read:
+                    {
+                        await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
+                        meta.SizeBytes = remoteBytes.Length;
+                        meta.ContentHash = remoteHash;
+                        meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
+                        _store.Upsert(meta);
+                        dirty.Add(path);
+                        break;
+                    }
+                    case SyncDirectionDecide.Action.Skip:
+                    {
+                        meta.ContentHash = localHash;
+                        if (located.Entry.UpdateTime is DateTime listed)
+                            meta.RemoteUpdateTime = listed;
+                        _store.Upsert(meta);
+                        break;
+                    }
+                    case SyncDirectionDecide.Action.Conflict:
+                        throw new SyncConflictException(
+                            path,
+                            localHash,
+                            remoteHash,
+                            meta.ContentHash,
+                            "Local and remote both differ from sync baseline (or baseline is empty). Use Force Upload or Force Download.");
                 }
-                case SyncDirectionDecide.Action.Read:
-                {
-                    await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                    meta.SizeBytes = remoteBytes.Length;
-                    meta.ContentHash = remoteHash;
-                    meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
-                    _store.Upsert(meta);
-                    dirty.Add(path);
-                    break;
-                }
-                case SyncDirectionDecide.Action.Skip:
-                {
-                    meta.ContentHash = localHash;
-                    if (located.Entry.UpdateTime is DateTime listed)
-                        meta.RemoteUpdateTime = listed;
-                    _store.Upsert(meta);
-                    break;
-                }
-                case SyncDirectionDecide.Action.Conflict:
-                    throw new SyncConflictException(
-                        path,
-                        localHash,
-                        remoteHash,
-                        meta.ContentHash,
-                        "Local and remote both differ from sync baseline (or baseline is empty). Use Force Upload or Force Download.");
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("ApplyComparePhase", path, full, ex);
             }
         }
     }
@@ -261,10 +283,18 @@ public sealed class SyncEngine
                         }
                         else
                         {
-                            var localHash = ContentHashUtil.Sha256HexFile(full);
-                            var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
-                            if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+                            var localHash = ContentHashUtil.TrySha256HexFile(full);
+                            if (localHash == null)
+                            {
+                                SyncMissingLocalPath.Log("BootstrapFromRemote", loc.RelativePath, full);
                                 await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
+                            }
+                            else
+                            {
+                                var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
+                                if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+                                    await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
+                            }
                         }
                     }
                     else if (missing)
@@ -274,6 +304,17 @@ public sealed class SyncEngine
                     continue;
                 var len = File.Exists(full) ? new FileInfo(full).Length : 0L;
                 if (missing && len == 0L && !File.Exists(full)) continue;
+                string bootHash = "";
+                if (File.Exists(full))
+                {
+                    var hashed = ContentHashUtil.TrySha256HexFile(full);
+                    if (hashed == null)
+                    {
+                        SyncMissingLocalPath.Log("BootstrapFromRemote", loc.RelativePath, full);
+                        continue;
+                    }
+                    bootHash = hashed;
+                }
                 _store.Upsert(new SyncItemMeta
                 {
                     MappingId = mapping.Id,
@@ -282,7 +323,7 @@ public sealed class SyncEngine
                     RelativePath = loc.RelativePath,
                     IsFolder = false,
                     SizeBytes = len,
-                    ContentHash = File.Exists(full) ? ContentHashUtil.Sha256HexFile(full) : "",
+                    ContentHash = bootHash,
                     RemoteUpdateTime = loc.Entry.UpdateTime
                 });
             }
@@ -357,34 +398,89 @@ public sealed class SyncEngine
         {
             ct.ThrowIfCancellationRequested();
             var path = SyncPathUtil.Normalize(a.Entry.RelativePath);
-            if (remoteByPath.TryGetValue(path, out var existingRemote))
+            var addFullProbe = ToFull(mapping.LocalRootPath, a.Entry.RelativePath);
+            try
             {
-                var name = SyncPathUtil.NameOf(a.Entry.RelativePath);
-                var full = ToFull(mapping.LocalRootPath, a.Entry.RelativePath);
-                if (a.Entry.IsFolder)
+                if (remoteByPath.TryGetValue(path, out var existingRemote))
                 {
-                    _store.Upsert(new SyncItemMeta
+                    var name = SyncPathUtil.NameOf(a.Entry.RelativePath);
+                    var full = addFullProbe;
+                    if (a.Entry.IsFolder)
                     {
-                        MappingId = mapping.Id,
-                        RemoteId = existingRemote.Entry.Id,
-                        ParentRemoteId = existingRemote.Entry.ParentId,
-                        RelativePath = path,
-                        IsFolder = true,
-                        SizeBytes = a.Entry.SizeBytes,
-                        RemoteUpdateTime = existingRemote.Entry.UpdateTime
-                    });
-                }
-                else
-                {
-                    var len = new FileInfo(full).Length;
-                    var remoteSize = existingRemote.Entry.SizeBytes;
-                    var localLooksStub = len == 0 || (len < 64 && remoteSize is > 0 && remoteSize > len);
-                    if (localLooksStub)
-                    {
-                        var cloudBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
-                        if (cloudBytes != null)
+                        _store.Upsert(new SyncItemMeta
                         {
-                            await MappedFolderIoGate.WriteAllBytesAsync(full, cloudBytes, ct);
+                            MappingId = mapping.Id,
+                            RemoteId = existingRemote.Entry.Id,
+                            ParentRemoteId = existingRemote.Entry.ParentId,
+                            RelativePath = path,
+                            IsFolder = true,
+                            SizeBytes = a.Entry.SizeBytes,
+                            RemoteUpdateTime = existingRemote.Entry.UpdateTime
+                        });
+                    }
+                    else
+                    {
+                        if (!File.Exists(full))
+                        {
+                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, full);
+                            continue;
+                        }
+                        var len = new FileInfo(full).Length;
+                        var remoteSize = existingRemote.Entry.SizeBytes;
+                        var localLooksStub = len == 0 || (len < 64 && remoteSize is > 0 && remoteSize > len);
+                        if (localLooksStub)
+                        {
+                            var cloudBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
+                            if (cloudBytes != null)
+                            {
+                                await MappedFolderIoGate.WriteAllBytesAsync(full, cloudBytes, ct);
+                                _store.Upsert(new SyncItemMeta
+                                {
+                                    MappingId = mapping.Id,
+                                    RemoteId = existingRemote.Entry.Id,
+                                    ParentRemoteId = existingRemote.Entry.ParentId,
+                                    RelativePath = path,
+                                    IsFolder = false,
+                                    SizeBytes = cloudBytes.Length,
+                                    ContentHash = ContentHashUtil.Sha256Hex(cloudBytes),
+                                    RemoteUpdateTime = existingRemote.Entry.UpdateTime ?? DateTime.UtcNow
+                                });
+                                dirty.Add(path);
+                                applied++;
+                            }
+                            continue;
+                        }
+                        // Adopt existing remote id: converge by content hash (never upload solely because size is unknown).
+                        var remoteBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
+                        if (remoteBytes == null || remoteBytes.Length == 0)
+                        {
+                            throw new SyncException(
+                                "Remote download failed or returned empty while adopting local add.",
+                                relativePath: path);
+                        }
+                        var localHash = ContentHashUtil.TrySha256HexFile(full);
+                        if (localHash == null)
+                        {
+                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, full);
+                            continue;
+                        }
+                        var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
+                        var action = ContentHashUtil.DecideByHash(
+                            localHash, remoteHash, metaHash: null,
+                            existingRemote.Entry.UpdateTime, metaUpdateTime: null);
+                        if (action == SyncDirectionDecide.Action.Conflict)
+                        {
+                            throw new SyncConflictException(
+                                path,
+                                localHash,
+                                remoteHash,
+                                null,
+                                "Local add collides with different remote content. Use Force Upload or Force Download.");
+                        }
+                        if (action == SyncDirectionDecide.Action.Write)
+                        {
+                            await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                            await _api.AddFileAsync(existingRemote.Entry.Id, name, content, MimeTypes.GetMimeType(name));
                             _store.Upsert(new SyncItemMeta
                             {
                                 MappingId = mapping.Id,
@@ -392,134 +488,131 @@ public sealed class SyncEngine
                                 ParentRemoteId = existingRemote.Entry.ParentId,
                                 RelativePath = path,
                                 IsFolder = false,
-                                SizeBytes = cloudBytes.Length,
-                                ContentHash = ContentHashUtil.Sha256Hex(cloudBytes),
-                                RemoteUpdateTime = existingRemote.Entry.UpdateTime ?? DateTime.UtcNow
+                                SizeBytes = len,
+                                ContentHash = localHash,
+                                RemoteUpdateTime = DateTime.UtcNow
                             });
-                            dirty.Add(path);
                             applied++;
                         }
+                        else
+                        {
+                            if (action == SyncDirectionDecide.Action.Read)
+                                await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
+                            _store.Upsert(new SyncItemMeta
+                            {
+                                MappingId = mapping.Id,
+                                RemoteId = existingRemote.Entry.Id,
+                                ParentRemoteId = existingRemote.Entry.ParentId,
+                                RelativePath = path,
+                                IsFolder = false,
+                                SizeBytes = remoteBytes.Length,
+                                ContentHash = remoteHash,
+                                RemoteUpdateTime = existingRemote.Entry.UpdateTime ?? DateTime.UtcNow
+                            });
+                            applied++;
+                        }
+                    }
+                    dirty.Add(path);
+                    continue;
+                }
+                var parentPath = SyncPathUtil.ParentOf(a.Entry.RelativePath);
+                var parentId = ResolveParentId(mapping, parentPath) ?? mapping.CloudFolderId;
+                var addName = SyncPathUtil.NameOf(a.Entry.RelativePath);
+                var addFull = addFullProbe;
+                Guid id;
+                if (a.Entry.IsFolder)
+                {
+                    id = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, addName);
+                }
+                else
+                {
+                    if (!File.Exists(addFull))
+                    {
+                        SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFull);
                         continue;
                     }
-                    // Adopt existing remote id: converge by content hash (never upload solely because size is unknown).
-                    var remoteBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
-                    if (remoteBytes == null || remoteBytes.Length == 0)
-                    {
-                        throw new SyncException(
-                            "Remote download failed or returned empty while adopting local add.",
-                            relativePath: path);
-                    }
-                    var localHash = ContentHashUtil.Sha256HexFile(full);
-                    var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
-                    var action = ContentHashUtil.DecideByHash(
-                        localHash, remoteHash, metaHash: null,
-                        existingRemote.Entry.UpdateTime, metaUpdateTime: null);
-                    if (action == SyncDirectionDecide.Action.Conflict)
-                    {
-                        throw new SyncConflictException(
-                            path,
-                            localHash,
-                            remoteHash,
-                            null,
-                            "Local add collides with different remote content. Use Force Upload or Force Download.");
-                    }
-                    if (action == SyncDirectionDecide.Action.Write)
-                    {
-                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-                        await _api.AddFileAsync(existingRemote.Entry.Id, name, content, MimeTypes.GetMimeType(name));
-                        _store.Upsert(new SyncItemMeta
-                        {
-                            MappingId = mapping.Id,
-                            RemoteId = existingRemote.Entry.Id,
-                            ParentRemoteId = existingRemote.Entry.ParentId,
-                            RelativePath = path,
-                            IsFolder = false,
-                            SizeBytes = len,
-                            ContentHash = localHash,
-                            RemoteUpdateTime = DateTime.UtcNow
-                        });
-                        applied++;
-                    }
+                    if (new FileInfo(addFull).Length == 0) continue;
+                    id = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, addName);
+                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
+                    await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
+                }
+                string addHash = "";
+                if (!a.Entry.IsFolder)
+                {
+                    if (a.Entry.ContentHash.Length > 0)
+                        addHash = a.Entry.ContentHash;
                     else
                     {
-                        if (action == SyncDirectionDecide.Action.Read)
-                            await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                        _store.Upsert(new SyncItemMeta
-                        {
-                            MappingId = mapping.Id,
-                            RemoteId = existingRemote.Entry.Id,
-                            ParentRemoteId = existingRemote.Entry.ParentId,
-                            RelativePath = path,
-                            IsFolder = false,
-                            SizeBytes = remoteBytes.Length,
-                            ContentHash = remoteHash,
-                            RemoteUpdateTime = existingRemote.Entry.UpdateTime ?? DateTime.UtcNow
-                        });
-                        applied++;
+                        addHash = ContentHashUtil.TrySha256HexFile(addFull) ?? "";
+                        if (addHash.Length == 0)
+                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFull);
                     }
                 }
-                dirty.Add(path);
-                continue;
+                _store.Upsert(new SyncItemMeta
+                {
+                    MappingId = mapping.Id,
+                    RemoteId = id,
+                    ParentRemoteId = parentId,
+                    RelativePath = SyncPathUtil.Normalize(a.Entry.RelativePath),
+                    IsFolder = a.Entry.IsFolder,
+                    SizeBytes = a.Entry.SizeBytes,
+                    ContentHash = addHash,
+                    RemoteUpdateTime = DateTime.UtcNow
+                });
+                dirty.Add(SyncPathUtil.Normalize(a.Entry.RelativePath));
+                applied++;
             }
-            var parentPath = SyncPathUtil.ParentOf(a.Entry.RelativePath);
-            var parentId = ResolveParentId(mapping, parentPath) ?? mapping.CloudFolderId;
-            var addName = SyncPathUtil.NameOf(a.Entry.RelativePath);
-            var addFull = ToFull(mapping.LocalRootPath, a.Entry.RelativePath);
-            Guid id;
-            if (a.Entry.IsFolder)
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
             {
-                id = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, addName);
+                SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFullProbe, ex);
             }
-            else
-            {
-                if (new FileInfo(addFull).Length == 0) continue;
-                id = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, addName);
-                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
-                await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
-            }
-            _store.Upsert(new SyncItemMeta
-            {
-                MappingId = mapping.Id,
-                RemoteId = id,
-                ParentRemoteId = parentId,
-                RelativePath = SyncPathUtil.Normalize(a.Entry.RelativePath),
-                IsFolder = a.Entry.IsFolder,
-                SizeBytes = a.Entry.SizeBytes,
-                ContentHash = a.Entry.IsFolder ? "" : (a.Entry.ContentHash.Length > 0 ? a.Entry.ContentHash : ContentHashUtil.Sha256HexFile(addFull)),
-                RemoteUpdateTime = DateTime.UtcNow
-            });
-            dirty.Add(SyncPathUtil.Normalize(a.Entry.RelativePath));
-            applied++;
         }
 
         foreach (var u in changes.OfType<LocalChange.Updated>())
         {
             ct.ThrowIfCancellationRequested();
-            if (u.Meta.IsFolder)
-            {
-                u.Meta.SizeBytes = u.NewSize;
-                _store.Upsert(u.Meta);
-                dirty.Add(SyncPathUtil.Normalize(u.Meta.RelativePath));
-                continue;
-            }
-            if (skipSizeUpdates)
-            {
-                // Content convergence is owned by ApplyComparePhase (always hash-verify).
-                // Do not upload here — that overwrote unknown cloud content when download failed.
-                u.Meta.SizeBytes = u.NewSize;
-                _store.Upsert(u.Meta);
-                continue;
-            }
-            var name = SyncPathUtil.NameOf(u.Meta.RelativePath);
+            var updatedPath = SyncPathUtil.Normalize(u.Meta.RelativePath);
             var full = ToFull(mapping.LocalRootPath, u.Meta.RelativePath);
-            await using var content2 = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-            await _api.AddFileAsync(u.Meta.RemoteId, name, content2, MimeTypes.GetMimeType(name));
-            u.Meta.SizeBytes = u.NewSize;
-            u.Meta.ContentHash = ContentHashUtil.Sha256HexFile(full);
-            u.Meta.RemoteUpdateTime = DateTime.UtcNow;
-            _store.Upsert(u.Meta);
-            dirty.Add(SyncPathUtil.Normalize(u.Meta.RelativePath));
-            applied++;
+            try
+            {
+                if (u.Meta.IsFolder)
+                {
+                    u.Meta.SizeBytes = u.NewSize;
+                    _store.Upsert(u.Meta);
+                    dirty.Add(updatedPath);
+                    continue;
+                }
+                if (skipSizeUpdates)
+                {
+                    // Content convergence is owned by ApplyComparePhase (always hash-verify).
+                    // Do not upload here — that overwrote unknown cloud content when download failed.
+                    u.Meta.SizeBytes = u.NewSize;
+                    _store.Upsert(u.Meta);
+                    continue;
+                }
+                if (!File.Exists(full))
+                {
+                    SyncMissingLocalPath.Log("ApplyLocalPhase.Updated", updatedPath, full);
+                    continue;
+                }
+                var name = SyncPathUtil.NameOf(u.Meta.RelativePath);
+                await using var content2 = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                await _api.AddFileAsync(u.Meta.RemoteId, name, content2, MimeTypes.GetMimeType(name));
+                u.Meta.SizeBytes = u.NewSize;
+                var hashed = ContentHashUtil.TrySha256HexFile(full);
+                if (hashed == null)
+                    SyncMissingLocalPath.Log("ApplyLocalPhase.Updated", updatedPath, full);
+                else
+                    u.Meta.ContentHash = hashed;
+                u.Meta.RemoteUpdateTime = DateTime.UtcNow;
+                _store.Upsert(u.Meta);
+                dirty.Add(updatedPath);
+                applied++;
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("ApplyLocalPhase.Updated", updatedPath, full, ex);
+            }
         }
 
         foreach (var rm in changes.OfType<LocalChange.Removed>().OrderByDescending(x => x.Meta.RelativePath.Count(c => c == '/')))
@@ -811,33 +904,45 @@ public sealed class SyncEngine
             }
 
             var full = ToFull(mapping.LocalRootPath, path);
-            var hash = ContentHashUtil.Sha256HexFile(full);
-            var len = new FileInfo(full).Length;
-            Guid remoteId;
-            if (existing != null)
+            try
             {
-                remoteId = existing.RemoteId;
-                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-                await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
-            }
-            else
-            {
-                remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
-                await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-                await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
-            }
+                var hash = ContentHashUtil.TrySha256HexFile(full);
+                if (hash == null)
+                {
+                    SyncMissingLocalPath.Log("ForcePush", path, full);
+                    continue;
+                }
+                var len = new FileInfo(full).Length;
+                Guid remoteId;
+                if (existing != null)
+                {
+                    remoteId = existing.RemoteId;
+                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                    await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+                }
+                else
+                {
+                    remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
+                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                    await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+                }
 
-            _store.Upsert(new SyncItemMeta
+                _store.Upsert(new SyncItemMeta
+                {
+                    MappingId = mapping.Id,
+                    RemoteId = remoteId,
+                    ParentRemoteId = parentId,
+                    RelativePath = path,
+                    IsFolder = false,
+                    SizeBytes = len,
+                    ContentHash = hash,
+                    RemoteUpdateTime = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
             {
-                MappingId = mapping.Id,
-                RemoteId = remoteId,
-                ParentRemoteId = parentId,
-                RelativePath = path,
-                IsFolder = false,
-                SizeBytes = len,
-                ContentHash = hash,
-                RemoteUpdateTime = DateTime.UtcNow
-            });
+                SyncMissingLocalPath.Log("ForcePush", path, full, ex);
+            }
         }
 
         _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
@@ -905,22 +1010,46 @@ public sealed class SyncEngine
         {
             var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, dir));
             long size = 0;
-            foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                size += new FileInfo(f).Length;
+            try
+            {
+                foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                {
+                    try { size += new FileInfo(f).Length; }
+                    catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex)) { /* skip gone file */ }
+                }
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("SnapshotFs", rel, dir, ex);
+                continue;
+            }
             result.Add(new FsEntry { RelativePath = rel, IsFolder = true, SizeBytes = size });
         }
 
         foreach (var file in Directory.GetFiles(rootFull, "*", SearchOption.AllDirectories))
         {
             var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, file));
-            var info = new FileInfo(file);
-            result.Add(new FsEntry
+            try
             {
-                RelativePath = rel,
-                IsFolder = false,
-                SizeBytes = info.Length,
-                ContentHash = ContentHashUtil.Sha256HexFile(file)
-            });
+                var info = new FileInfo(file);
+                var hash = ContentHashUtil.TrySha256HexFile(file);
+                if (hash == null)
+                {
+                    SyncMissingLocalPath.Log("SnapshotFs", rel, file);
+                    continue;
+                }
+                result.Add(new FsEntry
+                {
+                    RelativePath = rel,
+                    IsFolder = false,
+                    SizeBytes = info.Length,
+                    ContentHash = hash
+                });
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("SnapshotFs", rel, file, ex);
+            }
         }
         return result;
     }

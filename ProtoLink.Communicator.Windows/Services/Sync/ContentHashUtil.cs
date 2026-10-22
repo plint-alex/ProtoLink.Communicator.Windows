@@ -20,6 +20,22 @@ public static class ContentHashUtil
     }
 
     /// <summary>
+    /// Hash local bytes, or null when the path is already gone (NFR-SYNC-1).
+    /// Does not swallow other IO errors (sharing violations, access denied, etc.).
+    /// </summary>
+    public static string? TrySha256HexFile(string fullPath)
+    {
+        try
+        {
+            return Sha256HexFile(fullPath);
+        }
+        catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// True when meta already has a hash and local bytes differ (same-size content edits).
     /// </summary>
     public static bool IsLocalContentChanged(string metaHash, string localHash) =>
