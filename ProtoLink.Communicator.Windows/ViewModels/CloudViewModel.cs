@@ -149,6 +149,7 @@ public partial class CloudViewModel : ViewModelBase
             _ => _ = RunAddLocalFolderWizardAsync(),
             _ => ShowAddLocalFolderCta);
         ShowErrorDetailsCommand = new RelayCommand(_ => ShowErrorDetails(), _ => HasErrorDetails);
+        InitLeaveCommands();
         _history.Changed += () =>
         {
             OnPropertyChanged(nameof(CanGoBack));
@@ -472,6 +473,7 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsInSharedWithMeScope));
         OnPropertyChanged(nameof(ShowSharedBrowseOnlyHint));
         OnPropertyChanged(nameof(SharedBrowseOnlyHintText));
+        OnPropertyChanged(nameof(CanLeaveCurrentSharedRoot));
         OnPropertyChanged(nameof(ShareButtonLabel));
         OnPropertyChanged(nameof(CanGoBack));
         OnPropertyChanged(nameof(ShowBack));
@@ -607,6 +609,7 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowSharedBrowseOnlyHint));
         OnPropertyChanged(nameof(SharedBrowseOnlyHintText));
         OnPropertyChanged(nameof(CanMapCurrentFolder));
+        OnPropertyChanged(nameof(CanLeaveCurrentSharedRoot));
     }
 
     private List<CloudItemViewModel> BuildHubListing()

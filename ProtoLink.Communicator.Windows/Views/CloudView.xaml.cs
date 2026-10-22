@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
 using ContextMenu = System.Windows.Controls.ContextMenu;
@@ -93,6 +94,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
             or nameof(CloudViewModel.CanMapCurrentFolder)
             or nameof(CloudViewModel.IsInSharedWithMeScope)
             or nameof(CloudViewModel.ShowSharedBrowseOnlyHint)
+            or nameof(CloudViewModel.CanLeaveCurrentSharedRoot)
             or nameof(CloudViewModel.IsFolderOpen)
             or nameof(CloudViewModel.IsFileOpen))
             RebuildEntityMoreMenu();
@@ -261,6 +263,15 @@ public partial class CloudView : System.Windows.Controls.UserControl
                 menu.Items.Add(new MenuItem { Header = "Unmap", Command = _vm.UnmapCurrentFolderCommand });
                 menu.Items.Add(new Separator());
             }
+        }
+
+        if (_vm.CanLeaveCurrentSharedRoot)
+        {
+            var lang = _vm.ShareSheet.Lang;
+            var leaveItem = new MenuItem { Header = ShareSheetStrings.LeaveMenu(lang) };
+            System.Windows.Automation.AutomationProperties.SetName(leaveItem, ShareSheetStrings.Leave(lang));
+            leaveItem.Click += (_, _) => OnLeaveSharedCurrent();
+            menu.Items.Add(leaveItem);
         }
 
         if (_vm.CurrentEntity?.ParentId != null)
@@ -456,6 +467,14 @@ public partial class CloudView : System.Windows.Controls.UserControl
         menu.Items.Insert(1, new MenuItem { Header = "Copy link", Command = _vm.CopyLinkCommand, CommandParameter = item });
         menu.Items.Insert(2, new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand, CommandParameter = item });
         menu.Items.Insert(3, new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand, CommandParameter = item });
+        if (_vm.CanLeaveSharedRow(item))
+        {
+            var lang = _vm.ShareSheet.Lang;
+            var leaveItem = new MenuItem { Header = ShareSheetStrings.Leave(lang) };
+            System.Windows.Automation.AutomationProperties.SetName(leaveItem, ShareSheetStrings.Leave(lang));
+            leaveItem.Click += (_, _) => OnLeaveSharedItem(item);
+            menu.Items.Add(leaveItem);
+        }
         return menu;
     }
 
@@ -474,6 +493,30 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (System.Windows.MessageBox.Show(message, "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
         _vm!.DeleteCommand.Execute(item);
+    }
+
+    private void OnLeaveSharedItem(CloudItemViewModel item)
+    {
+        if (_vm == null || !ConfirmLeaveShared()) return;
+        _ = _vm.LeaveSharedAsync(item.Id);
+    }
+
+    private void OnLeaveSharedCurrent()
+    {
+        if (_vm?.CurrentEntity is null || !ConfirmLeaveShared()) return;
+        _ = _vm.LeaveSharedAsync(_vm.CurrentEntity.Id);
+    }
+
+    private bool ConfirmLeaveShared()
+    {
+        var lang = _vm!.ShareSheet.Lang;
+        var result = System.Windows.MessageBox.Show(
+            ShareSheetStrings.LeaveConfirm(lang),
+            ShareSheetStrings.Leave(lang),
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        // OK = Leave; Cancel keeps grant and row (UX-LS-2).
+        return result == MessageBoxResult.OK;
     }
 
     private void OnMapToLocalFolder(CloudItemViewModel folder)

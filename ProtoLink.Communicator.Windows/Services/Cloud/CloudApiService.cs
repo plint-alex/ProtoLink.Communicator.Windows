@@ -473,6 +473,18 @@ public class CloudApiService
                ?? new List<ShareGrantResult>();
     }
 
+    /// <summary>UX §7b / AT-S46: remove caller's direct personal grant (Can view OK). Idempotent.</summary>
+    public async Task<LeaveSharedWithMeResult> LeaveSharedWithMeAsync(Guid entityId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/LeaveSharedWithMe", new LeaveSharedWithMeContract
+        {
+            EntityId = entityId
+        });
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<LeaveSharedWithMeResult>()
+               ?? new LeaveSharedWithMeResult { EntityId = entityId, Left = true };
+    }
+
     public async Task AddPermissionAsync(Guid entityId, Guid permissionForId, bool canWrite)
     {
         var response = await _http.PostAsJsonAsync("api/Entities/AddPermission", new AddPermissionContract

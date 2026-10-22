@@ -68,3 +68,17 @@ public sealed class ShareGrantResult
     public string? TokenPrefix { get; set; }
     public string? Label { get; set; }
 }
+
+/// <summary>Grantee Leave Shared with me (UX §7b / AT-S46).</summary>
+public sealed class LeaveSharedWithMeContract
+{
+    public Guid EntityId { get; set; }
+}
+
+public sealed class LeaveSharedWithMeResult
+{
+    public Guid EntityId { get; set; }
+
+    /// <summary>True when a direct personal grant was removed; false when already absent (idempotent).</summary>
+    public bool Left { get; set; }
+}

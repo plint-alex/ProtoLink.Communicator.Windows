@@ -78,4 +78,22 @@ public static class CloudSharedScope
         if (breadcrumbIds.Any(mappedFolderIds.Contains)) return false;
         return true;
     }
+
+    /// <summary>
+    /// UX-LS-1: Leave on open share-root header when the open entity is the active Shared-with-me root
+    /// (direct personal grant known from the SharedWithMe listing cache).
+    /// </summary>
+    public static bool CanLeaveOpenShareRoot(
+        Guid? currentEntityId,
+        IEnumerable<Guid> breadcrumbIds,
+        IReadOnlyDictionary<Guid, bool> knownShareRoots)
+    {
+        if (currentEntityId is null) return false;
+        var root = TryGetActiveShareRootId(breadcrumbIds);
+        return root == currentEntityId && knownShareRoots.ContainsKey(root.Value);
+    }
+
+    /// <summary>UX-LS-1: Leave on Shared-with-me list rows only (share roots from S6).</summary>
+    public static bool CanLeaveSharedListRow(bool isSharedWithMeListing, bool isShareRoot, bool isVirtualEntry) =>
+        isSharedWithMeListing && isShareRoot && !isVirtualEntry;
 }

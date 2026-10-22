@@ -171,6 +171,56 @@ public class CloudSharedWithMeScopeTests
 
         Assert.Contains("Browse only", ShareSheetStrings.BrowseOnlyHint("en"), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("просмотр", ShareSheetStrings.BrowseOnlyHint("ru"), StringComparison.OrdinalIgnoreCase);
+
+        // UX-LS-6 §7b Leave copy
+        Assert.Equal("Leave", ShareSheetStrings.Leave("en"));
+        Assert.Equal("Покинуть", ShareSheetStrings.Leave("ru-RU"));
+        Assert.Equal("Remove from Shared with me", ShareSheetStrings.LeaveMenu("en"));
+        Assert.Equal("Убрать из «Доступные мне»", ShareSheetStrings.LeaveMenu("ru"));
+        Assert.Contains("lose access", ShareSheetStrings.LeaveConfirm("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("пропадет", ShareSheetStrings.LeaveConfirm("ru"), StringComparison.Ordinal);
+        Assert.Equal("Removed from Shared with me", ShareSheetStrings.LeaveSuccess("en"));
+        Assert.Equal("Убрано из «Доступные мне»", ShareSheetStrings.LeaveSuccess("ru"));
+        Assert.Equal("Couldn't leave. Try again.", ShareSheetStrings.LeaveFailed("en"));
+        Assert.Equal("Не удалось покинуть. Повторите.", ShareSheetStrings.LeaveFailed("ru"));
+    }
+
+    [Fact]
+    public void CanLeave_OpenShareRoot_OnlyAtRoot_NotDescendantOrOwnCloud()
+    {
+        var shareRoot = Guid.NewGuid();
+        var child = Guid.NewGuid();
+        var known = new Dictionary<Guid, bool> { [shareRoot] = false };
+
+        var atRoot = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            shareRoot
+        };
+        Assert.True(CloudSharedScope.CanLeaveOpenShareRoot(shareRoot, atRoot, known));
+        Assert.False(CloudSharedScope.CanLeaveOpenShareRoot(child, atRoot.Concat(new[] { child }), known));
+        Assert.False(CloudSharedScope.CanLeaveOpenShareRoot(
+            shareRoot,
+            new[] { CloudVirtualNodes.HubId, Guid.NewGuid() },
+            known));
+        Assert.False(CloudSharedScope.CanLeaveOpenShareRoot(
+            shareRoot,
+            atRoot,
+            new Dictionary<Guid, bool>()));
+    }
+
+    [Fact]
+    public void CanLeave_ListRow_OnlySharedWithMeShareRoots()
+    {
+        Assert.True(CloudSharedScope.CanLeaveSharedListRow(
+            isSharedWithMeListing: true, isShareRoot: true, isVirtualEntry: false));
+        Assert.False(CloudSharedScope.CanLeaveSharedListRow(
+            isSharedWithMeListing: false, isShareRoot: true, isVirtualEntry: false));
+        Assert.False(CloudSharedScope.CanLeaveSharedListRow(
+            isSharedWithMeListing: true, isShareRoot: false, isVirtualEntry: false));
+        Assert.False(CloudSharedScope.CanLeaveSharedListRow(
+            isSharedWithMeListing: true, isShareRoot: true, isVirtualEntry: true));
     }
 
     [Fact]

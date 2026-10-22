@@ -266,4 +266,23 @@ public static class ShareSheetStrings
         IsRussian(lang)
             ? "Только просмотр — синхронизация с ПК для общих папок пока недоступна."
             : "Browse only — mapping shared folders to this PC is not available yet.";
+
+    // --- Leave Shared with me (UX §7b / UX-LS-*) ---
+
+    public static string Leave(string? lang) =>
+        IsRussian(lang) ? "Покинуть" : "Leave";
+
+    public static string LeaveMenu(string? lang) =>
+        IsRussian(lang) ? "Убрать из «Доступные мне»" : "Remove from Shared with me";
+
+    public static string LeaveConfirm(string? lang) =>
+        IsRussian(lang)
+            ? "Покинуть общий элемент? Доступ пропадет, пока вам снова не откроют."
+            : "Leave this shared item? You lose access until someone shares it again.";
+
+    public static string LeaveSuccess(string? lang) =>
+        IsRussian(lang) ? "Убрано из «Доступные мне»" : "Removed from Shared with me";
+
+    public static string LeaveFailed(string? lang) =>
+        IsRussian(lang) ? "Не удалось покинуть. Повторите." : "Couldn't leave. Try again.";
 }
