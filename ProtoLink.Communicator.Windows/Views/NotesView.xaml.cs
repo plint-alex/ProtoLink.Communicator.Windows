@@ -150,13 +150,28 @@ public partial class NotesView : System.Windows.Controls.UserControl
             ApplyColumnLayout();
         if (e.PropertyName is nameof(NotesViewModel.HasOpenPage) or nameof(NotesViewModel.CurrentPagePath))
             HideFormatBar();
-        if (e.PropertyName is nameof(NotesViewModel.ShowSiblingFiles))
+        if (e.PropertyName is nameof(NotesViewModel.ShowSiblingFiles)
+            or nameof(NotesViewModel.SiblingTreeRoot)
+            or nameof(NotesViewModel.SiblingFiles))
             ApplySiblingPanelLayout();
     }
 
     private void ApplySiblingPanelLayout()
     {
-        if (_vm?.ShowSiblingFiles == true)
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ApplySiblingPanelLayout);
+            return;
+        }
+
+        var show = _vm?.ShowSiblingFiles == true;
+        // Drive Visibility in code — binding alone left the panel Collapsed while row Height stayed 0
+        // when PropertyChanged was missed across tab unload/reload (AT-N7 FAIL on 1.0.19).
+        var vis = show ? Visibility.Visible : Visibility.Collapsed;
+        SiblingPanel.Visibility = vis;
+        SiblingSplitter.Visibility = vis;
+
+        if (show)
         {
             if (SiblingPanelRow.Height.Value > 0)
                 _siblingPanelHeight = SiblingPanelRow.Height;
@@ -173,6 +188,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
             SiblingPanelRow.MinHeight = 0;
             SiblingPanelRow.Height = new GridLength(0);
         }
+
+        // WebView2 HWND can keep the pre-split size and cover the Folder files row until remeasured.
+        EditorHost.InvalidateMeasure();
+        NotesWebView.InvalidateMeasure();
+        EditorPane.UpdateLayout();
     }
 
     private void OnNavigateToNoteRequested(string path) =>
@@ -1344,6 +1364,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (samePage && !forceReload && NotesWebView.CoreWebView2 != null)
         {
             AttachIndexWatcher(folderPath);
+            // Re-list + layout: sibling files may appear after open; same-page must not skip E5 panel.
+            _vm.RefreshSiblingFiles();
+            ApplySiblingPanelLayout();
             return;
         }
 
@@ -1363,6 +1386,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm.StatusText = "Ready";
 
             AttachIndexWatcher(folderPath);
+            // Ensure Folder files row expands after editor load (binding/layout race on first open).
+            _vm.RefreshSiblingFiles();
+            ApplySiblingPanelLayout();
         }
         finally
         {

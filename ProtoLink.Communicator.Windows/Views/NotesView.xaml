@@ -226,14 +226,15 @@
             </Grid>
 
             <!-- E5: Folder files under open note (local FS only; hide when empty) -->
+            <!-- Visibility driven by NotesView.ApplySiblingPanelLayout (not binding-only). -->
             <GridSplitter x:Name="SiblingSplitter" Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
-                          VerticalAlignment="Center" Background="{DynamicResource BorderBrushStandard}"
+                          VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
                           ResizeDirection="Rows" ShowsPreview="True"
-                          Visibility="{Binding ShowSiblingFiles, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                          Visibility="Collapsed"/>
             <Border x:Name="SiblingPanel" Grid.Row="2" MinHeight="120" MaxHeight="320"
                     Background="{DynamicResource ListBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0"
-                    Visibility="{Binding ShowSiblingFiles, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    Visibility="Collapsed">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -246,7 +247,7 @@
                                    AutomationProperties.Name="Folder files"/>
                     </Border>
                     <TreeView x:Name="SiblingFilesTreeView" Grid.Row="1"
-                              ItemsSource="{Binding SiblingTreeRoot.Children}"
+                              ItemsSource="{Binding SiblingFiles}"
                               Background="{DynamicResource ListBackground}" BorderThickness="0"
                               Padding="0,2" FontSize="13"
                               MouseDoubleClick="OnSiblingTreeDoubleClick"

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -24,6 +25,7 @@ public partial class NotesViewModel : ViewModelBase
     private string? _rootPath;
     private TreeItemViewModel? _treeRoot;
     private TreeItemViewModel? _siblingTreeRoot;
+    private bool _showSiblingFiles;
     private string? _currentPagePath;
     private string _currentHtml = string.Empty;
     private string _htmlSyncedToDisk = string.Empty;
@@ -121,11 +123,17 @@ public partial class NotesViewModel : ViewModelBase
         {
             _siblingTreeRoot = value;
             OnPropertyChanged();
+            SyncSiblingFilesCollection();
+            _showSiblingFiles = value != null && value.Children.Count > 0;
+            // Always raise so NotesView re-applies row Height/Visibility after navigate/refresh.
             OnPropertyChanged(nameof(ShowSiblingFiles));
         }
     }
 
-    public bool ShowSiblingFiles => SiblingTreeRoot != null && SiblingTreeRoot.Children.Count > 0;
+    /// <summary>Flat ItemsSource for Folder files TreeView (avoids fragile SiblingTreeRoot.Children path).</summary>
+    public ObservableCollection<TreeItemViewModel> SiblingFiles { get; } = new();
+
+    public bool ShowSiblingFiles => _showSiblingFiles;
     public string CurrentPageTitle =>
         string.IsNullOrEmpty(_currentPagePath) ? "Select a note" : Path.GetFileName(_currentPagePath);
     public bool HasOpenPage => !string.IsNullOrEmpty(_currentPagePath);
@@ -314,6 +322,14 @@ public partial class NotesViewModel : ViewModelBase
         }
     }
 
+    private void SyncSiblingFilesCollection()
+    {
+        SiblingFiles.Clear();
+        if (_siblingTreeRoot == null) return;
+        foreach (var child in _siblingTreeRoot.Children)
+            SiblingFiles.Add(child);
+    }
+
     public void OpenSiblingPath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -342,12 +358,16 @@ public partial class NotesViewModel : ViewModelBase
             var fingerprint = ComputeTreeFingerprint(built);
             PostUi(() =>
             {
-                if (fingerprint == _lastTreeFingerprint && TreeRoot != null)
-                    return;
-                _lastTreeFingerprint = fingerprint;
-                TreeRoot = built != null ? new TreeItemViewModel(built) : null;
-                CommandManager.InvalidateRequerySuggested();
-                TreeRefreshed?.Invoke();
+                if (fingerprint != _lastTreeFingerprint || TreeRoot == null)
+                {
+                    _lastTreeFingerprint = fingerprint;
+                    TreeRoot = built != null ? new TreeItemViewModel(built) : null;
+                    CommandManager.InvalidateRequerySuggested();
+                    TreeRefreshed?.Invoke();
+                }
+
+                // Always re-list Folder files — tree fingerprint ignore must not skip E5 panel.
+                RefreshSiblingFiles();
             });
         }
         catch (Exception ex)
@@ -359,6 +379,7 @@ public partial class NotesViewModel : ViewModelBase
                 StatusText = "Error loading notes tree.";
                 CommandManager.InvalidateRequerySuggested();
                 TreeRefreshed?.Invoke();
+                RefreshSiblingFiles();
                 ErrorDetailDialog.Show("Notes tree", ex);
             });
         }
