@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using ProtoLink.Communicator.Windows.Models;
@@ -86,6 +87,43 @@ public class AuthService : IAuthService
         {
             _logger.LogError(ex, "Register failed for {Email}", email);
             return new RegisterResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    public async Task<ChangePasswordResult> ChangePasswordAsync(string currentPassword, string newPassword)
+    {
+        _currentToken ??= _tokenService.LoadToken();
+        if (_currentToken == null || string.IsNullOrWhiteSpace(_currentToken.AccessToken))
+            return new ChangePasswordResult { Success = false, Error = "Not signed in." };
+
+        try
+        {
+            var contract = new ChangePasswordContract
+            {
+                CurrentPassword = currentPassword,
+                NewPassword = newPassword
+            };
+            using var request = new HttpRequestMessage(HttpMethod.Post, "api/Authentication/changePassword");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _currentToken.AccessToken);
+            request.Content = JsonContent.Create(contract);
+            var response = await _httpClient.SendAsync(request);
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<ChangePasswordResult>(responseContent)
+                         ?? new ChangePasswordResult { Success = false, Error = "Unknown error" };
+
+            if (!response.IsSuccessStatusCode)
+            {
+                result.Success = false;
+                if (string.IsNullOrWhiteSpace(result.Error))
+                    result.Error = responseContent;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Change password failed");
+            return new ChangePasswordResult { Success = false, Error = ex.Message };
         }
     }
 

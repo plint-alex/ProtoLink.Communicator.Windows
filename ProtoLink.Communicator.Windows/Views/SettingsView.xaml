@@ -118,6 +118,9 @@
                                 AutomationProperties.Name="Copy my ID"/>
                         <TextBlock Text="{Binding CopyMyIdHint}" Margin="0,6,0,0" FontSize="12" TextWrapping="Wrap"
                                    Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <Button Content="{Binding ChangePasswordLabel}" Command="{Binding ChangePasswordCommand}"
+                                Style="{DynamicResource GhostButton}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                AutomationProperties.Name="Change password"/>
                     </StackPanel>
                 </Border>
                 <Border Background="{DynamicResource PanelCardBackground}"

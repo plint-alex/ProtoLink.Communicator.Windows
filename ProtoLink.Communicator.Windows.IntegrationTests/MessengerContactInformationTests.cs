@@ -53,6 +53,9 @@ public class MessengerContactInformationTests
         public Task<RegisterResult> RegisterAsync(string email, string password, string lang) =>
             throw new NotSupportedException();
 
+        public Task<ChangePasswordResult> ChangePasswordAsync(string currentPassword, string newPassword) =>
+            throw new NotSupportedException();
+
         public Task<bool> RefreshTokenAsync() => Task.FromResult(false);
 
         public void Logout() { }

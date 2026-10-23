@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
@@ -46,6 +47,7 @@ public class SettingsViewModel : ViewModelBase
         CloseCommand = new RelayCommand(_ => OnCloseRequested?.Invoke());
         RefreshApiVersionCommand = new RelayCommand(_ => _ = LoadApiVersionAsync());
         CopyMyIdCommand = new RelayCommand(_ => CopyMyId(), _ => !string.IsNullOrEmpty(MyUserIdText));
+        ChangePasswordCommand = new RelayCommand(_ => ChangePassword(), _ => _authService.IsAuthenticated);
 
         LoginViewModel = new LoginViewModel(_authService);
         LoginViewModel.OnLoginSuccess += () =>
@@ -97,6 +99,7 @@ public class SettingsViewModel : ViewModelBase
             ? ShareAccountStrings.CopyMyIdLabel(_uiLanguage)
             : _copyMyIdFeedback;
     public string CopyMyIdHint => ShareAccountStrings.CopyMyIdHint(_uiLanguage);
+    public string ChangePasswordLabel => ChangePasswordStrings.MenuLabel(_uiLanguage);
     public LoginViewModel LoginViewModel { get; }
     public AddContactViewModel AddContactViewModel { get; }
     public ICommand SaveCommand { get; }
@@ -104,6 +107,7 @@ public class SettingsViewModel : ViewModelBase
     public ICommand CloseCommand { get; }
     public ICommand RefreshApiVersionCommand { get; }
     public ICommand CopyMyIdCommand { get; }
+    public ICommand ChangePasswordCommand { get; }
     public event Action? OnLoginSuccess;
     public event Action? OnContactAdded;
     public event Action? OnSettingsSaved;
@@ -171,6 +175,19 @@ public class SettingsViewModel : ViewModelBase
         OnPropertyChanged(nameof(MyUserIdText));
         OnPropertyChanged(nameof(CopyMyIdLabel));
         OnSettingsSaved?.Invoke();
+    }
+
+    private void ChangePassword()
+    {
+        if (!_authService.IsAuthenticated) return;
+        try
+        {
+            ChangePasswordDialog.TryChange(_authService, _uiLanguage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Change password dialog failed");
+        }
     }
 
     private void CopyMyId()
