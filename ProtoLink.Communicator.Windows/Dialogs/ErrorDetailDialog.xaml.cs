@@ -36,10 +36,14 @@ public partial class ErrorDetailDialog : Window
 
             var dlg = new ErrorDetailDialog
             {
-                Owner = System.Windows.Application.Current.MainWindow,
                 Title = title,
                 ErrorText = fullErrorText
             };
+            // Owner requires a previously shown window — early startup exceptions otherwise
+            // throw InvalidOperationException and fall into a modal MessageBox with MainWindowHandle=0.
+            var main = System.Windows.Application.Current.MainWindow;
+            if (main is { IsLoaded: true } && main.IsVisible)
+                dlg.Owner = main;
             dlg.Show();
             dlg.Activate();
         }

@@ -264,9 +264,67 @@ public class NoteRemoteIdResolverTests
         }
     }
 
+    [Fact]
+    public void Resolve_WhenMetaFactoryThrowsSyncException_ReturnsNull()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-note-meta-throw-" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "Films");
+        Directory.CreateDirectory(note);
+        try
+        {
+            var store = new FixedMappingStore(root, MappingCloudId);
+            var resolver = new NoteRemoteIdResolver(
+                store,
+                () => throw new SyncException("Corrupt sync metadata (test)."));
+            Assert.Null(resolver.Resolve(note));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
+    [Fact]
+    public void Resolve_WhenMetaFactoryThrowsIOException_ReturnsNull()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-note-meta-io-" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "Films");
+        Directory.CreateDirectory(note);
+        try
+        {
+            var store = new FixedMappingStore(root, MappingCloudId);
+            var resolver = new NoteRemoteIdResolver(
+                store,
+                () => throw new IOException("The process cannot access the file (test)."));
+            Assert.Null(resolver.Resolve(note));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
     private sealed class EmptySyncMappingStore : ISyncMappingStore
     {
         public IReadOnlyList<Models.CloudSyncMapping> Load() => Array.Empty<Models.CloudSyncMapping>();
+        public void Save(IEnumerable<Models.CloudSyncMapping> mappings) { }
+    }
+
+    private sealed class FixedMappingStore : ISyncMappingStore
+    {
+        private readonly Models.CloudSyncMapping _mapping;
+
+        public FixedMappingStore(string localRoot, Guid cloudFolderId)
+        {
+            _mapping = new Models.CloudSyncMapping
+            {
+                CloudFolderId = cloudFolderId,
+                LocalPath = localRoot,
+                CloudFolderName = "test"
+            };
+        }
+
+        public IReadOnlyList<Models.CloudSyncMapping> Load() => new[] { _mapping };
         public void Save(IEnumerable<Models.CloudSyncMapping> mappings) { }
     }
 }

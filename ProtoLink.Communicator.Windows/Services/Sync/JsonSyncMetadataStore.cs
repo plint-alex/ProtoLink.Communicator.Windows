@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 
 namespace ProtoLink.Communicator.Windows.Services.Sync;
 
@@ -32,19 +33,44 @@ public sealed class JsonSyncMetadataStore
     private void Load()
     {
         if (!File.Exists(_filePath)) return;
-        try
+
+        Exception? lastIo = null;
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            var dto = JsonSerializer.Deserialize<FileDto>(File.ReadAllText(_filePath));
-            if (dto == null) return;
-            _items = dto.Items.ToDictionary(i => Key(i.MappingId, i.RelativePath), i => i);
-            _lastSync = dto.LastSync ?? new Dictionary<string, DateTime>();
+            try
+            {
+                string text;
+                using (var fs = new FileStream(
+                           _filePath,
+                           FileMode.Open,
+                           FileAccess.Read,
+                           FileShare.ReadWrite | FileShare.Delete))
+                using (var reader = new StreamReader(fs))
+                    text = reader.ReadToEnd();
+
+                var dto = JsonSerializer.Deserialize<FileDto>(text);
+                if (dto == null) return;
+                _items = dto.Items.ToDictionary(i => Key(i.MappingId, i.RelativePath), i => i);
+                _lastSync = dto.LastSync ?? new Dictionary<string, DateTime>();
+                return;
+            }
+            catch (JsonException ex)
+            {
+                throw new SyncException(
+                    $"Corrupt sync metadata at '{_filePath}'. Fix or delete the file, then use Force Download.",
+                    inner: ex);
+            }
+            catch (IOException ex)
+            {
+                // Sharing violation / transient lock — not corrupt. Soft-fail empty so Notes tree
+                // paint and cold start are not aborted (NFR-SYNC-1 / silent-window P0).
+                lastIo = ex;
+                Thread.Sleep(20 * (attempt + 1));
+            }
         }
-        catch (Exception ex)
-        {
-            throw new SyncException(
-                $"Corrupt sync metadata at '{_filePath}'. Fix or delete the file, then use Force Download.",
-                inner: ex);
-        }
+
+        // Locked after retries: keep empty in-memory state; next SyncEngine touch can reload.
+        _ = lastIo;
     }
 
     private void Save()
@@ -54,7 +80,30 @@ public sealed class JsonSyncMetadataStore
             Items = _items.Values.ToList(),
             LastSync = _lastSync
         };
-        File.WriteAllText(_filePath, JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
+        var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
+        Exception? lastIo = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                using var fs = new FileStream(
+                    _filePath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read);
+                using var writer = new StreamWriter(fs);
+                writer.Write(json);
+                return;
+            }
+            catch (IOException ex)
+            {
+                lastIo = ex;
+                Thread.Sleep(20 * (attempt + 1));
+            }
+        }
+
+        if (lastIo != null)
+            throw lastIo;
     }
 
     public List<SyncItemMeta> GetAll(string mappingId)

@@ -12,6 +12,7 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
 {
     private readonly ISyncMappingStore _syncStore;
     private readonly Func<JsonSyncMetadataStore> _metaStoreFactory;
+    private JsonSyncMetadataStore? _metaStore;
 
     public NoteRemoteIdResolver(
         ISyncMappingStore syncStore,
@@ -26,16 +27,30 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
         if (string.IsNullOrWhiteSpace(noteFolderFullPath))
             return null;
 
-        var mappings = ToMappingInfos(_syncStore.Load());
-        if (mappings.Count == 0)
-            return null;
+        try
+        {
+            var mappings = ToMappingInfos(_syncStore.Load());
+            if (mappings.Count == 0)
+                return null;
 
-        var mapping = FindBestMapping(noteFolderFullPath, mappings);
-        if (mapping == null)
-            return null;
+            var mapping = FindBestMapping(noteFolderFullPath, mappings);
+            if (mapping == null)
+                return null;
 
-        var items = _metaStoreFactory().GetAll(mapping.Id);
-        return ResolveFrom(noteFolderFullPath, mappings, items);
+            // One store per resolver — avoid re-Load() per tree glyph (share lock / cold-start P0).
+            _metaStore ??= _metaStoreFactory();
+            var items = _metaStore.GetAll(mapping.Id);
+            return ResolveFrom(noteFolderFullPath, mappings, items);
+        }
+        catch (SyncException)
+        {
+            // Corrupt meta must not abort Notes tree paint / cold start.
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
     }
 
     public Guid? ResolveFrom(

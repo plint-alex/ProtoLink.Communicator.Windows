@@ -153,7 +153,15 @@ public partial class NotesViewModel
     {
         if (string.IsNullOrWhiteSpace(noteFolderFullPath) || _remoteIdResolver == null)
             return null;
-        return _remoteIdResolver.Resolve(noteFolderFullPath);
+        try
+        {
+            return _remoteIdResolver.Resolve(noteFolderFullPath);
+        }
+        catch
+        {
+            // Tree paint / share glyph must never throw (silent MainWindow P0).
+            return null;
+        }
     }
 
     public void ReturnToListInCompact()
