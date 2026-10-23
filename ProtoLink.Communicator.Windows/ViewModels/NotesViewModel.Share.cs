@@ -93,7 +93,12 @@ public partial class NotesViewModel
 
     public async Task OpenShareForPathAsync(string? noteFolderFullPath)
     {
-        if (ShareSheet == null) return;
+        if (ShareSheet == null)
+        {
+            StatusText = ShareSheetStrings.NotInCloudYet(_settingsService.LoadSettings().UiLanguage);
+            return;
+        }
+
         var id = TryResolveRemoteId(noteFolderFullPath);
         if (id is not { } remoteId)
         {
@@ -106,15 +111,22 @@ public partial class NotesViewModel
             : Path.GetFileName(noteFolderFullPath) ?? remoteId.ToString("D");
         var online = _shareIsOnline?.Invoke() ?? true;
 
-        await ShareSheet.OpenAsync(
-            remoteId,
-            name,
-            isFolder: true,
-            childCount: 0,
-            canEdit: true,
-            isOnline: online);
-        CaptureShareAffordanceFromOpenSheet();
-        OnPropertyChanged(nameof(ShareSheet));
+        try
+        {
+            await ShareSheet.OpenAsync(
+                remoteId,
+                name,
+                isFolder: true,
+                childCount: 0,
+                canEdit: true,
+                isOnline: online);
+            CaptureShareAffordanceFromOpenSheet();
+            OnPropertyChanged(nameof(ShareSheet));
+        }
+        catch (Exception ex)
+        {
+            StatusText = ShareSheetStrings.LoadFailed(_settingsService.LoadSettings().UiLanguage) + " " + ex.Message;
+        }
     }
 
     /// <summary>

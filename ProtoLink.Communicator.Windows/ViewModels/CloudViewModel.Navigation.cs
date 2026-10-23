@@ -126,7 +126,11 @@ public partial class CloudViewModel
 
     private async Task OpenShareAsync(Guid? entityId)
     {
-        if (entityId is not { } id) return;
+        if (entityId is not { } id)
+        {
+            StatusText = ShareSheetStrings.NotInCloudYet(_settingsService.LoadSettings().UiLanguage);
+            return;
+        }
 
         string name;
         bool isFolder;
@@ -152,14 +156,21 @@ public partial class CloudViewModel
 
         // Cycle 1: any signed-in Cloud user who can open the entity may attempt share;
         // API returns 403 when the caller cannot write (sheet shows viewer footer after load fail).
-        await ShareSheet.OpenAsync(
-            id,
-            name,
-            isFolder,
-            childCount,
-            canEdit: true,
-            isOnline: !_showNetworkBanner);
-        OnPropertyChanged(nameof(ShareSheet));
+        try
+        {
+            await ShareSheet.OpenAsync(
+                id,
+                name,
+                isFolder,
+                childCount,
+                canEdit: true,
+                isOnline: !_showNetworkBanner);
+            OnPropertyChanged(nameof(ShareSheet));
+        }
+        catch (Exception ex)
+        {
+            StatusText = ShareSheetStrings.LoadFailed(_settingsService.LoadSettings().UiLanguage) + " " + ex.Message;
+        }
     }
 
     private string BuildLink(Guid entityId)

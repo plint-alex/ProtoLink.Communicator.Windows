@@ -297,10 +297,22 @@
         </Grid>
     </Grid>
 
-        <!-- Notes tree Share sheet (notes-tree-share AC-NS-2) — same ShareSheetView as Cloud -->
-        <Border HorizontalAlignment="Right" Panel.ZIndex="20"
-                Visibility="{Binding ShareSheet.IsOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <views:ShareSheetView DataContext="{Binding ShareSheet}"/>
-        </Border>
+        <!-- Notes tree Share sheet (AC-NS-2 / AT-S48): Popup HWND above WebView2 airspace (same pattern as Folder files). -->
+        <Popup x:Name="NotesShareSheetPopup"
+               PlacementTarget="{Binding ElementName=PanesGrid}"
+               Placement="Relative"
+               AllowsTransparency="False"
+               StaysOpen="True"
+               Focusable="False"
+               IsOpen="False">
+            <Border x:Name="NotesShareSheetHost"
+                    Width="360"
+                    Background="{DynamicResource ContentBackground}"
+                    BorderBrush="{DynamicResource ToolbarBorderBrush}"
+                    BorderThickness="1,0,0,0"
+                    AutomationProperties.Name="Share sheet">
+                <views:ShareSheetView x:Name="NotesShareSheetView"/>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>

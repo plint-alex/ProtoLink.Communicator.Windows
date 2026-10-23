@@ -1,9 +1,11 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -15,6 +17,7 @@ using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Notes;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
+using ProtoLink.Communicator.Windows.ViewModels.Share;
 using ContextMenu = System.Windows.Controls.ContextMenu;
 using MenuItem = System.Windows.Controls.MenuItem;
 
@@ -41,9 +44,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private GridLength _treeColumnWidth = new(320);
     private GridLength _siblingPanelHeight = new(220);
     private const string NotesFolderDragFormat = "ProtoLink.NotesFolderPath";
+    private const double ShareSheetPopupWidth = 360;
     private System.Windows.Point _treeDragStartPoint;
     private TreeViewItem? _treeDragSourceItem;
     private bool _treeDragInProgress;
+    private ShareSheetViewModel? _shareSheetHooked;
 
     public NotesView()
     {
@@ -55,6 +60,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         NotesWebView.SizeChanged += OnNotesWebViewSizeChanged;
         EditorHost.SizeChanged += OnEditorHostSizeChangedForFormatBar;
         EditorHost.SizeChanged += OnEditorHostSizeChangedForWebViewHwnd;
+        PanesGrid.SizeChanged += OnPanesGridSizeChangedForShareSheet;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -66,6 +72,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         StartRootWatcher();
         ApplyResponsiveLayout();
         ApplySiblingPanelLayout();
+        ApplyShareSheetPopup();
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -86,6 +93,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             oldVm.ReturnToListRequested -= OnReturnToListRequested;
             oldVm.ShareAffordanceChanged -= OnShareAffordanceChanged;
             oldVm.PropertyChanged -= OnViewModelPropertyChanged;
+            UnhookShareSheet();
             _treeEventsHooked = false;
             _vm = null;
         }
@@ -96,6 +104,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
     {
         _vm = vm;
         EnsureNotesEventHandlers();
+        HookShareSheet(vm?.ShareSheet);
+        ApplyShareSheetPopup();
     }
 
     private void EnsureNotesEventHandlers()
@@ -144,7 +154,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _vm.SetNotesRootPath(path);
     }
 
-    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(NotesViewModel.IsCompactLayout)
             or nameof(NotesViewModel.ShowEditorInCompact))
@@ -155,6 +165,70 @@ public partial class NotesView : System.Windows.Controls.UserControl
             or nameof(NotesViewModel.SiblingTreeRoot)
             or nameof(NotesViewModel.SiblingFiles))
             ApplySiblingPanelLayout();
+        if (e.PropertyName is nameof(NotesViewModel.ShareSheet))
+        {
+            HookShareSheet(_vm?.ShareSheet);
+            ApplyShareSheetPopup();
+        }
+    }
+
+    private void HookShareSheet(ShareSheetViewModel? sheet)
+    {
+        if (ReferenceEquals(_shareSheetHooked, sheet)) return;
+        UnhookShareSheet();
+        _shareSheetHooked = sheet;
+        if (_shareSheetHooked != null)
+            _shareSheetHooked.PropertyChanged += OnShareSheetPropertyChanged;
+    }
+
+    private void UnhookShareSheet()
+    {
+        if (_shareSheetHooked == null) return;
+        _shareSheetHooked.PropertyChanged -= OnShareSheetPropertyChanged;
+        _shareSheetHooked = null;
+    }
+
+    private void OnShareSheetPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ShareSheetViewModel.IsOpen)
+            or nameof(ShareSheetViewModel.TitleText)
+            or null)
+            ApplyShareSheetPopup();
+    }
+
+    private void OnPanesGridSizeChangedForShareSheet(object sender, SizeChangedEventArgs e) =>
+        ApplyShareSheetPopup();
+
+    /// <summary>
+    /// Share sheet must use a Popup (own HWND). A WPF Border overlay is painted under WebView2 airspace
+    /// so Share… looked like a no-op (AT-S48 / sibling Folder files pattern).
+    /// </summary>
+    private void ApplyShareSheetPopup()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ApplyShareSheetPopup);
+            return;
+        }
+
+        var sheet = _vm?.ShareSheet;
+        HookShareSheet(sheet);
+        var open = sheet is { IsOpen: true };
+        NotesShareSheetPopup.DataContext = sheet;
+        NotesShareSheetView.DataContext = sheet;
+        if (!open)
+        {
+            NotesShareSheetPopup.IsOpen = false;
+            return;
+        }
+
+        var hostW = Math.Max(1, PanesGrid.ActualWidth);
+        var hostH = Math.Max(1, PanesGrid.ActualHeight);
+        NotesShareSheetHost.Width = ShareSheetPopupWidth;
+        NotesShareSheetHost.Height = hostH;
+        NotesShareSheetPopup.HorizontalOffset = Math.Max(0, hostW - ShareSheetPopupWidth);
+        NotesShareSheetPopup.VerticalOffset = 0;
+        NotesShareSheetPopup.IsOpen = true;
     }
 
     private void ApplySiblingPanelLayout()
@@ -343,6 +417,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         StopIndexWatcher();
         StopRootWatcher();
         SiblingFilesPopup.IsOpen = false;
+        NotesShareSheetPopup.IsOpen = false;
         // Keep TreeRefreshed (and other VM) handlers subscribed across tab switches.
         // TabControl SelectedContent unloads this view when Notes is not selected; unhooking
         // here drops async RefreshTree completions and left users with an empty tree.
@@ -1644,12 +1719,20 @@ public partial class NotesView : System.Windows.Controls.UserControl
         _vm.CopyLinkForPath(folderPath);
     }
 
-    private void OnShareClick(object sender, RoutedEventArgs e)
+    private async void OnShareClick(object sender, RoutedEventArgs e)
     {
         if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
         var folderPath = vm.Item.FullPath;
         NotesTreeContextMenu.Tag = null;
-        _ = _vm.OpenShareForPathAsync(folderPath);
+        try
+        {
+            await _vm.OpenShareForPathAsync(folderPath);
+            ApplyShareSheetPopup();
+        }
+        catch (Exception ex)
+        {
+            _vm.StatusText = ShareSheetStrings.LoadFailed(_vm.ShareSheet?.Lang) + " " + ex.Message;
+        }
     }
 
     private void OnOpenInBrowserClick(object sender, RoutedEventArgs e)

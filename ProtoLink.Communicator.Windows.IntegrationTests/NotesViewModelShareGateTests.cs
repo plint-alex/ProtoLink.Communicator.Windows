@@ -110,6 +110,59 @@ public class NotesViewModelShareGateTests
         Assert.Null(vm.ShareSheet);
     }
 
+    [Fact]
+    public async Task OpenShareForPathAsync_SyncedOffline_OpensSheetForRemoteId()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-share-open-sheet-" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "Page");
+        Directory.CreateDirectory(note);
+        using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:9/") };
+        try
+        {
+            var settings = new MemorySettingsService(new AppSettings { NotesRootPath = root, UiLanguage = "en-US" });
+            var api = new CloudApiService(http);
+            var vm = new NotesViewModel(
+                settings,
+                new FixedRemoteIdResolver(KnownId),
+                shareApi: api,
+                shareCurrentUserId: () => KnownId,
+                shareIsOnline: () => false);
+
+            await vm.OpenShareForPathAsync(note);
+
+            Assert.NotNull(vm.ShareSheet);
+            Assert.True(vm.ShareSheet!.IsOpen);
+            Assert.Equal(KnownId, vm.ShareSheet.EntityId);
+            Assert.Equal("Page", vm.ShareSheet.EntityName);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
+    [Fact]
+    public async Task OpenShareForPathAsync_NoShareApi_SetsNotInCloudStatus()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-share-no-api-" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "Page");
+        Directory.CreateDirectory(note);
+        try
+        {
+            var settings = new MemorySettingsService(new AppSettings { NotesRootPath = root, UiLanguage = "en-US" });
+            var vm = new NotesViewModel(settings, new FixedRemoteIdResolver(KnownId));
+            Assert.Null(vm.ShareSheet);
+
+            await vm.OpenShareForPathAsync(note);
+
+            Assert.Equal("Not in Cloud yet", vm.StatusText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp */ }
+        }
+    }
+
     private sealed class FixedRemoteIdResolver : INoteRemoteIdResolver
     {
         private readonly Guid? _id;
