@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Services.Messenger;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -32,12 +33,15 @@ public partial class MessengerViewModel : ViewModelBase
     private DispatcherTimer? _chatPollTimer;
     private int _loadMessagesBusy;
     private int _loadMessagesQueued;
+    private readonly string? _uiLanguage;
+    private string? _statusText;
 
     public MessengerViewModel(IAuthService authService, HttpClient httpClient, ISettingsService? settingsService = null)
     {
         _authService = authService;
         _httpClient = httpClient;
         _settingsService = settingsService;
+        _uiLanguage = settingsService?.LoadSettings()?.UiLanguage;
         _cloudApi = new CloudApiService(httpClient);
         _chatFolders = settingsService != null
             ? new MessengerChatFolderResolver(_cloudApi, settingsService)
@@ -49,6 +53,9 @@ public partial class MessengerViewModel : ViewModelBase
         SendCommand = new RelayCommand(async _ => await SendMessageAsync(), _ => CanSendNow());
         RefreshContactsCommand = new RelayCommand(async _ => await LoadContactsAsync());
         BackToContactsCommand = new RelayCommand(_ => SelectedContact = null, _ => SelectedContact != null);
+        CopyContactIdCommand = new RelayCommand(
+            p => CopyContactId(ResolveContactForCopy(p)),
+            p => ShareAccountStrings.FormatUserIdForClipboard(ResolveContactForCopy(p)?.Id ?? Guid.Empty) != null);
         InitMediaSendCommands();
         InitMediaRenderCommands();
         InitCloudPickerGalleryUnfurlCommands();
@@ -79,6 +86,20 @@ public partial class MessengerViewModel : ViewModelBase
     public bool ShowChatPane => !_isCompactLayout || SelectedContact != null;
     public bool ShowChatBackButton => _isCompactLayout && SelectedContact != null;
     public string ChatHeaderTitle => SelectedContact?.Name ?? "Select a chat";
+
+    public string CopyContactIdLabel => ShareAccountStrings.CopyContactIdLabel(_uiLanguage);
+
+    /// <summary>Brief clipboard feedback (Copied); cleared when id unresolved or after delay.</summary>
+    public string? StatusText
+    {
+        get => _statusText;
+        private set
+        {
+            if (_statusText == value) return;
+            _statusText = value;
+            OnPropertyChanged();
+        }
+    }
 
     public Contact? SelectedContact
     {
@@ -118,6 +139,39 @@ public partial class MessengerViewModel : ViewModelBase
     public ICommand SendCommand { get; }
     public ICommand RefreshContactsCommand { get; }
     public ICommand BackToContactsCommand { get; }
+    /// <summary>Parameter: <see cref="Contact"/> from list context menu, or null → selected chat.</summary>
+    public ICommand CopyContactIdCommand { get; }
+
+    private Contact? ResolveContactForCopy(object? parameter) =>
+        parameter as Contact ?? SelectedContact;
+
+    private void CopyContactId(Contact? contact)
+    {
+        var text = ShareAccountStrings.FormatUserIdForClipboard(contact?.Id ?? Guid.Empty);
+        if (text == null)
+        {
+            StatusText = null;
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            StatusText = ShareAccountStrings.CopiedLabel(_uiLanguage);
+            _ = ClearCopyContactIdFeedbackAsync();
+        }
+        catch
+        {
+            StatusText = null;
+        }
+    }
+
+    private async Task ClearCopyContactIdFeedbackAsync()
+    {
+        await Task.Delay(2000);
+        if (StatusText == ShareAccountStrings.CopiedLabel(_uiLanguage))
+            StatusText = null;
+    }
 
     private void NotifyPaneVisibility()
     {

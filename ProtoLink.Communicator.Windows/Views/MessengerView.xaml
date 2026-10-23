@@ -79,13 +79,22 @@
                                Foreground="{DynamicResource ForegroundBrush}"/>
                 </DockPanel>
             </Border>
-            <ListBox Grid.Row="1"
+            <ListBox x:Name="ContactsList"
+                     Grid.Row="1"
                      ItemsSource="{Binding Contacts}"
                      SelectedItem="{Binding SelectedContact}"
                      Background="{DynamicResource ListBackground}"
                      BorderThickness="0"
                      ItemContainerStyle="{StaticResource ContactListBoxItemStyle}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="{Binding PlacementTarget.DataContext.CopyContactIdLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  Command="{Binding PlacementTarget.DataContext.CopyContactIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  AutomationProperties.Name="Copy contact id"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <DockPanel LastChildFill="True">
@@ -152,25 +161,21 @@
                             Command="{Binding OpenMediaGalleryCommand}"
                             Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}"
                             ToolTip="Media in this chat"/>
+                    <Button DockPanel.Dock="Right"
+                            Content="{Binding CopyContactIdLabel}"
+                            Padding="10,4" Margin="0,0,4,0"
+                            Foreground="White" Background="Transparent" BorderThickness="0"
+                            Command="{Binding CopyContactIdCommand}"
+                            Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}"
+                            ToolTip="{Binding CopyContactIdLabel}"
+                            AutomationProperties.Name="Copy contact id"/>
                     <StackPanel VerticalAlignment="Center" Margin="4,0,8,0">
                         <TextBlock Text="{Binding ChatHeaderTitle}" Foreground="White"
                                    FontSize="15" FontWeight="SemiBold"
                                    TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Foreground="#CCFFFFFF" FontSize="11">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Text" Value="online"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding ShowChatBackButton}" Value="True">
-                                            <Setter Property="Text" Value="back to chats"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding SelectedContact}" Value="{x:Null}">
-                                            <Setter Property="Text" Value=""/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <TextBlock Foreground="#CCFFFFFF" FontSize="11"
+                                   Text="{Binding StatusText}"
+                                   TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </DockPanel>
             </Border>

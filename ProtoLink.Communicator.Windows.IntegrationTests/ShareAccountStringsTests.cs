@@ -35,4 +35,24 @@ public class ShareAccountStringsTests
             ShareAccountStrings.CopyMyIdHint("ru"));
         Assert.Equal("Скопировано", ShareAccountStrings.CopiedLabel("ru-RU"));
     }
+
+    [Fact]
+    public void CopyContactId_EnglishAndRussian()
+    {
+        Assert.Equal("Copy contact id", ShareAccountStrings.CopyContactIdLabel("en-US"));
+        Assert.Equal("Скопировать ID контакта", ShareAccountStrings.CopyContactIdLabel("ru-RU"));
+    }
+
+    [Fact]
+    public void FormatUserIdForClipboard_DFormatOrNull()
+    {
+        var id = Guid.Parse("8f3a1111-2222-3333-4444-555555555555");
+        Assert.Equal("8f3a1111-2222-3333-4444-555555555555", ShareAccountStrings.FormatUserIdForClipboard(id));
+        Assert.Null(ShareAccountStrings.FormatUserIdForClipboard(Guid.Empty));
+        Assert.Equal(
+            "8f3a1111-2222-3333-4444-555555555555",
+            ShareAccountStrings.FormatUserIdForClipboard("8F3A1111-2222-3333-4444-555555555555"));
+        Assert.Null(ShareAccountStrings.FormatUserIdForClipboard(""));
+        Assert.Null(ShareAccountStrings.FormatUserIdForClipboard("not-a-guid"));
+    }
 }
