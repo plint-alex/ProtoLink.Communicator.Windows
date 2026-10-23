@@ -646,9 +646,14 @@ public partial class NotesViewModel : ViewModelBase
 
         try
         {
+            // Resolve before delete so sibling order still includes the removed folder (AT-ND-1…3).
+            var nextPath = NotesDeleteNavigate.ResolveNextPath(_rootPath, folderPath, _currentPagePath);
+            var openAffected = NotesDeleteNavigate.IsOpenPageAffected(_currentPagePath, folderPath);
+
             _fsService.DeleteItem(folderPath, isFolder: true);
-            if (string.Equals(_currentPagePath, folderPath, StringComparison.OrdinalIgnoreCase))
-                CurrentPagePath = null;
+
+            if (openAffected)
+                CurrentPagePath = nextPath;
             RefreshTree();
             StatusText = "Deleted";
             return true;

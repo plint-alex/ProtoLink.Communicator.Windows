@@ -1830,11 +1830,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
             MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) return;
 
-        var wasCurrent = string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase);
+        var openAffected = NotesDeleteNavigate.IsOpenPageAffected(_vm.CurrentPagePath, folderPath);
         if (_vm.DeleteFolder(folderPath))
         {
-            if (wasCurrent && NotesWebView.CoreWebView2 != null)
-                NotesWebView.CoreWebView2.NavigateToString("about:blank");
+            if (openAffected && NotesWebView.CoreWebView2 != null && _vm.CurrentPagePath != null)
+                _ = NavigateToAsync(_vm.CurrentPagePath);
         }
 
         NotesTreeContextMenu.Tag = null;
