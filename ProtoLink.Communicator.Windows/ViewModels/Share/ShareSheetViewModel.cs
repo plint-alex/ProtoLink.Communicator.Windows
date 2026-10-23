@@ -15,6 +15,7 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
     private readonly Func<string?> _uiLanguage;
     private readonly Action<string>? _onStatus;
     private readonly Action<string>? _onSendInMessenger;
+    private readonly TimeSpan _pasteResolveDebounce;
     private Guid _entityId;
     private string _entityName = "";
     private bool _isFolder;
@@ -39,13 +40,16 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
         Func<string?> uiLanguage,
         Func<Guid?>? currentUserId = null,
         Action<string>? onStatus = null,
-        Action<string>? onSendInMessenger = null)
+        Action<string>? onSendInMessenger = null,
+        TimeSpan? pasteResolveDebounce = null)
     {
         _api = api;
         _uiLanguage = uiLanguage;
         _currentUserId = currentUserId ?? (() => null);
         _onStatus = onStatus;
         _onSendInMessenger = onSendInMessenger;
+        // Debounce paste-ID auto-resolve so typing a GUID does not spam GetEntity; tests may pass Zero.
+        _pasteResolveDebounce = pasteResolveDebounce ?? TimeSpan.FromMilliseconds(350);
 
         LiveLinks = new ObservableCollection<ShareGuestLinkItemViewModel>();
         InactiveLinks = new ObservableCollection<ShareGuestLinkItemViewModel>();

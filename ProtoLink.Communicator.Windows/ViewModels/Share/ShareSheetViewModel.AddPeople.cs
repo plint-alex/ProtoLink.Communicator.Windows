@@ -17,6 +17,7 @@ public sealed partial class ShareSheetViewModel
     private bool _addCanWrite;
     private string? _addedBannerText;
     private Guid? _pasteResolvedUserId;
+    private CancellationTokenSource? _pasteResolveCts;
     private List<(Guid UserId, string Name)> _allContacts = new();
 
     public ObservableCollection<ShareContactPickerItemViewModel> ContactPickerItems { get; } = new();
@@ -80,6 +81,7 @@ public sealed partial class ShareSheetViewModel
             PastePreviewError = null;
             _pasteResolvedUserId = null;
             CommandManager.InvalidateRequerySuggested();
+            ScheduleAutoResolvePaste();
         }
     }
 
@@ -206,9 +208,15 @@ public sealed partial class ShareSheetViewModel
 
     private void ResetAddPeoplePanel()
     {
+        CancelPendingPasteResolve();
         ShowAddPeople = false;
         ContactSearch = null;
-        PasteId = null;
+        // Clear paste fields without ScheduleAutoResolvePaste (setter would re-schedule).
+        if (_pasteId != null)
+        {
+            _pasteId = null;
+            OnPropertyChanged(nameof(PasteId));
+        }
         PastePreviewName = null;
         PastePreviewError = null;
         _pasteResolvedUserId = null;
@@ -216,6 +224,52 @@ public sealed partial class ShareSheetViewModel
         ContactPickerItems.Clear();
         _allContacts = new();
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void CancelPendingPasteResolve()
+    {
+        try
+        {
+            _pasteResolveCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // ignore
+        }
+
+        _pasteResolveCts?.Dispose();
+        _pasteResolveCts = null;
+    }
+
+    /// <summary>
+    /// share-sheet-ux §4: on a valid GUID / /{id} URL, resolve name without requiring … click.
+    /// Invalid / email paste: no resolve (Add stays disabled; cycle-1 has no email lookup).
+    /// </summary>
+    private void ScheduleAutoResolvePaste()
+    {
+        CancelPendingPasteResolve();
+        if (!ShowAddPeople || !CanMutate || _busy) return;
+        if (!ShareAddPeople.ParseUserIdInput(_pasteId).HasValue) return;
+
+        var cts = new CancellationTokenSource();
+        _pasteResolveCts = cts;
+        var token = cts.Token;
+        _ = DebouncedResolvePasteAsync(token);
+    }
+
+    private async Task DebouncedResolvePasteAsync(CancellationToken token)
+    {
+        try
+        {
+            if (_pasteResolveDebounce > TimeSpan.Zero)
+                await Task.Delay(_pasteResolveDebounce, token).ConfigureAwait(true);
+            if (token.IsCancellationRequested) return;
+            await ResolvePasteAsync().ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // superseded by a newer paste or panel reset
+        }
     }
 
     private async Task LoadContactsForPickerAsync()
@@ -293,7 +347,8 @@ public sealed partial class ShareSheetViewModel
         PastePreviewName = null;
         PastePreviewError = null;
         _pasteResolvedUserId = null;
-        var id = ShareAddPeople.ParseUserIdInput(PasteId);
+        var raw = PasteId;
+        var id = ShareAddPeople.ParseUserIdInput(raw);
         if (id is not { } userId)
         {
             PastePreviewError = ShareSheetStrings.NoUserWithId(Lang);
@@ -303,6 +358,8 @@ public sealed partial class ShareSheetViewModel
         try
         {
             var card = await _api.GetEntityCardAsync(userId);
+            // Stale if the user changed paste while GetEntity was in flight.
+            if (!string.Equals(PasteId, raw, StringComparison.Ordinal)) return;
             var name = ShareAddPeople.PickResolvedDisplayName(card?.Name, card?.Code);
             if (name == null)
             {
@@ -314,6 +371,7 @@ public sealed partial class ShareSheetViewModel
         }
         catch
         {
+            if (!string.Equals(PasteId, raw, StringComparison.Ordinal)) return;
             PastePreviewError = ShareSheetStrings.NoUserWithId(Lang);
         }
     }
