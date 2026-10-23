@@ -74,6 +74,9 @@ public partial class NotesViewModel
 
     public bool ShowsExternalShareAffordance(string? noteFolderFullPath)
     {
+        // Tree paint calls this per node. Empty cache ⇒ never shared glyph; skip Resolve/meta (cold-start P0).
+        if (_externalShareByRemoteId.Count == 0)
+            return false;
         var id = TryResolveRemoteId(noteFolderFullPath);
         return id is { } remoteId
                && _externalShareByRemoteId.TryGetValue(remoteId, out var shared)

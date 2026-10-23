@@ -304,6 +304,56 @@ public class NoteRemoteIdResolverTests
         }
     }
 
+    [Fact]
+    public void Resolve_ManyCalls_UsesFolderIndex_NotGetAllPerCall()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "pl-note-index-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var note = Path.Combine(dir, "Films");
+        Directory.CreateDirectory(note);
+        try
+        {
+            var mappingId = MappingCloudId.ToString("N");
+            var meta = new JsonSyncMetadataStore(dir);
+            meta.Upsert(new SyncItemMeta
+            {
+                MappingId = mappingId,
+                RemoteId = NoteRemoteId,
+                RelativePath = "films",
+                IsFolder = true
+            });
+            // Extra folders so a naive GetAll-per-call would be obviously expensive / observable via factory count.
+            for (var i = 0; i < 200; i++)
+            {
+                meta.Upsert(new SyncItemMeta
+                {
+                    MappingId = mappingId,
+                    RemoteId = Guid.NewGuid(),
+                    RelativePath = "extra-" + i,
+                    IsFolder = true
+                });
+            }
+
+            var factoryCalls = 0;
+            var resolver = new NoteRemoteIdResolver(
+                new FixedMappingStore(dir, MappingCloudId),
+                () =>
+                {
+                    factoryCalls++;
+                    return new JsonSyncMetadataStore(dir);
+                });
+
+            for (var i = 0; i < 500; i++)
+                Assert.Equal(NoteRemoteId, resolver.Resolve(note));
+
+            Assert.Equal(1, factoryCalls);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp */ }
+        }
+    }
+
     private sealed class EmptySyncMappingStore : ISyncMappingStore
     {
         public IReadOnlyList<Models.CloudSyncMapping> Load() => Array.Empty<Models.CloudSyncMapping>();

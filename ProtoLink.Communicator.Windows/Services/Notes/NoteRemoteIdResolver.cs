@@ -13,6 +13,7 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
     private readonly ISyncMappingStore _syncStore;
     private readonly Func<JsonSyncMetadataStore> _metaStoreFactory;
     private JsonSyncMetadataStore? _metaStore;
+    private Dictionary<string, Guid>? _folderRemoteByKey;
 
     public NoteRemoteIdResolver(
         ISyncMappingStore syncStore,
@@ -37,10 +38,31 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
             if (mapping == null)
                 return null;
 
-            // One store per resolver — avoid re-Load() per tree glyph (share lock / cold-start P0).
-            _metaStore ??= _metaStoreFactory();
-            var items = _metaStore.GetAll(mapping.Id);
-            return ResolveFrom(noteFolderFullPath, mappings, items);
+            // One store + one folder index per resolver — never GetAll()/clone per tree glyph (cold-start P0).
+            EnsureFolderIndex();
+            string relative;
+            try
+            {
+                relative = Path.GetRelativePath(mapping.LocalRootPath, Path.GetFullPath(noteFolderFullPath));
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (relative.StartsWith("..", StringComparison.Ordinal))
+                return null;
+
+            var normalized = SyncPathUtil.Normalize(relative);
+            if (normalized is "." or "")
+                normalized = "";
+
+            var key = $"{mapping.Id}|{normalized}";
+            if (_folderRemoteByKey != null
+                && _folderRemoteByKey.TryGetValue(key, out var remoteId)
+                && remoteId != Guid.Empty)
+                return remoteId;
+            return null;
         }
         catch (SyncException)
         {
@@ -51,6 +73,16 @@ public sealed class NoteRemoteIdResolver : INoteRemoteIdResolver
         {
             return null;
         }
+    }
+
+    private void EnsureFolderIndex()
+    {
+        if (_folderRemoteByKey != null)
+            return;
+        _metaStore ??= _metaStoreFactory();
+        var index = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        _metaStore.CopyFolderRemoteIndex(index);
+        _folderRemoteByKey = index;
     }
 
     public Guid? ResolveFrom(
