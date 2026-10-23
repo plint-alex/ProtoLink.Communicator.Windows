@@ -89,6 +89,10 @@
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListBox.ContextMenu>
                     <ContextMenu>
+                        <MenuItem Header="{Binding PlacementTarget.DataContext.ContactInformationLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  Command="{Binding PlacementTarget.DataContext.OpenContactInformationCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  AutomationProperties.Name="Contact information"/>
                         <MenuItem Header="{Binding PlacementTarget.DataContext.CopyContactIdLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   Command="{Binding PlacementTarget.DataContext.CopyContactIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
@@ -169,6 +173,14 @@
                             Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}"
                             ToolTip="{Binding CopyContactIdLabel}"
                             AutomationProperties.Name="Copy contact id"/>
+                    <Button DockPanel.Dock="Right"
+                            Content="{Binding ContactInformationLabel}"
+                            Padding="10,4" Margin="0,0,4,0"
+                            Foreground="White" Background="Transparent" BorderThickness="0"
+                            Command="{Binding OpenContactInformationCommand}"
+                            Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}}"
+                            ToolTip="{Binding ContactInformationLabel}"
+                            AutomationProperties.Name="Contact information"/>
                     <StackPanel VerticalAlignment="Center" Margin="4,0,8,0">
                         <TextBlock Text="{Binding ChatHeaderTitle}" Foreground="White"
                                    FontSize="15" FontWeight="SemiBold"

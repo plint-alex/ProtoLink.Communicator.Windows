@@ -44,6 +44,13 @@ public class ShareAccountStringsTests
     }
 
     [Fact]
+    public void ContactInformation_EnglishAndRussian()
+    {
+        Assert.Equal("Contact information", ShareAccountStrings.ContactInformationLabel("en-US"));
+        Assert.Equal("Информация о контакте", ShareAccountStrings.ContactInformationLabel("ru-RU"));
+    }
+
+    [Fact]
     public void CopyId_EnglishAndRussian()
     {
         Assert.Equal("Copy id", ShareAccountStrings.CopyIdLabel("en-US"));

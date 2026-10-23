@@ -22,6 +22,10 @@ public static class ShareAccountStrings
     public static string CopyContactIdLabel(string? uiLanguage) =>
         IsRussian(uiLanguage) ? "Скопировать ID контакта" : "Copy contact id";
 
+    /// <summary>Messenger: open contact’s public user home in the browser.</summary>
+    public static string ContactInformationLabel(string? uiLanguage) =>
+        IsRussian(uiLanguage) ? "Информация о контакте" : "Contact information";
+
     /// <summary>Cloud / Notes: copy entity Guid (raw D), not the canonical URL.</summary>
     public static string CopyIdLabel(string? uiLanguage) =>
         IsRussian(uiLanguage) ? "Копировать id" : "Copy id";

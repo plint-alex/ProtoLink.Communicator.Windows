@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -56,6 +57,9 @@ public partial class MessengerViewModel : ViewModelBase
         CopyContactIdCommand = new RelayCommand(
             p => CopyContactId(ResolveContactForCopy(p)),
             p => ShareAccountStrings.FormatUserIdForClipboard(ResolveContactForCopy(p)?.Id ?? Guid.Empty) != null);
+        OpenContactInformationCommand = new RelayCommand(
+            p => OpenContactInformation(ResolveContactForCopy(p)),
+            p => TryBuildContactInformationUrl(ResolveContactForCopy(p)) != null);
         InitMediaSendCommands();
         InitMediaRenderCommands();
         InitCloudPickerGalleryUnfurlCommands();
@@ -88,6 +92,7 @@ public partial class MessengerViewModel : ViewModelBase
     public string ChatHeaderTitle => SelectedContact?.Name ?? "Select a chat";
 
     public string CopyContactIdLabel => ShareAccountStrings.CopyContactIdLabel(_uiLanguage);
+    public string ContactInformationLabel => ShareAccountStrings.ContactInformationLabel(_uiLanguage);
 
     /// <summary>Brief clipboard feedback (Copied); cleared when id unresolved or after delay.</summary>
     public string? StatusText
@@ -141,9 +146,23 @@ public partial class MessengerViewModel : ViewModelBase
     public ICommand BackToContactsCommand { get; }
     /// <summary>Parameter: <see cref="Contact"/> from list context menu, or null → selected chat.</summary>
     public ICommand CopyContactIdCommand { get; }
+    /// <summary>Parameter: <see cref="Contact"/> from list context menu, or null → selected chat.</summary>
+    public ICommand OpenContactInformationCommand { get; }
 
     private Contact? ResolveContactForCopy(object? parameter) =>
         parameter as Contact ?? SelectedContact;
+
+    /// <summary>Public user-home URL for a contact; null when Guid unresolved.</summary>
+    public string? TryBuildContactInformationUrl(Contact? contact)
+    {
+        var id = contact?.Id ?? Guid.Empty;
+        if (ShareAccountStrings.FormatUserIdForClipboard(id) == null) return null;
+        var settings = _settingsService?.LoadSettings();
+        return EntityLinks.Build(
+            settings?.PublicSiteBaseUrl,
+            id,
+            settings?.UiLanguage ?? _uiLanguage);
+    }
 
     private void CopyContactId(Contact? contact)
     {
@@ -163,6 +182,20 @@ public partial class MessengerViewModel : ViewModelBase
         catch
         {
             StatusText = null;
+        }
+    }
+
+    private void OpenContactInformation(Contact? contact)
+    {
+        var url = TryBuildContactInformationUrl(contact);
+        if (url == null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Could not open browser: " + ex.Message;
         }
     }
 
