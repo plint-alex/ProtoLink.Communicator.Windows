@@ -456,6 +456,17 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 _vm.CopyLinkCommand.Execute(null);
             e.Handled = true;
         }
+        else if (NotesDeleteKey.ShouldHandlePageDeleteKey(
+                     key,
+                     NotesTreeView.IsKeyboardFocusWithin,
+                     NotesWebView.IsKeyboardFocusWithin))
+        {
+            if (NotesTreeView.SelectedItem is TreeViewItem { Tag: TreeItemViewModel selected })
+            {
+                ConfirmAndDeletePage(selected);
+                e.Handled = true;
+            }
+        }
     }
 
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -1864,14 +1875,22 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void OnDeleteFolderClick(object sender, RoutedEventArgs e)
     {
         if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        ConfirmAndDeletePage(vm);
+        NotesTreeContextMenu.Tag = null;
+    }
+
+    /// <summary>
+    /// Shared confirm + <see cref="NotesViewModel.DeleteFolder"/> for context-menu Delete and Delete/Back keys.
+    /// </summary>
+    private void ConfirmAndDeletePage(TreeItemViewModel vm)
+    {
+        if (_vm == null) return;
 
         var folderPath = vm.Item.FullPath;
         var name = vm.Name;
         if (string.IsNullOrEmpty(folderPath)) return;
 
-        var rootPath = _vm.RootPath;
-        if (!string.IsNullOrEmpty(rootPath) &&
-            string.Equals(Path.GetFullPath(folderPath), Path.GetFullPath(rootPath), StringComparison.OrdinalIgnoreCase))
+        if (!NotesDeleteKey.IsDeletablePagePath(folderPath, _vm.RootPath))
         {
             _vm.StatusText = "Cannot delete the notes root folder.";
             return;
@@ -1890,8 +1909,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             if (openAffected && NotesWebView.CoreWebView2 != null && _vm.CurrentPagePath != null)
                 _ = NavigateToAsync(_vm.CurrentPagePath);
         }
-
-        NotesTreeContextMenu.Tag = null;
     }
 
     private async void OnFormatBold(object sender, RoutedEventArgs e) => await RunFormatAsync(c => NotesWebFormatting.ApplyCommandAsync(c, "bold"));
