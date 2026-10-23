@@ -27,7 +27,7 @@ public class CloudSyncRoundtripIntegrationTests
             return;
         }
 
-        var login = Environment.GetEnvironmentVariable("PROTOLINK_TEST_LOGIN") ?? "alex.plint@gmail.com";
+        var login = Environment.GetEnvironmentVariable("PROTOLINK_TEST_LOGIN") ?? MessengerTestCredentials.PrimaryLogin;
         var baseUrl = IntegrationTestHttp.GetBaseUrl();
         using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromSeconds(120) };
 

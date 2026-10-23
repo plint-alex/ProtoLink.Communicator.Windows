@@ -11,14 +11,14 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 /// Live AT-M11 / AT-M12 / AT-M22 / AT-M23 against <em>messenger-media shaped</em> data:
 /// A uploads under <c>CloudRoot/Chats/{B}</c> with a peer-read grant on the file only
 /// (same shape as <c>MessengerViewModel.MediaSend</c>), then B / C / anon probe ACL.
-/// Account C = default-page login (<c>alex.plint@yandex.ru</c>) — not a party to A↔B.
+/// Account C = <see cref="MessengerTestCredentials.DefaultPageLogin"/> — not a party to A↔B.
 /// </summary>
 [Trait("Category", "Live")]
 [Trait("Category", "Integration")]
 public sealed class MessengerMediaFeatureAclLiveTests
 {
     private static readonly Guid NameTypeId = Guid.Parse("00010003-0000-0000-0000-000000000000");
-    private const string AccountCLogin = "alex.plint@yandex.ru";
+    private const string AccountCLogin = MessengerTestCredentials.DefaultPageLogin;
 
     private readonly ITestOutputHelper _output;
 

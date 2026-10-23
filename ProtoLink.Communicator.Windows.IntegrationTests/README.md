@@ -26,7 +26,7 @@ dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Of
 
 Live ACL (needs API + password): `CloudFilesAclLiveTests` covers share AT-S30/S31 — private `getFile`/`getImage` 403 `no_access` for anon and partner, 200 for owner, unknown id 404 `not_found`, `Cache-Control: private` then `public, max-age=86400` after a public grant. Optional `PROTOLINK_TEST_PARTNER_PASSWORD` (defaults to `PROTOLINK_TEST_PASSWORD`).
 
-Messenger-media feature ACL (AT-M11/12/22/23): `MessengerMediaFeatureAclLiveTests` creates a `CloudRoot/Chats/…` file with peer-read at create time (same shape as MediaSend), asserts B can read, C (`alex.plint@yandex.ru`) + anon get 403 `no_access` on getFile/getImage, and `Cache-Control: private`. Server AT-M30: `CloudFilesAddFileSizeLimitLiveTests`.
+Messenger-media feature ACL (AT-M11/12/22/23): `MessengerMediaFeatureAclLiveTests` creates a `CloudRoot/Chats/…` file with peer-read at create time (same shape as MediaSend), asserts B can read, C (`MessengerTestCredentials.DefaultPageLogin`) + anon get 403 `no_access` on getFile/getImage, and `Cache-Control: private`. Server AT-M30: `CloudFilesAddFileSizeLimitLiveTests`.
 
 `SeedContentHashesFromLocalTests` (`Category=LocalProfile`) also makes no HTTP call. It reads the real Communicator profile under `%LocalAppData%\ProtoLinkCommunicator` and may write `ContentHash` into that sync store. It is not part of the offline filter.
 
@@ -40,7 +40,17 @@ $env:PROTOLINK_TEST_PASSWORD = "<test account password>"   # login-based tests
 dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Live
 ```
 
-`PROTOLINK_TEST_LOGIN` overrides the default login (`alex.plint@gmail.com`). Optional: `PROTOLINK_TEST_CLOUD_FOLDER_ID`, `PROTOLINK_COMPARE_REL_PATH`, `PROTOLINK_TEST_HTTP_TIMEOUT_SEC`.
+### Test accounts (emails only)
+
+See Agents `docs/ops/environment-map` § test accounts. Password is never stored in this repo — use User-scope `PROTOLINK_TEST_PASSWORD`.
+
+| Role | Email | Constant / override |
+| --- | --- | --- |
+| Custom page (fixture primary) | `alex.plint@gmail.com` | `MessengerTestCredentials.PrimaryLogin` |
+| Default page | `alex.plint@yandex.ru` | `MessengerTestCredentials.DefaultPageLogin` |
+| Partner (AT stranger) | `molina.tina@ya.ru` | `MessengerTestCredentials.PartnerLogin` |
+
+`PrimaryLogin` stays gmail unless a named test needs default-page (then use `DefaultPageLogin` or set `PROTOLINK_TEST_LOGIN`). Optional: `PROTOLINK_TEST_CLOUD_FOLDER_ID`, `PROTOLINK_COMPARE_REL_PATH`, `PROTOLINK_TEST_HTTP_TIMEOUT_SEC`.
 
 Login-based live tests (`Messenger*`, `CloudGetEntities*`, `CloudSyncRoundtrip*`, `CloudFileNameAfterUpload*`, `SyncEngineE2E*`, `CloudSyntheticTrashCleanup*`, `SignalRCommandsHubLiveTests`) need `PROTOLINK_TEST_PASSWORD`. Several others use the desktop app's `token.dat` and local notes folder (`SyncWalkDiagnostics*`, `SyncRootListing*`, `SyncFolderTiming*`, `FilmsOnlyUpload*`, `MyNotesFolderReconcile*`, `LocalNotesVsCloud*`, `CleanupMyNotesTrash*`).
 
