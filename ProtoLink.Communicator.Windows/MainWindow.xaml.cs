@@ -86,12 +86,17 @@ public partial class MainWindow : Window
     {
         if (_messengerViewModel != null)
             _messengerViewModel.IsAppForeground = true;
+        // AT-N12: restore Notes airspace Popups that still have desired-open state.
+        _notesView.ResumeAirspacePopupsForForeground();
     }
 
     private void Window_Deactivated(object sender, EventArgs e)
     {
         if (_messengerViewModel != null)
             _messengerViewModel.IsAppForeground = false;
+        // AT-N12 / E5b: close Popup HWNDs so Folder files / format bar / Share sheet
+        // do not stay desktop-topmost over other apps.
+        _notesView.SuspendAirspacePopupsForBackground();
     }
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)

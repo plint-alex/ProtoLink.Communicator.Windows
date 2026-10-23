@@ -49,6 +49,9 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private TreeViewItem? _treeDragSourceItem;
     private bool _treeDragInProgress;
     private ShareSheetViewModel? _shareSheetHooked;
+    /// <summary>AT-N12: true while MainWindow is deactivated — keep Popup HWNDs closed.</summary>
+    private bool _airspacePopupsSuspended;
+    private bool _restoreFormatBarAfterForeground;
 
     public NotesView()
     {
@@ -213,9 +216,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         var sheet = _vm?.ShareSheet;
         HookShareSheet(sheet);
-        var open = sheet is { IsOpen: true };
+        var desired = sheet is { IsOpen: true };
         NotesShareSheetPopup.DataContext = sheet;
         NotesShareSheetView.DataContext = sheet;
+        var open = NotesAirspacePopupForegroundGate.ShouldOpenPopup(desired, _airspacePopupsSuspended);
         if (!open)
         {
             NotesShareSheetPopup.IsOpen = false;
@@ -229,6 +233,55 @@ public partial class NotesView : System.Windows.Controls.UserControl
         NotesShareSheetPopup.HorizontalOffset = Math.Max(0, hostW - ShareSheetPopupWidth);
         NotesShareSheetPopup.VerticalOffset = 0;
         NotesShareSheetPopup.IsOpen = true;
+    }
+
+    /// <summary>
+    /// AT-N12 / E5b: close airspace Popup HWNDs while Communicator is not foreground so they
+    /// do not paint over other apps. VM desire (ShowSiblingFiles / ShareSheet.IsOpen) is kept;
+    /// call <see cref="ResumeAirspacePopupsForForeground"/> on Activated to reopen.
+    /// </summary>
+    public void SuspendAirspacePopupsForBackground()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(SuspendAirspacePopupsForBackground);
+            return;
+        }
+
+        if (_airspacePopupsSuspended)
+            return;
+
+        _restoreFormatBarAfterForeground = FormatBarPopup.IsOpen;
+        _airspacePopupsSuspended = true;
+        SiblingFilesPopup.IsOpen = false;
+        NotesShareSheetPopup.IsOpen = false;
+        HideFormatBar();
+    }
+
+    /// <summary>AT-N12: restore airspace Popups that still have desired-open state after Activated.</summary>
+    public void ResumeAirspacePopupsForForeground()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ResumeAirspacePopupsForForeground);
+            return;
+        }
+
+        if (!_airspacePopupsSuspended)
+            return;
+
+        _airspacePopupsSuspended = false;
+        ApplySiblingPanelLayout();
+        ApplyShareSheetPopup();
+        if (NotesAirspacePopupForegroundGate.ShouldRestoreFormatBar(
+                _restoreFormatBarAfterForeground,
+                _vm is { HasOpenPage: true }))
+        {
+            FormatBarPopup.IsOpen = true;
+            PositionFormatBar();
+        }
+
+        _restoreFormatBarAfterForeground = false;
     }
 
     private void ApplySiblingPanelLayout()
@@ -269,7 +322,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         // Popup does not inherit DataContext from the visual tree — assign explicitly.
         SiblingFilesPopup.DataContext = _vm;
-        SiblingFilesPopup.IsOpen = show;
+        var popupOpen = NotesAirspacePopupForegroundGate.ShouldOpenPopup(show, _airspacePopupsSuspended);
+        SiblingFilesPopup.IsOpen = popupOpen;
         if (show)
         {
             SiblingPanel.Width = Math.Max(1, SiblingPanelSpacer.ActualWidth);

@@ -27,7 +27,11 @@ public partial class NotesView
         var hasSelection = root.TryGetProperty("hasSelection", out var hasEl) && hasEl.GetBoolean();
         if (!hasSelection)
         {
-            Dispatcher.BeginInvoke(new Action(HideFormatBar));
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _restoreFormatBarAfterForeground = false;
+                HideFormatBar();
+            }));
             return;
         }
 
@@ -39,7 +43,8 @@ public partial class NotesView
 
     private void OnDismissFormatBarFromEditor()
     {
-        var wasOpen = FormatBarPopup.IsOpen;
+        var wasOpen = FormatBarPopup.IsOpen || _restoreFormatBarAfterForeground;
+        _restoreFormatBarAfterForeground = false;
         HideFormatBar();
         if (wasOpen)
             return;
@@ -66,6 +71,14 @@ public partial class NotesView
         _selectionCenterX = selectionCenterX;
         _selectionTop = selectionTop;
         _selectionBottom = selectionBottom;
+
+        // AT-N12: do not open Popup HWND while app is backgrounded; remember for Resume.
+        if (_airspacePopupsSuspended)
+        {
+            _restoreFormatBarAfterForeground = true;
+            HideFormatBar();
+            return;
+        }
 
         FormatBarPopup.IsOpen = true;
         FormatBarPanel.UpdateLayout();
