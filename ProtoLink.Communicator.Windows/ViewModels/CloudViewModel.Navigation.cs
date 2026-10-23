@@ -193,6 +193,23 @@ public partial class CloudViewModel
         }
     }
 
+    private void CopyId(Guid? entityId)
+    {
+        var text = entityId is { } id
+            ? ShareAccountStrings.FormatEntityIdForClipboard(id)
+            : null;
+        if (text == null) return;
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            StatusText = ShareAccountStrings.CopiedLabel(_settingsService.LoadSettings().UiLanguage);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Could not copy id: " + ex.Message;
+        }
+    }
+
     private void OpenInBrowser(Guid? entityId)
     {
         if (entityId is not { } id) return;

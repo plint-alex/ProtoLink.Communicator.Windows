@@ -44,6 +44,13 @@ public class ShareAccountStringsTests
     }
 
     [Fact]
+    public void CopyId_EnglishAndRussian()
+    {
+        Assert.Equal("Copy id", ShareAccountStrings.CopyIdLabel("en-US"));
+        Assert.Equal("Копировать id", ShareAccountStrings.CopyIdLabel("ru-RU"));
+    }
+
+    [Fact]
     public void FormatUserIdForClipboard_DFormatOrNull()
     {
         var id = Guid.Parse("8f3a1111-2222-3333-4444-555555555555");
@@ -54,5 +61,9 @@ public class ShareAccountStringsTests
             ShareAccountStrings.FormatUserIdForClipboard("8F3A1111-2222-3333-4444-555555555555"));
         Assert.Null(ShareAccountStrings.FormatUserIdForClipboard(""));
         Assert.Null(ShareAccountStrings.FormatUserIdForClipboard("not-a-guid"));
+        Assert.Equal(
+            ShareAccountStrings.FormatUserIdForClipboard(id),
+            ShareAccountStrings.FormatEntityIdForClipboard(id));
+        Assert.Null(ShareAccountStrings.FormatEntityIdForClipboard(Guid.Empty));
     }
 }

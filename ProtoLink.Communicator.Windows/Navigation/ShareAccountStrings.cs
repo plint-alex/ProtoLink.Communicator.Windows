@@ -22,9 +22,17 @@ public static class ShareAccountStrings
     public static string CopyContactIdLabel(string? uiLanguage) =>
         IsRussian(uiLanguage) ? "Скопировать ID контакта" : "Copy contact id";
 
-    /// <summary>D-format Guid for Add contact / Share paste; null when unresolved.</summary>
+    /// <summary>Cloud / Notes: copy entity Guid (raw D), not the canonical URL.</summary>
+    public static string CopyIdLabel(string? uiLanguage) =>
+        IsRussian(uiLanguage) ? "Копировать id" : "Copy id";
+
+    /// <summary>D-format Guid for Add contact / Share paste / Cloud Copy id; null when unresolved.</summary>
     public static string? FormatUserIdForClipboard(Guid userId) =>
         userId == Guid.Empty ? null : userId.ToString("D");
+
+    /// <summary>Entity Guid D for Cloud Copy id; same gate as <see cref="FormatUserIdForClipboard(Guid)"/>.</summary>
+    public static string? FormatEntityIdForClipboard(Guid entityId) =>
+        FormatUserIdForClipboard(entityId);
 
     /// <summary>Normalize a contact user id string to D-format; null when empty/invalid.</summary>
     public static string? FormatUserIdForClipboard(string? userId)

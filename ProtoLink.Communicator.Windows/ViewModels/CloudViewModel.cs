@@ -137,6 +137,7 @@ public partial class CloudViewModel : ViewModelBase
             },
             _ => CurrentEntity is { ParentId: not null });
         CopyLinkCommand = new RelayCommand(p => CopyLink(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
+        CopyIdCommand = new RelayCommand(p => CopyId(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         OpenInBrowserCommand = new RelayCommand(p => OpenInBrowser(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         OpenShareCommand = new RelayCommand(
             async p => await OpenShareAsync(ShareTargetId(p)),
@@ -379,8 +380,12 @@ public partial class CloudViewModel : ViewModelBase
     public ICommand DownloadCurrentCommand { get; }
     /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
     public ICommand CopyLinkCommand { get; }
+    /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/> — Guid D only.</summary>
+    public ICommand CopyIdCommand { get; }
     /// <summary>Parameter: a row (<see cref="CloudItemViewModel"/>) or null for <see cref="CurrentEntity"/>.</summary>
     public ICommand OpenInBrowserCommand { get; }
+    public string CopyIdLabel =>
+        ShareAccountStrings.CopyIdLabel(_settingsService.LoadSettings().UiLanguage);
     /// <summary>Opens the Share side sheet for current entity or a row parameter.</summary>
     public ICommand OpenShareCommand { get; }
     public ShareSheetViewModel ShareSheet { get; }

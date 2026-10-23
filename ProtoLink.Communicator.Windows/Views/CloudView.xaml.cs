@@ -465,8 +465,9 @@ public partial class CloudView : System.Windows.Controls.UserControl
             AddDeleteMenuItem(menu, item);
         }
         menu.Items.Insert(1, new MenuItem { Header = "Copy link", Command = _vm.CopyLinkCommand, CommandParameter = item });
-        menu.Items.Insert(2, new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand, CommandParameter = item });
-        menu.Items.Insert(3, new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand, CommandParameter = item });
+        menu.Items.Insert(2, new MenuItem { Header = _vm.CopyIdLabel, Command = _vm.CopyIdCommand, CommandParameter = item });
+        menu.Items.Insert(3, new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand, CommandParameter = item });
+        menu.Items.Insert(4, new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand, CommandParameter = item });
         if (_vm.CanLeaveSharedRow(item))
         {
             var lang = _vm.ShareSheet.Lang;
