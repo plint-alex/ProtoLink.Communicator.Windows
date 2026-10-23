@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Windows.Input;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -21,6 +23,7 @@ public class AuthFlowViewModel : ViewModelBase
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly IAuthService _authService;
+    private readonly ISettingsService? _settingsService;
     private AuthFlowStep _step = AuthFlowStep.Welcome;
     private string _email = string.Empty;
     private string _password = string.Empty;
@@ -30,9 +33,10 @@ public class AuthFlowViewModel : ViewModelBase
     private string _statusMessage = string.Empty;
     private bool _isBusy;
 
-    public AuthFlowViewModel(IAuthService authService)
+    public AuthFlowViewModel(IAuthService authService, ISettingsService? settingsService = null)
     {
         _authService = authService;
+        _settingsService = settingsService;
         StartMessagingCommand = new RelayCommand(_ => GoTo(AuthFlowStep.Email), _ => !IsBusy);
         HaveAccountCommand = new RelayCommand(_ => GoTo(AuthFlowStep.Login), _ => !IsBusy);
         EmailNextCommand = new RelayCommand(_ => EmailNext(), _ => !IsBusy);
@@ -44,6 +48,7 @@ public class AuthFlowViewModel : ViewModelBase
             GoTo(AuthFlowStep.Login);
         }, _ => !IsBusy);
         LoginCommand = new RelayCommand(async _ => await LoginAsync(), _ => !IsBusy);
+        ForgotPasswordCommand = new RelayCommand(_ => OpenForgotPassword(), _ => !IsBusy);
         BackCommand = new RelayCommand(_ => GoBack(), _ => !IsBusy && Step != AuthFlowStep.Welcome);
         OpenSettingsCommand = new RelayCommand(_ => OnOpenSettings?.Invoke(), _ => !IsBusy);
     }
@@ -123,11 +128,19 @@ public class AuthFlowViewModel : ViewModelBase
     public ICommand ResendCommand { get; }
     public ICommand ContinueToLoginCommand { get; }
     public ICommand LoginCommand { get; }
+    public ICommand ForgotPasswordCommand { get; }
     public ICommand BackCommand { get; }
     public ICommand OpenSettingsCommand { get; }
 
     public event Action? OnLoginSuccess;
     public event Action? OnOpenSettings;
+
+    /// <summary>Web Client forgot-password URL from settings (or default public site).</summary>
+    public string TryBuildForgotPasswordUrl()
+    {
+        var settings = _settingsService?.LoadSettings();
+        return PublicSitePaths.BuildForgotPasswordUrl(settings?.PublicSiteBaseUrl);
+    }
 
     private void GoTo(AuthFlowStep step) => Step = step;
 
@@ -235,6 +248,20 @@ public class AuthFlowViewModel : ViewModelBase
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private void OpenForgotPassword()
+    {
+        ErrorMessage = string.Empty;
+        var url = TryBuildForgotPasswordUrl();
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = "Could not open browser: " + ex.Message;
         }
     }
 }

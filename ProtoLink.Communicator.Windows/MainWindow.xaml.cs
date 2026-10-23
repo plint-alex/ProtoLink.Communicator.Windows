@@ -311,7 +311,7 @@ public partial class MainWindow : Window
         AuthFlowPanel.Visibility = Visibility.Visible;
         if (AuthFlowPanel.Children.Count == 0)
         {
-            var vm = new AuthFlowViewModel(_authService);
+            var vm = new AuthFlowViewModel(_authService, _settingsService);
             vm.OnLoginSuccess += () =>
             {
                 AuthFlowPanel.Children.Clear();

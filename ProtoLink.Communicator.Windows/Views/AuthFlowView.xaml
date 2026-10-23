@@ -80,7 +80,9 @@
                     <PasswordBox x:Name="LoginPasswordBox" Margin="0,0,0,16" Padding="12,10" Height="40"
                                  PasswordChanged="LoginPasswordBox_PasswordChanged"/>
                     <Button Content="Log in" Command="{Binding LoginCommand}" IsDefault="True"
-                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch"/>
+                            Style="{DynamicResource PrimaryButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"/>
+                    <Button Content="Forgot password?" Command="{Binding ForgotPasswordCommand}"
+                            Style="{DynamicResource GhostButton}" HorizontalAlignment="Stretch"/>
                 </StackPanel>
 
                 <ProgressBar IsIndeterminate="True" Height="4" Margin="0,16,0,0"
