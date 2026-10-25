@@ -177,13 +177,12 @@ public sealed class SyncEngine
             // Always download remote bytes and compare hashes. Never forge remoteHash from
             // meta or upload when remote content is unknown — that left devices on Test4
             // while cloud had Test5 (and the reverse overwrite).
+            // null = failed/not-found → soft-fail this item; Length==0 is legitimate empty content.
             var remoteBytes = await DownloadBytesOrNullAsync(meta.RemoteId, ct);
-            if (remoteBytes == null || remoteBytes.Length == 0)
+            if (remoteBytes == null)
             {
-                throw new SyncException(
-                    "Remote download failed or returned empty; cannot reconcile file.",
-                    relativePath: path,
-                    localHash: localHash);
+                SyncRemoteDownload.LogFailed("ApplyComparePhase", path, meta.RemoteId);
+                continue;
             }
 
             var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
@@ -451,12 +450,13 @@ public sealed class SyncEngine
                             continue;
                         }
                         // Adopt existing remote id: converge by content hash (never upload solely because size is unknown).
+                        // null = failed/not-found → soft-fail this item; Length==0 is legitimate empty content.
                         var remoteBytes = await DownloadBytesOrNullAsync(existingRemote.Entry.Id, ct);
-                        if (remoteBytes == null || remoteBytes.Length == 0)
+                        if (remoteBytes == null)
                         {
-                            throw new SyncException(
-                                "Remote download failed or returned empty while adopting local add.",
-                                relativePath: path);
+                            SyncRemoteDownload.LogFailed(
+                                "ApplyLocalPhase.Added", path, existingRemote.Entry.Id);
+                            continue;
                         }
                         var localHash = ContentHashUtil.TrySha256HexFile(full);
                         if (localHash == null)

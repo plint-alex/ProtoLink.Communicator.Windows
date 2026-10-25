@@ -54,7 +54,8 @@ public static class ContentHashUtil
 
     /// <summary>
     /// Convergence decision once both local and remote content hashes are known.
-    /// Never call with an empty remoteHash — download first; on download failure throw.
+    /// Never call with an empty remoteHash string — download first; on null download soft-fail
+    /// the item (caller). Hash of empty remote bytes is a valid remoteHash.
     /// Ambiguous cases (empty meta, both diverged) → Conflict (no silent LWW / Write bias).
     /// </summary>
     public static SyncDirectionDecide.Action DecideByHash(
