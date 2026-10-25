@@ -471,6 +471,9 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            LiveLinks.Clear();
+            InactiveLinks.Clear();
+            People.Clear();
             ErrorText = ShareSheetStrings.LoadFailed(Lang);
             _onStatus?.Invoke(ErrorText + " " + ex.Message);
         }

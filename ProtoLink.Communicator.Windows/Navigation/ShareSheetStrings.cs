@@ -166,6 +166,14 @@ public static class ShareSheetStrings
     public static string LoadFailed(string? lang) =>
         IsRussian(lang) ? "Не удалось загрузить доступ. Повторите." : "Couldn't load sharing. Try again.";
 
+    /// <summary>AddPermission / Add people mutation failure (not sheet List/ListGrants).</summary>
+    public static string AddFailed(string? lang) =>
+        IsRussian(lang) ? "Не удалось добавить. Повторите." : "Couldn't add this. Try again.";
+
+    /// <summary>Soft status when Messenger contacts picker fails; must not replace a successful sheet load banner.</summary>
+    public static string ContactsLoadSoft(string? lang) =>
+        IsRussian(lang) ? "Не удалось загрузить контакты." : "Couldn't load contacts.";
+
     public static string GuestLinkTurnedOff(string? lang) =>
         IsRussian(lang) ? "Гостевая ссылка отключена" : "Guest link turned off";
 

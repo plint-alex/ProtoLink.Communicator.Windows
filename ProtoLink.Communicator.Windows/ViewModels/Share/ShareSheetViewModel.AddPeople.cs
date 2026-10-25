@@ -314,8 +314,11 @@ public sealed partial class ShareSheetViewModel
         }
         catch (Exception ex)
         {
-            ErrorText = ShareSheetStrings.LoadFailed(Lang);
-            _onStatus?.Invoke(ErrorText + " " + ex.Message);
+            // Soft-fail: keep successful List/ListGrants ErrorText (or none). Empty picker + soft status only.
+            _allContacts = new();
+            ContactPickerItems.Clear();
+            OnPropertyChanged(nameof(ShowNoContacts));
+            _onStatus?.Invoke(ShareSheetStrings.ContactsLoadSoft(Lang) + " " + ex.Message);
         }
     }
 
@@ -409,7 +412,7 @@ public sealed partial class ShareSheetViewModel
         }
         catch (Exception)
         {
-            ErrorText = ShareSheetStrings.LoadFailed(Lang);
+            ErrorText = ShareSheetStrings.AddFailed(Lang);
             _onStatus?.Invoke(ErrorText);
         }
         finally
