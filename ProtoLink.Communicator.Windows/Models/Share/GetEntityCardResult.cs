@@ -13,4 +13,8 @@ public sealed class GetEntityCardResult
 
     [JsonPropertyName("code")]
     public string? Code { get; set; }
+
+    /// <summary>Privileged parent axis (AT-PC5 / graph-model D1). Present on GetEntity.</summary>
+    [JsonPropertyName("mainParentId")]
+    public Guid? MainParentId { get; set; }
 }

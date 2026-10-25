@@ -91,6 +91,13 @@ public partial class CloudViewModel
 
     private async Task NavigateToParentAsync()
     {
+        // AT-PC5: from a file, Up opens the containing folder (MainParent), not the grandparent.
+        if (CurrentEntity is { IsFolder: false } && BreadcrumbPath.Count >= 1)
+        {
+            await NavigateToBreadcrumbAsync(BreadcrumbPath.Count - 1);
+            return;
+        }
+
         if (BreadcrumbPath.Count < 2) return;
         await NavigateToBreadcrumbAsync(BreadcrumbPath.Count - 2);
     }

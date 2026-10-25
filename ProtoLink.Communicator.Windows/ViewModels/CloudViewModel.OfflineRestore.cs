@@ -63,25 +63,62 @@ public partial class CloudViewModel
     {
         var found = await _api.GetEntitiesByIdsAsync(new[] { entityId }, includeValues: true);
         var entity = found.FirstOrDefault();
-        if (entity == null || !CloudEntityRestore.IsNavigableCloudCode(entity.Code))
+        if (entity == null)
+            return null;
+
+        // Anti-SAP (AT-PC6): Photos host → library folder entity, never stay on host-only chrome.
+        if (string.Equals(entity.Code, PhotosLibrary.HostCode, StringComparison.Ordinal))
+        {
+            await EnsurePhotosLibraryIdAsync();
+            if (_photosLibraryId is { } lib && lib != entityId)
+                return await TryResolveEntityPathAsync(lib);
+            return null;
+        }
+
+        if (!CloudEntityRestore.IsNavigableCloudCode(entity.Code))
             return null;
 
         var chain = new List<CloudEntityRestore.AncestorNode>();
         var current = entity;
+        Guid? currentMainParentId = null;
+        try
+        {
+            var card = await _api.GetEntityCardAsync(entityId);
+            currentMainParentId = card?.MainParentId;
+        }
+        catch
+        {
+            // Fall back to first Cloud folder/root parent.
+        }
+
         for (var guard = 0; guard < 64; guard++)
         {
             var display = current.Code == CloudEntityCodes.CloudRoot
                 ? "Cloud"
                 : CloudApiService.GetDisplayName(current);
             chain.Insert(0, new CloudEntityRestore.AncestorNode(current.Id, current.Code ?? "", display));
+            _folderTreeCodes[current.Id] = current.Code ?? "";
             if (current.Code == CloudEntityCodes.CloudRoot)
                 break;
 
             var parents = await _api.GetParentEntitiesAsync(current.Id, includeValues: true);
-            var parent = parents.FirstOrDefault(p => CloudEntityRestore.IsCloudFolderOrRoot(p.Code));
-            if (parent == null)
+            var parent = CloudMainParent.PickParent(currentMainParentId, parents);
+            if (parent == null || !CloudEntityRestore.IsCloudFolderOrRoot(parent.Code))
                 return null;
+
+            Guid? nextMain = null;
+            try
+            {
+                var parentCard = await _api.GetEntityCardAsync(parent.Id);
+                nextMain = parentCard?.MainParentId;
+            }
+            catch
+            {
+                // ignore
+            }
+
             current = parent;
+            currentMainParentId = nextMain;
         }
 
         var open = CloudEntityRestore.BuildOpenTarget(chain);

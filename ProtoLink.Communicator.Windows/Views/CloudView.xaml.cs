@@ -340,6 +340,31 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private CloudItemViewModel? _pressedItem;
 
     /// <summary>Single click opens. The second press of a double-click must not open the row that replaced the clicked folder.</summary>
+    private void OnFolderTreeDoubleClick(object sender, MouseButtonEventArgs e) =>
+        OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
+
+    private void OnFolderTreeItemClick(object sender, MouseButtonEventArgs e) =>
+        OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
+
+    private void OpenFolderTreeFromSender(DependencyObject? source)
+    {
+        if (_vm == null || source == null) return;
+        var row = FindFolderTreeRow(source);
+        if (row == null) return;
+        if (_vm.OpenFolderTreeCommand.CanExecute(row))
+            _vm.OpenFolderTreeCommand.Execute(row);
+    }
+
+    private static CloudFolderTreeRowViewModel? FindFolderTreeRow(DependencyObject? start)
+    {
+        for (var d = start; d != null; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is FrameworkElement { DataContext: CloudFolderTreeRowViewModel row })
+                return row;
+        }
+        return null;
+    }
+
     private void OnItemMouseDown(object sender, MouseButtonEventArgs e)
     {
         var item = (sender as ListBoxItem)?.DataContext as CloudItemViewModel;

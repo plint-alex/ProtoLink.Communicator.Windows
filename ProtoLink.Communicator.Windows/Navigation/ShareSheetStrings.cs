@@ -233,6 +233,13 @@ public static class ShareSheetStrings
     public static string Recent(string? lang) =>
         IsRussian(lang) ? "Недавние" : "Recent";
 
+    /// <summary>Cloud hub row → Photos library folder (E7 / AT-PC).</summary>
+    public static string Photos(string? lang) =>
+        IsRussian(lang) ? "Фото" : "Photos";
+
+    public static string FoldersTree(string? lang) =>
+        IsRussian(lang) ? "Папки" : "Folders";
+
     public static string CloudHub(string? lang) =>
         IsRussian(lang) ? "Облако" : "Cloud";
 

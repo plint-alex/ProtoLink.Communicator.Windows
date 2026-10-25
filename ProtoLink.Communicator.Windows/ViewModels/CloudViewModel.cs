@@ -151,6 +151,7 @@ public partial class CloudViewModel : ViewModelBase
             _ => ShowAddLocalFolderCta);
         ShowErrorDetailsCommand = new RelayCommand(_ => ShowErrorDetails(), _ => HasErrorDetails);
         InitLeaveCommands();
+        InitFolderTreeCommands();
         _history.Changed += () =>
         {
             OnPropertyChanged(nameof(CanGoBack));
@@ -326,6 +327,7 @@ public partial class CloudViewModel : ViewModelBase
         CurrentEntity is null ? ""
         : CurrentEntity.Id == CloudVirtualNodes.SharedWithMeId ? "👥"
         : CurrentEntity.Id == CloudVirtualNodes.RecentId ? "🕒"
+        : _photosLibraryId is { } lib && CurrentEntity.Id == lib ? "🖼"
         : CurrentEntity.IsFolder ? "📁" : "📄";
     public string HeaderSubtitle
     {
@@ -339,7 +341,10 @@ public partial class CloudViewModel : ViewModelBase
         }
     }
 
-    public bool CanNavigateParent => BreadcrumbPath.Count >= 2;
+    public bool CanNavigateParent =>
+        CurrentEntity is { IsFolder: false }
+            ? BreadcrumbPath.Count >= 1
+            : BreadcrumbPath.Count >= 2;
     public bool IsFolderOpen => CurrentEntity?.IsFolder == true;
     public bool IsFileOpen => CurrentEntity is { IsFolder: false };
     /// <summary>Entity id for the Info panel (AT-S40); empty when nothing is open.</summary>
@@ -545,6 +550,7 @@ public partial class CloudViewModel : ViewModelBase
             List<CloudItemViewModel> fresh;
             if (folderId == CloudVirtualNodes.HubId)
             {
+                await EnsurePhotosLibraryIdAsync();
                 fresh = BuildHubListing();
             }
             else if (folderId == CloudVirtualNodes.SharedWithMeId)
@@ -584,11 +590,13 @@ public partial class CloudViewModel : ViewModelBase
             ClearNetworkBanner();
             if (!quiet)
                 StatusText = "Ready";
+            _ = RefreshFolderTreeAsync();
         }
         catch (Exception ex)
         {
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
             ReportCaughtException(ex, asNetworkFailure: true);
+            ClearFolderTree();
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsSharedWithMeListing));
@@ -620,7 +628,7 @@ public partial class CloudViewModel : ViewModelBase
     private List<CloudItemViewModel> BuildHubListing()
     {
         var lang = _settingsService.LoadSettings().UiLanguage;
-        return new List<CloudItemViewModel>
+        var rows = new List<CloudItemViewModel>
         {
             new()
             {
@@ -631,28 +639,44 @@ public partial class CloudViewModel : ViewModelBase
                 TypeGlyphOverride = "📁",
                 SubtitleOverride = string.Empty,
                 UpdateTime = DateTime.UtcNow
-            },
-            new()
-            {
-                Id = CloudVirtualNodes.SharedWithMeId,
-                Name = ShareSheetStrings.SharedWithMe(lang),
-                IsFolder = true,
-                IsVirtualEntry = true,
-                TypeGlyphOverride = "👥",
-                SubtitleOverride = string.Empty,
-                UpdateTime = DateTime.UtcNow
-            },
-            new()
-            {
-                Id = CloudVirtualNodes.RecentId,
-                Name = ShareSheetStrings.Recent(lang),
-                IsFolder = true,
-                IsVirtualEntry = true,
-                TypeGlyphOverride = "🕒",
-                SubtitleOverride = string.Empty,
-                UpdateTime = DateTime.UtcNow
             }
         };
+
+        if (_photosLibraryId is { } photosLib && photosLib != Guid.Empty)
+        {
+            rows.Add(new CloudItemViewModel
+            {
+                Id = photosLib,
+                Name = ShareSheetStrings.Photos(lang),
+                IsFolder = true,
+                IsVirtualEntry = false,
+                TypeGlyphOverride = "🖼",
+                SubtitleOverride = string.Empty,
+                UpdateTime = DateTime.UtcNow
+            });
+        }
+
+        rows.Add(new CloudItemViewModel
+        {
+            Id = CloudVirtualNodes.SharedWithMeId,
+            Name = ShareSheetStrings.SharedWithMe(lang),
+            IsFolder = true,
+            IsVirtualEntry = true,
+            TypeGlyphOverride = "👥",
+            SubtitleOverride = string.Empty,
+            UpdateTime = DateTime.UtcNow
+        });
+        rows.Add(new CloudItemViewModel
+        {
+            Id = CloudVirtualNodes.RecentId,
+            Name = ShareSheetStrings.Recent(lang),
+            IsFolder = true,
+            IsVirtualEntry = true,
+            TypeGlyphOverride = "🕒",
+            SubtitleOverride = string.Empty,
+            UpdateTime = DateTime.UtcNow
+        });
+        return rows;
     }
 
     /// <summary>
