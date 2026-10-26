@@ -47,7 +47,8 @@
                                             Foreground="{DynamicResource ForegroundBrush}"/>
                                 </Grid>
                             </Border>
-                            <ContentPresenter Grid.Row="1" ContentSource="SelectedContent" Margin="0"/>
+                            <!-- TabItemAutomationPeer exposes the selected tab's content to UI Automation only through PART_SelectedContentHost. -->
+                            <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent" Margin="0"/>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>

@@ -1245,7 +1245,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
             CollectExpandedRecursive(child, set);
     }
 
-    private TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
+    /// <summary>UIA Name must equal the page title so installed verify can select rows without screen coordinates.</summary>
+    internal static void ApplyTreeItemAutomationName(TreeViewItem tvi, string pageTitle) =>
+        System.Windows.Automation.AutomationProperties.SetName(tvi, pageTitle);
+
+    internal TreeViewItem CreateTreeItem(TreeItemViewModel vm, IReadOnlySet<string>? expandedPaths = null)
     {
         var item = new TreeViewItem { Tag = vm };
         ApplyTreeItemHeader(item, vm);
@@ -1264,6 +1268,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void ApplyTreeItemHeader(TreeViewItem tvi, TreeItemViewModel vm)
     {
+        ApplyTreeItemAutomationName(tvi, vm.Name);
         var title = new TextBlock
         {
             Text = vm.Name,
