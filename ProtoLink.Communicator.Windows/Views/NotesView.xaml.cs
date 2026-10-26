@@ -52,6 +52,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
     /// <summary>AT-N12: true while MainWindow is deactivated — keep Popup HWNDs closed.</summary>
     private bool _airspacePopupsSuspended;
     private bool _restoreFormatBarAfterForeground;
+    /// <summary>Viewport to restore after NavigateToString remount (in-place apply preferred).</summary>
+    private NotesEditorViewport.State? _pendingViewportRestore;
 
     public NotesView()
     {
@@ -542,17 +544,41 @@ public partial class NotesView : System.Windows.Controls.UserControl
             if (string.Equals(diskInner, _vm.HtmlSyncedToDisk, StringComparison.Ordinal))
                 return;
 
-            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
-            _isLoading = true;
-            var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-            core.NavigateToString(html);
-            _vm.StatusText = "Reloaded";
-            if (keepFocus)
-                _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
+            await ReloadCurrentPagePreservingViewportAsync(core, statusText: "Reloaded", restoreFocus: true);
         }
         catch
         {
             // Leave current buffer; disk watcher / next activate can retry.
+        }
+    }
+
+    /// <summary>
+    /// Same-page content refresh: capture scroll/caret, prefer in-place #editor update, else remount + restore.
+    /// </summary>
+    private async Task ReloadCurrentPagePreservingViewportAsync(
+        CoreWebView2 core,
+        string statusText,
+        bool restoreFocus)
+    {
+        if (_vm?.CurrentPagePath == null) return;
+
+        var keepFocus = restoreFocus && NotesWebView.IsKeyboardFocusWithin;
+        var viewport = await NotesEditorViewport.CaptureAsync(core);
+        _isLoading = true;
+        try
+        {
+            var fullHtml = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
+            var inner = _vm.HtmlSyncedToDisk;
+            var applied = await NotesEditorViewport.TryApplyInnerHtmlAsync(core, inner, viewport);
+            if (!applied)
+            {
+                _pendingViewportRestore = viewport;
+                core.NavigateToString(fullHtml);
+            }
+
+            _vm.StatusText = statusText;
+            if (keepFocus)
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
         }
         finally
         {
@@ -847,8 +873,25 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (core == null) return;
         core.WebMessageReceived -= OnWebMessageReceived;
         core.NavigationStarting -= OnWebViewNavigationStarting;
+        core.NavigationCompleted -= OnWebViewNavigationCompleted;
         core.WebMessageReceived += OnWebMessageReceived;
         core.NavigationStarting += OnWebViewNavigationStarting;
+        core.NavigationCompleted += OnWebViewNavigationCompleted;
+    }
+
+    private void OnWebViewNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        var viewport = _pendingViewportRestore;
+        if (viewport == null || !e.IsSuccess) return;
+        _pendingViewportRestore = null;
+        var core = NotesWebView.CoreWebView2;
+        if (core == null) return;
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            // Let EditableMarkdownRenderer bootstrap #editor from base64 first.
+            await Task.Delay(30);
+            await NotesEditorViewport.RestoreAsync(core, viewport);
+        });
     }
 
     private static void OnWebViewNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -1521,10 +1564,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             await _vm.RestoreDeletedPageFromUnsavedAsync();
             var core = NotesWebView.CoreWebView2;
             if (core != null && _vm.CurrentPagePath != null)
-            {
-                var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-                core.NavigateToString(html);
-            }
+                await ReloadCurrentPagePreservingViewportAsync(core, statusText: "Restored", restoreFocus: true);
             StopIndexWatcher();
             if (_vm.CurrentPagePath != null)
                 AttachIndexWatcher(_vm.CurrentPagePath);
@@ -1556,6 +1596,20 @@ public partial class NotesView : System.Windows.Controls.UserControl
         StopIndexWatcher();
         _vm.CancelPendingSave();
         _suppressExternalReloadPrompt = false;
+
+        // Same-page forceReload (move / new sibling): keep scroll/caret; do not remount to top.
+        if (samePage && forceReload && NotesWebView.CoreWebView2 != null)
+        {
+            await ReloadCurrentPagePreservingViewportAsync(
+                NotesWebView.CoreWebView2,
+                statusText: "Ready",
+                restoreFocus: true);
+            AttachIndexWatcher(folderPath);
+            _vm.RefreshSiblingFiles();
+            ApplySiblingPanelLayout();
+            return;
+        }
+
         _isLoading = true;
         try
         {
@@ -1563,6 +1617,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             _vm.CurrentPagePath = folderPath;
             _vm.RecordOpenedPage(previous, folderPath, pushHistory: !fromHistory);
             _vm.StatusText = "Loading…";
+            _pendingViewportRestore = null;
             var html = await _vm.LoadPageContentAsync(folderPath);
             if (NotesWebView.CoreWebView2 != null)
                 NotesWebView.CoreWebView2.NavigateToString(html);
@@ -1606,20 +1661,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 // Fall through to reload attempt.
             }
 
-            var keepFocus = NotesWebView.IsKeyboardFocusWithin;
-            _isLoading = true;
-            try
-            {
-                var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-                core.NavigateToString(html);
-                _vm.StatusText = "Reloaded";
-                if (keepFocus)
-                    _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => NotesWebView.Focus()));
-            }
-            finally
-            {
-                _isLoading = false;
-            }
+            await ReloadCurrentPagePreservingViewportAsync(core, statusText: "Reloaded", restoreFocus: true);
             return;
         }
 
@@ -1668,17 +1710,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         if (core == null) return;
         _vm.CancelPendingSave();
         _suppressExternalReloadPrompt = false;
-        _isLoading = true;
-        try
-        {
-            var html = await _vm.LoadPageContentAsync(_vm.CurrentPagePath);
-            core.NavigateToString(html);
-            _vm.StatusText = "Reloaded from disk";
-        }
-        finally
-        {
-            _isLoading = false;
-        }
+        await ReloadCurrentPagePreservingViewportAsync(core, statusText: "Reloaded from disk", restoreFocus: true);
     }
 
     private void OnExternalKeepRequested(object? sender, EventArgs e)
