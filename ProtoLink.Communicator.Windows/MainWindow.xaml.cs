@@ -20,6 +20,9 @@ public partial class MainWindow : Window
     private readonly Views.NotesView _notesView;
     private CloudViewModel _cloudViewModel = null!;
     private MessengerViewModel? _messengerViewModel;
+    /// <summary>Cloud UI browse (Interactive lane) — Photos/folder list must not wait on sync.</summary>
+    private readonly HttpClient _cloudUiHttpClient;
+    /// <summary>Mapped sync + Notes share API (Sync lane / throttled GetEntities).</summary>
     private readonly HttpClient _cloudHttpClient;
     private readonly SyncMappingStore _syncStore;
     private readonly SignalRService _realtime = new();
@@ -48,12 +51,18 @@ public partial class MainWindow : Window
         ShowMessengerContent();
         UpdateAuthGate();
         _syncStore = new SyncMappingStore(App.LoggerFactory.CreateLogger<SyncMappingStore>());
-        var cloudHandler = CreateAuthHandler();
-        cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
+        var cloudUiHandler = CreateAuthHandler();
+        cloudUiHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        _cloudHttpClient = new HttpClient(cloudHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        _cloudUiHttpClient = new HttpClient(cloudUiHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        var cloudSyncHandler = CreateAuthHandler();
+        cloudSyncHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
+        {
+            InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+        };
+        _cloudHttpClient = new HttpClient(cloudSyncHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         var noteRemoteIdResolver = new ProtoLink.Communicator.Windows.Services.Notes.NoteRemoteIdResolver(_syncStore);
         var notesShareApi = new CloudApiService(_cloudHttpClient);
         _notesViewModel = new NotesViewModel(
@@ -181,7 +190,7 @@ public partial class MainWindow : Window
         _cloudViewModel?.StopAutoSync();
         _cloudViewModel = new CloudViewModel(
             _authService,
-            _cloudHttpClient,
+            _cloudUiHttpClient,
             _syncStore,
             _settingsService,
             ex =>
@@ -202,7 +211,8 @@ public partial class MainWindow : Window
                 _notesViewModel?.RefreshTree();
                 _notesViewModel?.RefreshRemoteLinkState();
                 _notesViewModel?.RefreshMapToCloudNudge();
-            });
+            },
+            syncHttpClient: _cloudHttpClient);
         CloudTabContent.Children.Add(new CloudView { DataContext = _cloudViewModel });
         _notesViewModel?.RefreshMapToCloudNudge();
     }

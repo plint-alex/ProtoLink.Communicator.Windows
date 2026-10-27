@@ -5,18 +5,19 @@ namespace ProtoLink.Communicator.Windows.Services;
 
 /// <summary>
 /// Limits concurrent <c>POST …/Entities/GetEntities</c> on the <see cref="Lane.Sync"/> lane only
-/// (Cloud mapped sync / Notes share API). Interactive Messenger/Settings clients use
-/// <see cref="Lane.Interactive"/> and are never blocked by sync — otherwise Add contact and
-/// Messenger contact load starve behind long sync page walks (shared SemaphoreSlim of 2).
+/// (Cloud mapped sync / Notes share API). Interactive Messenger/Settings/<strong>Cloud UI browse</strong>
+/// (Photos library listing, folder open, tree) use <see cref="Lane.Interactive"/> and are never
+/// blocked by sync — otherwise Add contact, Messenger, and Photos/Cloud list starve behind long
+/// sync page walks (shared SemaphoreSlim of 2) and paint empty chrome.
 /// </summary>
 public sealed class GetEntitiesThrottlingHandler : DelegatingHandler
 {
     public enum Lane
     {
-        /// <summary>UI / Messenger / Settings — never waits on the sync gate.</summary>
+        /// <summary>UI / Messenger / Settings / Cloud browse — never waits on the sync gate.</summary>
         Interactive,
 
-        /// <summary>Cloud sync and other background GetEntities floods.</summary>
+        /// <summary>Cloud mapped sync and other background GetEntities floods.</summary>
         Sync
     }
 

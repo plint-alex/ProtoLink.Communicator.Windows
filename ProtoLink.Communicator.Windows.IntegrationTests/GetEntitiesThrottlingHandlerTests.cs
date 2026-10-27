@@ -59,6 +59,42 @@ public class GetEntitiesThrottlingHandlerTests
         await Task.WhenAll(sync1, sync2);
     }
 
+    /// <summary>
+    /// Photos / Cloud browse uses Interactive lane while mapped sync holds Sync slots —
+    /// listing must still complete (false-empty chrome regression guard).
+    /// </summary>
+    [Fact]
+    public async Task SyncLane_ThirdGetEntities_WaitsUntilSlotFrees()
+    {
+        var syncInner = new BlockingHandler();
+        using var syncClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
+        {
+            InnerHandler = syncInner
+        });
+
+        var sync1 = syncClient.PostAsync("https://example.test/api/Entities/GetEntities", new StringContent("{}"));
+        var sync2 = syncClient.PostAsync("https://example.test/api/Entities/GetEntities", new StringContent("{}"));
+        await syncInner.WaitUntilInFlightAsync(2);
+
+        var sync3Started = false;
+        var sync3 = Task.Run(async () =>
+        {
+            sync3Started = true;
+            return await syncClient.PostAsync(
+                "https://example.test/api/Entities/GetEntities",
+                new StringContent("{}"));
+        });
+
+        await Task.Delay(150);
+        Assert.True(sync3Started);
+        Assert.False(sync3.IsCompleted);
+
+        syncInner.ReleaseAll();
+        using var r3 = await sync3.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(HttpStatusCode.OK, r3.StatusCode);
+        await Task.WhenAll(sync1, sync2);
+    }
+
     private sealed class ImmediateOkHandler : HttpMessageHandler
     {
         public int Calls;

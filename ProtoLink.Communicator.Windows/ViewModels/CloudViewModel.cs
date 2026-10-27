@@ -43,21 +43,34 @@ public partial class CloudViewModel : ViewModelBase
     /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
     private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
 
+    /// <param name="interactiveHttpClient">
+    /// Cloud UI browse (hub / Photos library / folder list / tree / preview). Must use
+    /// <see cref="GetEntitiesThrottlingHandler.Lane.Interactive"/> so mapped sync cannot starve
+    /// Photos/Cloud listing into an empty chrome (NFR hang → false empty).
+    /// </param>
+    /// <param name="syncHttpClient">
+    /// Mapped-folder sync only. Use <see cref="GetEntitiesThrottlingHandler.Lane.Sync"/>.
+    /// When null, reuses <paramref name="interactiveHttpClient"/> (tests / single-client hosts).
+    /// </param>
     public CloudViewModel(
         IAuthService authService,
-        HttpClient httpClient,
+        HttpClient interactiveHttpClient,
         ISyncMappingStore syncStore,
         ISettingsService settingsService,
         Action<Exception>? syncFullErrorReporter = null,
         Action? onAuthRequired = null,
         Action? onAfterMappedSync = null,
         Action<string>? onSendShareLinkInMessenger = null,
-        ICloudRecentStore? recentStore = null)
+        ICloudRecentStore? recentStore = null,
+        HttpClient? syncHttpClient = null)
     {
         _authService = authService;
         _settingsService = settingsService;
-        _api = new CloudApiService(httpClient);
-        var folderSynchronizer = new CloudFolderSynchronizer(_api);
+        _api = new CloudApiService(interactiveHttpClient);
+        var syncApi = syncHttpClient != null && !ReferenceEquals(syncHttpClient, interactiveHttpClient)
+            ? new CloudApiService(syncHttpClient)
+            : _api;
+        var folderSynchronizer = new CloudFolderSynchronizer(syncApi);
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
@@ -71,7 +84,7 @@ public partial class CloudViewModel : ViewModelBase
         SyncMappings = new ObservableCollection<CloudSyncMapping>(_syncStore.Load());
         _mappedSync = new CloudMappedSyncCoordinator(
             folderSynchronizer,
-            _api,
+            syncApi,
             SyncMappings,
             () => LoadCurrentAsync(quiet: true),
             s => StatusText = s,
