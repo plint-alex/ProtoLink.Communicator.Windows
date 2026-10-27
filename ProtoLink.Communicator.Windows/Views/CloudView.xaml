@@ -78,10 +78,10 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
+                                            <!-- E9c / AT-CE14: no per-row hairline (Explorer nav feel); contents list keeps CloudListBoxItemStyle separators -->
                                             <Border x:Name="Bd" Background="Transparent"
                                                     Padding="{Binding IndentMargin}"
-                                                    BorderBrush="{DynamicResource BorderBrushStandard}"
-                                                    BorderThickness="0,0,0,1">
+                                                    BorderThickness="0">
                                                 <DockPanel LastChildFill="True">
                                                     <!-- Fixed width so leaf rows align with expandable ones (AT-CE11). -->
                                                     <Grid DockPanel.Dock="Left" Width="18" Margin="0,0,2,0"
