@@ -382,6 +382,15 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private CloudItemViewModel? _pressedItem;
 
     /// <summary>Single click opens. The second press of a double-click must not open the row that replaced the clicked folder.</summary>
+    private void OnFolderTreeExpandPreviewDown(object sender, MouseButtonEventArgs e)
+    {
+        // Expand/collapse only — do not open the folder (AT-CE10/CE11).
+        e.Handled = true;
+        if (sender is System.Windows.Controls.Button { Command: { } cmd, CommandParameter: { } param }
+            && cmd.CanExecute(param))
+            cmd.Execute(param);
+    }
+
     private void OnFolderTreeDoubleClick(object sender, MouseButtonEventArgs e) =>
         OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
 

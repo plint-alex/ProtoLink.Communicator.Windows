@@ -82,9 +82,32 @@
                                                     Padding="{Binding IndentMargin}"
                                                     BorderBrush="{DynamicResource BorderBrushStandard}"
                                                     BorderThickness="0,0,0,1">
-                                                <TextBlock Text="{Binding Name}" FontSize="13"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           Foreground="{DynamicResource ForegroundBrush}"/>
+                                                <DockPanel LastChildFill="True">
+                                                    <!-- Fixed width so leaf rows align with expandable ones (AT-CE11). -->
+                                                    <Grid DockPanel.Dock="Left" Width="18" Margin="0,0,2,0"
+                                                          VerticalAlignment="Center">
+                                                        <Button Width="18" Height="18" Padding="0"
+                                                                FontSize="11"
+                                                                Content="{Binding ExpandGlyph}"
+                                                                Visibility="{Binding ShowExpandAffordance, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                Command="{Binding DataContext.ToggleFolderTreeExpandCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                                CommandParameter="{Binding}"
+                                                                PreviewMouseLeftButtonDown="OnFolderTreeExpandPreviewDown"
+                                                                Background="Transparent" BorderThickness="0"
+                                                                Cursor="Hand"
+                                                                AutomationProperties.Name="Expand or collapse folder"
+                                                                ToolTip="Expand / collapse"/>
+                                                    </Grid>
+                                                    <TextBlock DockPanel.Dock="Left"
+                                                               Text="{Binding FolderGlyph}" FontSize="13"
+                                                               Width="18" Margin="0,0,4,0"
+                                                               VerticalAlignment="Center"
+                                                               AutomationProperties.Name="Folder icon"/>
+                                                    <TextBlock Text="{Binding Name}" FontSize="13"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource ForegroundBrush}"/>
+                                                </DockPanel>
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
