@@ -4,6 +4,7 @@ using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -31,7 +32,17 @@ public partial class CloudViewModel
                 BreadcrumbPath.Add(new CloudBreadcrumbEntry { Index = b.Index, Id = b.Id, Name = b.Name });
         }
 
+        // Change-then-wait: paint selection / crumbs / empty+Loading before GetEntities or settings IO.
+        var previousListed = ListedFolderId;
         CurrentEntity = target;
+        ApplyOptimisticFolderTreeSelection(
+            CloudFolderTree.SelectedFolderId(isFileOpen: !target.IsFolder, target.Id, target.ParentId));
+        var newListed = ListedFolderId;
+        if (previousListed != newListed)
+            BeginFolderListingLoad();
+
+        await YieldForChromePaintAsync();
+
         PersistLastOpenCloudEntityId(target.Id);
         RecordRecentOpen(target, pushHistory);
         await LoadCurrentAsync(quiet: true, restoreSelectionId);

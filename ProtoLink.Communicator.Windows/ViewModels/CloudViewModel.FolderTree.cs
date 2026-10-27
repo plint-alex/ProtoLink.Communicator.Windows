@@ -5,6 +5,7 @@ using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -45,9 +46,40 @@ public partial class CloudViewModel
         }
     }
 
+    private void ApplyOptimisticFolderTreeSelection(Guid? folderId)
+    {
+        if (FolderTreeRows.Count == 0) return;
+        foreach (var r in FolderTreeRows)
+            r.IsSelected = folderId is { } id && r.Id == id;
+    }
+
     private async Task OpenFolderTreeRowAsync(CloudFolderTreeRowViewModel row)
     {
         if (CurrentEntity?.Id == row.Id) return;
+
+        // Paint tree selection immediately — never wait on ancestry GetEntities first.
+        ApplyOptimisticFolderTreeSelection(row.Id);
+
+        var treeRows = FolderTreeRows.Select(r => (r.Id, r.Name, r.Depth)).ToList();
+        var ancestors = CloudFolderNavigation.BuildAncestorTrail(treeRows, row.Id);
+        if (ancestors.Count > 0)
+        {
+            var composed = CloudFolderNavigation.ComposeBreadcrumb(
+                BreadcrumbPath.Select(b => (b.Id, b.Name)).ToList(),
+                ancestors);
+            Guid? parentId = composed.Count >= 2 ? composed[^2].Id : null;
+            var trail = composed
+                .Select(c => new CloudBreadcrumbEntry { Id = c.Id, Name = c.Name })
+                .ToList();
+            await OpenAsync(
+                new CloudEntityRef(row.Id, CloudEntityKind.Folder, row.Name, parentId),
+                trail);
+            EntityOpened?.Invoke();
+            return;
+        }
+
+        BeginFolderListingLoad();
+        await YieldForChromePaintAsync();
         if (await TryOpenEntityAsync(row.Id))
             EntityOpened?.Invoke();
     }

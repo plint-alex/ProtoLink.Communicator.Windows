@@ -42,6 +42,8 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Dictionary<Guid, string> _shareRootCaptions = new();
     /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
     private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
+    private string? _folderSizeSummary;
+    private int _folderSizeGeneration;
 
     /// <param name="interactiveHttpClient">
     /// Cloud UI browse (hub / Photos library / folder list / tree / preview). Must use
@@ -373,22 +375,11 @@ public partial class CloudViewModel : ViewModelBase
         CurrentEntity != null && !CloudVirtualNodes.IsVirtual(CurrentEntity.Id);
     public int ListedChildCount => Items.Count;
     public string ListedChildCountText => ListedChildCount == 1 ? "1 item" : $"{ListedChildCount} items";
-    public string? FolderSizeSummary
-    {
-        get
-        {
-            if (CurrentFolderMapping?.LocalPath is not { } path || !Directory.Exists(path)) return null;
-            try
-            {
-                var bytes = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
-                return FormatByteSize(bytes);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-    }
+    /// <summary>
+    /// Mapped local folder size. Cached and refreshed off the UI thread — never walk
+    /// AllDirectories synchronously during CurrentEntity change (#cloud-folder-responsiveness).
+    /// </summary>
+    public string? FolderSizeSummary => _folderSizeSummary;
 
     public ICommand RefreshCommand { get; }
     public ICommand NewFolderCommand { get; }
@@ -494,7 +485,7 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(CurrentFolderMapping));
         OnPropertyChanged(nameof(HasCurrentFolderMapping));
         OnPropertyChanged(nameof(CurrentFolderMappingPath));
-        OnPropertyChanged(nameof(FolderSizeSummary));
+        ScheduleFolderSizeRefresh();
         OnPropertyChanged(nameof(CanMapCurrentFolder));
         OnPropertyChanged(nameof(ShowAddLocalFolderCta));
         OnPropertyChanged(nameof(AddLocalFolderCtaLabel));
@@ -520,6 +511,64 @@ public partial class CloudViewModel : ViewModelBase
             unit++;
         }
         return unit == 0 ? $"{bytes} {units[unit]}" : $"{size:0.#} {units[unit]}";
+    }
+
+    /// <summary>
+    /// Clear size immediately, compute under mapped local path on a thread-pool worker, then bind.
+    /// </summary>
+    private void ScheduleFolderSizeRefresh()
+    {
+        _folderSizeSummary = null;
+        OnPropertyChanged(nameof(FolderSizeSummary));
+        var path = CurrentFolderMapping?.LocalPath;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return;
+
+        var gen = ++_folderSizeGeneration;
+        var localPath = path;
+        _ = Task.Run(() =>
+        {
+            string? text = null;
+            try
+            {
+                text = FormatByteSize(CloudFolderNavigation.SumLocalBytes(localPath));
+            }
+            catch
+            {
+                // Soft-fail size only; navigation must stay responsive.
+            }
+
+            void Apply()
+            {
+                if (gen != _folderSizeGeneration) return;
+                _folderSizeSummary = text;
+                OnPropertyChanged(nameof(FolderSizeSummary));
+            }
+
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null)
+                dispatcher.BeginInvoke(Apply, CloudFolderNavigation.AfterChromePaint);
+            else
+                Apply();
+        });
+    }
+
+    /// <summary>Empty list + Loading status so chrome can paint before GetEntities returns.</summary>
+    private void BeginFolderListingLoad()
+    {
+        SelectedItem = null;
+        if (Items.Count > 0)
+            Items.Clear();
+        StatusText = "Loading...";
+    }
+
+    private static async Task YieldForChromePaintAsync()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null)
+            await dispatcher.InvokeAsync(static () => { }, CloudFolderNavigation.AfterChromePaint);
+        else
+            await Task.Yield();
     }
 
     /// <summary>Refresh cloud folder listing without clearing selection or flashing empty. Clears offline banner on success.</summary>
@@ -605,9 +654,10 @@ public partial class CloudViewModel : ViewModelBase
             MergeListing(fresh, selectedId, reset: folderChanged);
             _listedFolderId = folderId;
             ClearNetworkBanner();
-            if (!quiet)
-                StatusText = "Ready";
+            // Navigate sets Loading even when quiet — clear so ShowStatusBanner hides.
+            StatusText = "Ready";
             _ = RefreshFolderTreeAsync();
+            ScheduleFolderSizeRefresh();
         }
         catch (Exception ex)
         {
@@ -635,7 +685,6 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(AddLocalFolderAutomationName));
         OnPropertyChanged(nameof(ListedChildCount));
         OnPropertyChanged(nameof(ListedChildCountText));
-        OnPropertyChanged(nameof(FolderSizeSummary));
         OnPropertyChanged(nameof(IsInSharedWithMeScope));
         OnPropertyChanged(nameof(ShowSharedBrowseOnlyHint));
         OnPropertyChanged(nameof(SharedBrowseOnlyHintText));
