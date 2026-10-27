@@ -363,26 +363,7 @@ public partial class MessengerViewModel : ViewModelBase
         try
         {
             var userId = _authService.CurrentToken.UserId;
-            var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
-            {
-                ParentIds = new[] { SystemEntities.Contacts, userId }
-            });
-            var results = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-            var userContacts = results?.FirstOrDefault();
-
-            if (userContacts == null)
-            {
-                var addResponse = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
-                {
-                    Code = "UserContacts",
-                    ParentIds = new[] { SystemEntities.Contacts, userId }
-                });
-                var addResult = await addResponse.Content.ReadFromJsonAsync<JsonElement>();
-                _userContactsId = addResult.GetProperty("id").GetGuid();
-            }
-            else
-                _userContactsId = userContacts.Id;
-
+            _userContactsId = await UserContactsBagClient.EnsureBagIdAsync(_httpClient, userId);
             if (!_userContactsId.HasValue) return;
 
             var contactsResponse = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract

@@ -2,9 +2,9 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Windows.Input;
 using Microsoft.Extensions.Logging;
-using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -44,47 +44,37 @@ public class AddContactViewModel : ViewModelBase
         StatusMessage = "Adding contact...";
         try
         {
-            if (!Guid.TryParse(UserId.Trim(), out var contactUserId))
+            var lookup = ContactUserLookup.Classify(UserId);
+            if (lookup.Kind == ContactUserLookup.Kind.Empty)
             {
-                StatusMessage = "Invalid user ID format.";
+                StatusMessage = "Enter an email or user id.";
                 return;
             }
-            if (contactUserId == _authService.CurrentToken.UserId)
+
+            var contactUserId = await ContactUserLookup.ResolveUserIdAsync(_httpClient, UserId);
+            if (contactUserId is not { } resolved || resolved == Guid.Empty)
+            {
+                StatusMessage = "No registered user with that email or id.";
+                return;
+            }
+
+            if (resolved == _authService.CurrentToken.UserId)
             {
                 StatusMessage = "You cannot add yourself.";
                 return;
             }
 
-            var userId = _authService.CurrentToken.UserId;
-            var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+            var ownerId = _authService.CurrentToken.UserId;
+            var userContactsId = await UserContactsBagClient.EnsureBagIdAsync(_httpClient, ownerId);
+            if (!userContactsId.HasValue)
             {
-                ParentIds = new[] { SystemEntities.Contacts, userId }
-            });
-            var results = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-            var userContacts = results?.FirstOrDefault();
-            Guid? userContactsId;
-
-            if (userContacts == null)
-            {
-                var addResponse = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
-                {
-                    Code = "UserContacts",
-                    ParentIds = new[] { SystemEntities.Contacts, userId }
-                });
-                if (!addResponse.IsSuccessStatusCode) { StatusMessage = "Failed to create contacts."; return; }
-                var addResult = await addResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-                userContactsId = addResult.GetProperty("id").GetGuid();
+                StatusMessage = "Failed to create contacts.";
+                return;
             }
-            else
-            {
-                userContactsId = userContacts.Id;
-            }
-
-            if (!userContactsId.HasValue) { StatusMessage = "Failed."; return; }
 
             var existingResponse = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
             {
-                ParentIds = new[] { userContactsId.Value, contactUserId },
+                ParentIds = new[] { userContactsId.Value, resolved },
                 IncludeValues = true
             });
             var existing = await existingResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
@@ -97,11 +87,11 @@ public class AddContactViewModel : ViewModelBase
 
             var addContactResponse = await _httpClient.PostAsJsonAsync("api/Entities/AddEntity", new AddEntityContract
             {
-                Code = contactUserId.ToString(),
-                ParentIds = new[] { userContactsId.Value, contactUserId },
+                Code = resolved.ToString(),
+                ParentIds = new[] { userContactsId.Value, resolved },
                 Values = new List<AddValueContract>
                 {
-                    new() { Type = TypeOfValue.String, Value = $"userid:{contactUserId}", ParentIds = Array.Empty<Guid>() }
+                    new() { Type = TypeOfValue.String, Value = $"userid:{resolved}", ParentIds = Array.Empty<Guid>() }
                 }
             });
 

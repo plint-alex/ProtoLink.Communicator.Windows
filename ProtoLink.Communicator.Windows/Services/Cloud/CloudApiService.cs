@@ -521,12 +521,12 @@ public class CloudApiService
     /// <summary>Messenger contact user ids under the caller's UserContacts node (no new search API).</summary>
     public async Task<List<(Guid UserId, string ProvisionalName)>> ListMessengerContactUsersAsync(Guid currentUserId)
     {
-        var roots = await GetEntitiesAsync(new[] { SystemEntities.Contacts, currentUserId }, includeValues: false);
-        var userContacts = roots.FirstOrDefault();
-        if (userContacts == null)
+        // Same pick/stop-spawn as Settings Add + Messenger load (never FirstOrDefault empty bag).
+        var bagId = await UserContactsBagClient.PickExistingBagIdAsync(_http, currentUserId);
+        if (bagId is not { } userContactsId || userContactsId == Guid.Empty)
             return new List<(Guid, string)>();
 
-        var contacts = await GetEntitiesAsync(new[] { userContacts.Id }, includeValues: true);
+        var contacts = await GetEntitiesAsync(new[] { userContactsId }, includeValues: true);
         var result = new List<(Guid, string)>();
         var seen = new HashSet<Guid>();
         foreach (var c in contacts)
