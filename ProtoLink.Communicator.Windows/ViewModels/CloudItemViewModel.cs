@@ -1,3 +1,4 @@
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -9,6 +10,7 @@ public class CloudItemViewModel : ViewModelBase
     private bool _isFolder;
     private bool _isSynced;
     private DateTime _updateTime;
+    private string? _mimeType;
     private string? _subtitleOverride;
     private string? _typeGlyphOverride;
     private bool _isVirtualEntry;
@@ -24,7 +26,14 @@ public class CloudItemViewModel : ViewModelBase
     public string Name
     {
         get => _name;
-        set { if (_name == value) return; _name = value; OnPropertyChanged(); }
+        set
+        {
+            if (_name == value) return;
+            _name = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SubtitleText));
+            OnPropertyChanged(nameof(TypeGlyph));
+        }
     }
 
     public bool IsFolder
@@ -62,6 +71,20 @@ public class CloudItemViewModel : ViewModelBase
             _updateTime = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ModifiedDisplay));
+        }
+    }
+
+    /// <summary>CloudFile mime value (MimeTypeId slot); unused for folders.</summary>
+    public string? MimeType
+    {
+        get => _mimeType;
+        set
+        {
+            if (_mimeType == value) return;
+            _mimeType = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SubtitleText));
+            OnPropertyChanged(nameof(TypeGlyph));
         }
     }
 
@@ -120,8 +143,17 @@ public class CloudItemViewModel : ViewModelBase
         }
     }
 
-    public string TypeGlyph =>
-        !string.IsNullOrEmpty(TypeGlyphOverride) ? TypeGlyphOverride! : IsFolder ? "📁" : "📄";
+    public string TypeGlyph
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(TypeGlyphOverride))
+                return TypeGlyphOverride!;
+            if (IsFolder)
+                return "📁";
+            return CloudFileTypeCue.TypeGlyph(MimeType, Name);
+        }
+    }
 
     /// <summary>Muted subtitle: type · Synced (when mapped), or Shared-with-me caption.</summary>
     public string SubtitleText
@@ -130,7 +162,7 @@ public class CloudItemViewModel : ViewModelBase
         {
             if (!string.IsNullOrEmpty(SubtitleOverride))
                 return SubtitleOverride!;
-            var type = IsFolder ? "Folder" : "File";
+            var type = IsFolder ? "Folder" : CloudFileTypeCue.ShortLabel(MimeType, Name);
             return IsSynced ? $"{type} · Synced" : type;
         }
     }

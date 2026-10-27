@@ -95,7 +95,8 @@ public partial class CloudViewModel
             while (queue.Count > 0 && folderCount < CloudFolderTree.DefaultMaxFolders)
             {
                 var parentId = queue.Dequeue();
-                var list = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: false);
+                // Values required so GetDisplayName resolves folder name slots (not folder-{id}).
+                var list = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true);
                 if (ListedFolderId is not { } still || CloudVirtualNodes.IsVirtual(still))
                 {
                     ClearFolderTree();

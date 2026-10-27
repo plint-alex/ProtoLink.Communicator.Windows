@@ -579,14 +579,7 @@ public partial class CloudViewModel : ViewModelBase
 
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
                 fresh = (list ?? new List<GetEntitiesResult>())
-                    .Select(e => new CloudItemViewModel
-                    {
-                        Id = e.Id,
-                        Name = CloudApiService.GetDisplayName(e),
-                        IsFolder = e.Code == CloudEntityCodes.CloudFolder,
-                        IsSynced = e.Code == CloudEntityCodes.CloudFolder && syncedIds.Contains(e.Id),
-                        UpdateTime = e.UpdateTime
-                    })
+                    .Select(e => ToListItem(e, syncedIds))
                     .OrderByDescending(x => x.IsFolder)
                     .ThenByDescending(x => x.UpdateTime)
                     .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
@@ -744,6 +737,7 @@ public partial class CloudViewModel : ViewModelBase
                 Id = entity.Id,
                 Name = name,
                 IsFolder = isFolder,
+                MimeType = isFolder ? null : CloudApiService.GetMimeType(entity),
                 UpdateTime = entry.OpenedUtc
             });
             pruned.Add(entry with { Name = name, IsFolder = isFolder });
@@ -893,6 +887,20 @@ public partial class CloudViewModel : ViewModelBase
         return fresh;
     }
 
+    private static CloudItemViewModel ToListItem(GetEntitiesResult e, HashSet<Guid> syncedIds)
+    {
+        var isFolder = e.Code == CloudEntityCodes.CloudFolder;
+        return new CloudItemViewModel
+        {
+            Id = e.Id,
+            Name = CloudApiService.GetDisplayName(e),
+            IsFolder = isFolder,
+            IsSynced = isFolder && syncedIds.Contains(e.Id),
+            MimeType = isFolder ? null : CloudApiService.GetMimeType(e),
+            UpdateTime = e.UpdateTime
+        };
+    }
+
     /// <summary>
     /// Update <see cref="Items"/> in place so ListBox does not flash empty and selection stays on the same row.
     /// </summary>
@@ -931,6 +939,7 @@ public partial class CloudViewModel : ViewModelBase
             existing.Name = want.Name;
             existing.IsFolder = want.IsFolder;
             existing.IsSynced = want.IsSynced;
+            existing.MimeType = want.MimeType;
             existing.UpdateTime = want.UpdateTime;
             existing.IsVirtualEntry = want.IsVirtualEntry;
             existing.IsShareRoot = want.IsShareRoot;

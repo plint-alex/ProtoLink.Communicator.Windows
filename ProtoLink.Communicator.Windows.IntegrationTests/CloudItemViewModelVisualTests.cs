@@ -24,10 +24,36 @@ public class CloudItemViewModelVisualTests
     }
 
     [Fact]
-    public void Subtitle_File()
+    public void Subtitle_File_UsesExtensionCue()
     {
         var item = new CloudItemViewModel { Name = "a.txt", IsFolder = false };
-        Assert.Equal("File", item.SubtitleText);
+        Assert.Equal("TXT", item.SubtitleText);
         Assert.Equal("📄", item.TypeGlyph);
+    }
+
+    [Fact]
+    public void Subtitle_File_UsesMimeWhenNoExtension()
+    {
+        var item = new CloudItemViewModel
+        {
+            Name = "file-abc",
+            IsFolder = false,
+            MimeType = "image/png"
+        };
+        Assert.Equal("Image", item.SubtitleText);
+        Assert.Equal("🖼", item.TypeGlyph);
+    }
+
+    [Fact]
+    public void Subtitle_FileSynced_KeepsTypeCue()
+    {
+        var item = new CloudItemViewModel
+        {
+            Name = "doc.pdf",
+            IsFolder = false,
+            IsSynced = true,
+            MimeType = "application/pdf"
+        };
+        Assert.Equal("PDF · Synced", item.SubtitleText);
     }
 }
