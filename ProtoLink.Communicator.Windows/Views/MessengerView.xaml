@@ -457,6 +457,14 @@
                            Foreground="{DynamicResource ChatBubbleTimeBrush}"
                            Visibility="{Binding SelectedContact, Converter={StaticResource NullToVisibilityConverter}, ConverterParameter=Inverse}"/>
 
+                <TextBlock Text="Loading…"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           FontSize="14"
+                           Foreground="{DynamicResource ChatBubbleTimeBrush}"
+                           IsHitTestVisible="False"
+                           Visibility="{Binding IsChatLoading, Converter={StaticResource BooleanToVisibilityConverter}}"
+                           AutomationProperties.Name="Chat loading"/>
+
                 <!-- M9 Media gallery -->
                 <Grid Background="{DynamicResource ContentBackground}"
                       Visibility="{Binding IsGalleryOpen, Converter={StaticResource BooleanToVisibilityConverter}}">

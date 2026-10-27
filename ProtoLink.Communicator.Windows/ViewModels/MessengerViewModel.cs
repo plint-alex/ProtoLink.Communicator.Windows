@@ -23,6 +23,8 @@ public partial class MessengerViewModel : ViewModelBase
     private Contact? _selectedContact;
     private string _messageText = string.Empty;
     private bool _isCompactLayout;
+    private bool _isChatLoading;
+    private int _contactSelectGeneration;
     private Guid? _userContactsId;
     private Guid? _mySentContainerId;
     private Guid? _myReceivedContainerId;
@@ -106,29 +108,76 @@ public partial class MessengerViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// True while the open chat is waiting for cache paint or GetEntities after a contact change
+    /// (#contacts-responsiveness / change-then-wait).
+    /// </summary>
+    public bool IsChatLoading
+    {
+        get => _isChatLoading;
+        private set
+        {
+            if (_isChatLoading == value) return;
+            _isChatLoading = value;
+            OnPropertyChanged();
+        }
+    }
+
     public Contact? SelectedContact
     {
         get => _selectedContact;
         set
         {
+            var previousId = _selectedContact?.Id;
+            var nextId = value?.Id;
             _selectedContact = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ChatHeaderTitle));
             NotifyPaneVisibility();
             CommandManager.InvalidateRequerySuggested();
-            if (value != null)
-            {
-                // Show cache immediately, then always refresh from API.
-                if (_cachedMessages.TryGetValue(value.Id, out var cached))
-                    ShowMessages(cached);
-                _ = LoadMessagesAsync();
-                StartChatPoll();
-            }
-            else
+
+            var gen = ++_contactSelectGeneration;
+
+            if (value == null)
             {
                 StopChatPoll();
                 Messages.Clear();
+                IsChatLoading = false;
+                return;
             }
+
+            var hasCache = _cachedMessages.TryGetValue(value.Id, out var cached);
+            // Drop previous partner's thread before any network / hydrate work so chrome can change.
+            if (ContactSelection.ShouldClearMessagesForSelection(previousId, nextId) && Messages.Count > 0)
+                Messages.Clear();
+
+            // Loading until deferred cache paint or GetEntities finishes — never block selection chrome.
+            IsChatLoading = ContactSelection.ShouldShowLoading(nextId, hasCache)
+                            || (hasCache && ContactSelection.ShouldClearMessagesForSelection(previousId, nextId));
+
+            var contactId = value.Id;
+            var cachedThread = hasCache ? cached : null;
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+
+            void ContinueAfterChrome()
+            {
+                if (gen != _contactSelectGeneration || SelectedContact?.Id != contactId)
+                    return;
+
+                if (cachedThread != null)
+                {
+                    ShowMessages(cachedThread);
+                    IsChatLoading = false;
+                }
+
+                _ = LoadMessagesAsync();
+                StartChatPoll();
+            }
+
+            if (dispatcher != null)
+                ContactSelection.ScheduleAfterChromePaint(dispatcher, ContinueAfterChrome);
+            else
+                ContinueAfterChrome();
         }
     }
     public string MessageText
@@ -576,6 +625,7 @@ public partial class MessengerViewModel : ViewModelBase
         {
             // Fire-and-forget select/poll/SignalR: keep cache UI; do not fault the Task.
             System.Diagnostics.Debug.WriteLine(ex);
+            IsChatLoading = false;
         }
         finally
         {
@@ -596,7 +646,11 @@ public partial class MessengerViewModel : ViewModelBase
 
     private async Task LoadMessagesCoreAsync()
     {
-        if (SelectedContact == null || _authService.CurrentToken == null) return;
+        if (SelectedContact == null || _authService.CurrentToken == null)
+        {
+            IsChatLoading = false;
+            return;
+        }
         var myUserId = _authService.CurrentToken.UserId;
         var partnerUserId = SelectedContact.Id;
         var myStr = myUserId.ToString();
@@ -609,9 +663,19 @@ public partial class MessengerViewModel : ViewModelBase
             Take = ConversationMessagePageSize,
             ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
         });
-        if (!response.IsSuccessStatusCode) return;
+        if (!response.IsSuccessStatusCode)
+        {
+            if (SelectedContact?.Id == partnerUserId)
+                IsChatLoading = false;
+            return;
+        }
         var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-        if (all == null) return;
+        if (all == null)
+        {
+            if (SelectedContact?.Id == partnerUserId)
+                IsChatLoading = false;
+            return;
+        }
         // Contact may have changed while the request was in flight.
         if (SelectedContact?.Id != partnerUserId) return;
 
@@ -650,6 +714,7 @@ public partial class MessengerViewModel : ViewModelBase
             .ToList();
         _loadedContacts.Add(partnerUserId);
         ShowMessages(_cachedMessages[partnerUserId]);
+        IsChatLoading = false;
         await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
     }
 
