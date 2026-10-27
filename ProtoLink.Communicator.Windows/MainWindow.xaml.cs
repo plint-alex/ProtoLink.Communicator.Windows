@@ -38,14 +38,20 @@ public partial class MainWindow : Window
         _tokenService = new TokenService(App.LoggerFactory.CreateLogger<TokenService>());
         _settingsService = new SettingsService(App.LoggerFactory.CreateLogger<SettingsService>());
         var settings = _settingsService.LoadSettings();
-        _httpClient = new HttpClient(new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) }) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        _httpClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+        {
+            InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+        }) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         _authService = new AuthService(_httpClient, _tokenService, App.LoggerFactory.CreateLogger<AuthService>());
         _realtime.RefreshRequested += OnRealtimeRefreshRequested;
         ShowMessengerContent();
         UpdateAuthGate();
         _syncStore = new SyncMappingStore(App.LoggerFactory.CreateLogger<SyncMappingStore>());
         var cloudHandler = CreateAuthHandler();
-        cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
+        cloudHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
+        {
+            InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+        };
         _cloudHttpClient = new HttpClient(cloudHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         var noteRemoteIdResolver = new ProtoLink.Communicator.Windows.Services.Notes.NoteRemoteIdResolver(_syncStore);
         var notesShareApi = new CloudApiService(_cloudHttpClient);
@@ -344,7 +350,10 @@ public partial class MainWindow : Window
         {
             var settings = _settingsService.LoadSettings();
             var handler = CreateAuthHandler();
-            handler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
+            handler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+            {
+                InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+            };
             var settingsClient = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
             var vm = new SettingsViewModel(_settingsService, _authService, _tokenService, settingsClient, _logger);
             vm.OnLoginSuccess += () =>
@@ -357,7 +366,10 @@ public partial class MainWindow : Window
             vm.OnSettingsSaved += () =>
             {
                 var updated = _settingsService.LoadSettings();
-                _httpClient = new HttpClient(new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) }) { BaseAddress = new Uri(updated.ApiBaseAddress) };
+                _httpClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+                {
+                    InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+                }) { BaseAddress = new Uri(updated.ApiBaseAddress) };
                 _notesViewModel.ReloadFromSettings();
                 ShowMessengerContent();
                 UpdateAuthGate();
@@ -472,7 +484,10 @@ public partial class MainWindow : Window
         }
         var settings = _settingsService.LoadSettings();
         var handler = CreateAuthHandler();
-        handler.InnerHandler = new GetEntitiesThrottlingHandler { InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler()) };
+        handler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+        {
+            InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+        };
         var client = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         var vm = new MessengerViewModel(_authService, client, _settingsService);
         vm.UnreadChanged += count => TaskbarUnreadBadge.Apply(this, count);

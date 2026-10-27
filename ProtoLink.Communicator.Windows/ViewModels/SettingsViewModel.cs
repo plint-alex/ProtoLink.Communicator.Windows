@@ -8,6 +8,7 @@ using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -118,10 +119,12 @@ public class SettingsViewModel : ViewModelBase
         try
         {
             ApiVersionText = "Loading…";
-            var baseUrl = string.IsNullOrWhiteSpace(ApiBaseAddress)
+            var apiBase = string.IsNullOrWhiteSpace(ApiBaseAddress)
                 ? _httpClient.BaseAddress?.ToString()
-                : ApiBaseAddress.TrimEnd('/') + "/";
-            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(new Uri(baseUrl!), "api/Version"));
+                : ApiBaseAddress;
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                ApiBaseAddressPaths.BuildUnderApiRoot(apiBase, "Version"));
             var response = await _httpClient.SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)

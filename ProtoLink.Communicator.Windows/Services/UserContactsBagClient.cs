@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -49,6 +50,7 @@ public static class UserContactsBagClient
 
     /// <summary>
     /// When 2+ bags, count kids (take 500) so pick prefers the richest (Tina/person rows).
+    /// Runs a small parallel pool so multi-bag accounts (dozens of UC siblings) stay interactive.
     /// </summary>
     public static async Task EnrichPersonRowCountsAsync(
         HttpClient http,
@@ -58,8 +60,11 @@ public static class UserContactsBagClient
         if (bags.Count < 2)
             return;
 
-        foreach (var bag in bags)
+        const int enrichParallelism = 4;
+        using var gate = new SemaphoreSlim(enrichParallelism, enrichParallelism);
+        var tasks = bags.Select(async bag =>
         {
+            await gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
                 var response = await http.PostAsJsonAsync(
@@ -75,7 +80,7 @@ public static class UserContactsBagClient
                 if (!response.IsSuccessStatusCode)
                 {
                     bag.PersonRowCount = 0;
-                    continue;
+                    return;
                 }
 
                 var kids = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: ct)
@@ -86,7 +91,12 @@ public static class UserContactsBagClient
             {
                 bag.PersonRowCount = 0;
             }
-        }
+            finally
+            {
+                gate.Release();
+            }
+        });
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     /// <summary>
