@@ -30,6 +30,34 @@ public class NotesViewModelSiblingFilesTests
             Assert.Contains(vm.SiblingFiles, f => f.Name == "sibling-verify.txt");
             Assert.DoesNotContain(vm.SiblingFiles, f => f.Name.Equals("index.html", StringComparison.OrdinalIgnoreCase));
             Assert.All(vm.SiblingFiles, f => Assert.Equal(FileSystemItemType.File, f.Item.Type));
+            // E5c: type glyph beside name (keep extension); image vs document cue
+            var txt = Assert.Single(vm.SiblingFiles, f => f.Name == "sibling-verify.txt");
+            Assert.Equal("📄", txt.TypeGlyph);
+            Assert.Contains(".", txt.Name);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
+    public void SiblingFiles_ImageName_UsesImageTypeGlyph()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ProtoLinkSiblingVmImg_" + Guid.NewGuid().ToString("N"));
+        var note = Path.Combine(root, "WithImage");
+        Directory.CreateDirectory(note);
+        File.WriteAllText(Path.Combine(note, "index.html"), "<h1>img</h1>");
+        File.WriteAllText(Path.Combine(note, "photo.png"), "x");
+        try
+        {
+            var vm = new NotesViewModel(new MemorySettingsService(new AppSettings { NotesRootPath = root }));
+            vm.CurrentPagePath = note;
+            vm.RefreshSiblingFiles();
+
+            var img = Assert.Single(vm.SiblingFiles, f => f.Name == "photo.png");
+            Assert.Equal("🖼", img.TypeGlyph);
+            Assert.Equal(FileSystemItemType.File, img.Item.Type);
         }
         finally
         {
