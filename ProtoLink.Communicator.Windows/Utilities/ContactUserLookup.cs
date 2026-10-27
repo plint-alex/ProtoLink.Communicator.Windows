@@ -23,6 +23,8 @@ public static class ContactUserLookup
 
     public readonly record struct Lookup(Kind Kind, string Value);
 
+    public readonly record struct ResolvedUser(Guid Id, string Login, string? UserName);
+
     public static Lookup Classify(string? raw)
     {
         var value = (raw ?? string.Empty).Trim();
@@ -34,11 +36,13 @@ public static class ContactUserLookup
     }
 
     /// <summary>
-    /// Resolve to user id via Auth. Returns null when empty/invalid/not found.
+    /// Resolve Auth GetUser / GetUserById to id + login + userName. Null when empty/not found.
     /// </summary>
-    public static async Task<Guid?> ResolveUserIdAsync(HttpClient http, string? raw, CancellationToken ct = default)
+    public static async Task<ResolvedUser?> ResolveUserAsync(
+        HttpClient http,
+        Lookup lookup,
+        CancellationToken ct = default)
     {
-        var lookup = Classify(raw);
         if (lookup.Kind == Kind.Empty)
             return null;
 
@@ -60,7 +64,30 @@ public static class ContactUserLookup
             && !TryReadGuid(root, "userId", out id)
             && !TryReadGuid(root, "UserId", out id))
             return null;
-        return id;
+
+        var login = TryReadString(root, "login")
+                    ?? TryReadString(root, "Login")
+                    ?? lookup.Value;
+        var userName = TryReadString(root, "userName")
+                       ?? TryReadString(root, "UserName");
+        return new ResolvedUser(id, login, userName);
+    }
+
+    /// <summary>
+    /// Resolve to user id via Auth. Returns null when empty/invalid/not found.
+    /// </summary>
+    public static async Task<Guid?> ResolveUserIdAsync(HttpClient http, string? raw, CancellationToken ct = default)
+    {
+        var user = await ResolveUserAsync(http, Classify(raw), ct).ConfigureAwait(false);
+        return user?.Id;
+    }
+
+    private static string? TryReadString(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.String)
+            return null;
+        var s = el.GetString();
+        return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
     }
 
     private static bool TryReadGuid(JsonElement root, string name, out Guid id)

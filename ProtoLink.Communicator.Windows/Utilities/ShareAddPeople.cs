@@ -5,7 +5,7 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 
 /// <summary>
 /// Pure helpers for Share sheet Add people (share-sheet-ux §4).
-/// Contacts come from Messenger UserContacts entities; paste-ID uses GetEntity name resolve.
+/// Contacts come from Messenger UserContacts entities; paste uses Auth GetUser / GetUserById.
 /// </summary>
 public static class ShareAddPeople
 {
@@ -16,6 +16,15 @@ public static class ShareAddPeople
     private static readonly Regex GuidInPathRegex = new(
         @"/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public enum PasteLookupKind
+    {
+        Empty,
+        ById,
+        ByLogin
+    }
+
+    public readonly record struct PasteLookup(PasteLookupKind Kind, string Value);
 
     /// <summary>Parse raw GUID or a pasted /{userId} (or site URL ending in GUID).</summary>
     public static Guid? ParseUserIdInput(string? raw)
@@ -29,6 +38,25 @@ public static class ShareAddPeople
             return fromPath;
         return null;
     }
+
+    /// <summary>
+    /// Share Add paste: GUID / URL → ById; else non-empty → ByLogin (email).
+    /// URL GUID extraction differs from plain ContactUserLookup.Classify.
+    /// </summary>
+    public static PasteLookup ClassifyPasteLookup(string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (s.Length == 0)
+            return new PasteLookup(PasteLookupKind.Empty, string.Empty);
+        var id = ParseUserIdInput(s);
+        if (id is { } guid)
+            return new PasteLookup(PasteLookupKind.ById, guid.ToString("D"));
+        return new PasteLookup(PasteLookupKind.ByLogin, s);
+    }
+
+    /// <summary>True when paste has something to resolve (GUID, /{id} URL, or email/login).</summary>
+    public static bool ShouldAutoResolvePaste(string? raw) =>
+        ClassifyPasteLookup(raw).Kind != PasteLookupKind.Empty;
 
     /// <summary>True when the string is only a GUID — must never be shown as a person name.</summary>
     public static bool IsGuidText(string? text)

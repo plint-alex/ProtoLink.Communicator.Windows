@@ -22,6 +22,32 @@ public class ShareAddPeopleTests
     }
 
     [Fact]
+    public void ClassifyPasteLookup_GuidUrlEmailAndGarbage()
+    {
+        var id = Guid.Parse("8f3a1111-2222-3333-4444-555555555555");
+        Assert.Equal(ShareAddPeople.PasteLookupKind.Empty, ShareAddPeople.ClassifyPasteLookup("").Kind);
+        Assert.Equal(ShareAddPeople.PasteLookupKind.Empty, ShareAddPeople.ClassifyPasteLookup("   ").Kind);
+
+        var byId = ShareAddPeople.ClassifyPasteLookup(id.ToString("D"));
+        Assert.Equal(ShareAddPeople.PasteLookupKind.ById, byId.Kind);
+        Assert.Equal(id.ToString("D"), byId.Value);
+
+        var fromUrl = ShareAddPeople.ClassifyPasteLookup($"https://protolink.ru/{id:D}?lang=ru-RU");
+        Assert.Equal(ShareAddPeople.PasteLookupKind.ById, fromUrl.Kind);
+        Assert.Equal(id.ToString("D"), fromUrl.Value);
+
+        var email = ShareAddPeople.ClassifyPasteLookup("  molina.tina@ya.ru  ");
+        Assert.Equal(ShareAddPeople.PasteLookupKind.ByLogin, email.Kind);
+        Assert.Equal("molina.tina@ya.ru", email.Value);
+
+        var garbage = ShareAddPeople.ClassifyPasteLookup("not-a-guid");
+        Assert.Equal(ShareAddPeople.PasteLookupKind.ByLogin, garbage.Kind);
+        Assert.True(ShareAddPeople.ShouldAutoResolvePaste("molina.tina@ya.ru"));
+        Assert.True(ShareAddPeople.ShouldAutoResolvePaste(id.ToString("D")));
+        Assert.False(ShareAddPeople.ShouldAutoResolvePaste(""));
+    }
+
+    [Fact]
     public void PickResolvedDisplayName_RejectsGuidShaped()
     {
         var id = "8f3a1111-2222-3333-4444-555555555555";
@@ -83,5 +109,7 @@ public class ShareAddPeopleTests
         Assert.Contains("Maria K.", toast, StringComparison.Ordinal);
         Assert.Contains("view", toast, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("token", ShareSheetStrings.PasteIdHint("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("email", ShareSheetStrings.PasteIdHint("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("email", ShareSheetStrings.NoUserWithId("en"), StringComparison.OrdinalIgnoreCase);
     }
 }

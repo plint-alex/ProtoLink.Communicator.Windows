@@ -530,6 +530,33 @@ public class CloudApiService
         return await response.Content.ReadFromJsonAsync<GetEntityCardResult>();
     }
 
+    /// <summary>
+    /// Share Add paste resolve via Auth GetUser / GetUserById (Friends parity; email + GUID).
+    /// Returns null when empty / not found / display name would be GUID-shaped.
+    /// </summary>
+    public async Task<(Guid Id, string DisplayName)?> ResolveSharePasteUserAsync(
+        string? raw,
+        CancellationToken ct = default)
+    {
+        var paste = ShareAddPeople.ClassifyPasteLookup(raw);
+        if (paste.Kind == ShareAddPeople.PasteLookupKind.Empty)
+            return null;
+
+        var lookup = paste.Kind == ShareAddPeople.PasteLookupKind.ById
+            ? new ContactUserLookup.Lookup(ContactUserLookup.Kind.ById, paste.Value)
+            : new ContactUserLookup.Lookup(ContactUserLookup.Kind.ByLogin, paste.Value);
+
+        var user = await ContactUserLookup.ResolveUserAsync(_http, lookup, ct).ConfigureAwait(false);
+        if (user is null)
+            return null;
+
+        var name = ShareAddPeople.PickResolvedDisplayName(user.Value.UserName, user.Value.Login);
+        if (name is null)
+            return null;
+
+        return (user.Value.Id, name);
+    }
+
     /// <summary>Messenger contact user ids under the caller's UserContacts node (no new search API).</summary>
     public async Task<List<(Guid UserId, string ProvisionalName)>> ListMessengerContactUsersAsync(Guid currentUserId)
     {

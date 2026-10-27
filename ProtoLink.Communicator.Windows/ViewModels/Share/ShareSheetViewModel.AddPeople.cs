@@ -170,7 +170,7 @@ public sealed partial class ShareSheetViewModel
             _ => CanMutate && ShowAddPeople && !_busy && HasAddTargets());
         ResolvePasteCommand = new RelayCommand(
             async _ => await ResolvePasteAsync(),
-            _ => CanMutate && ShowAddPeople && !_busy && ShareAddPeople.ParseUserIdInput(PasteId).HasValue);
+            _ => CanMutate && ShowAddPeople && !_busy && ShareAddPeople.ShouldAutoResolvePaste(PasteId));
         DismissAddedBannerCommand = new RelayCommand(_ =>
         {
             ShowAddedBanner = false;
@@ -242,14 +242,13 @@ public sealed partial class ShareSheetViewModel
     }
 
     /// <summary>
-    /// share-sheet-ux §4: on a valid GUID / /{id} URL, resolve name without requiring … click.
-    /// Invalid / email paste: no resolve (Add stays disabled; cycle-1 has no email lookup).
+    /// share-sheet-ux §4: on GUID / /{id} URL / registered email-login, resolve name without … click.
     /// </summary>
     private void ScheduleAutoResolvePaste()
     {
         CancelPendingPasteResolve();
         if (!ShowAddPeople || !CanMutate || _busy) return;
-        if (!ShareAddPeople.ParseUserIdInput(_pasteId).HasValue) return;
+        if (!ShareAddPeople.ShouldAutoResolvePaste(_pasteId)) return;
 
         var cts = new CancellationTokenSource();
         _pasteResolveCts = cts;
@@ -351,8 +350,7 @@ public sealed partial class ShareSheetViewModel
         PastePreviewError = null;
         _pasteResolvedUserId = null;
         var raw = PasteId;
-        var id = ShareAddPeople.ParseUserIdInput(raw);
-        if (id is not { } userId)
+        if (!ShareAddPeople.ShouldAutoResolvePaste(raw))
         {
             PastePreviewError = ShareSheetStrings.NoUserWithId(Lang);
             return;
@@ -360,17 +358,16 @@ public sealed partial class ShareSheetViewModel
 
         try
         {
-            var card = await _api.GetEntityCardAsync(userId);
-            // Stale if the user changed paste while GetEntity was in flight.
+            var resolved = await _api.ResolveSharePasteUserAsync(raw);
+            // Stale if the user changed paste while Auth was in flight.
             if (!string.Equals(PasteId, raw, StringComparison.Ordinal)) return;
-            var name = ShareAddPeople.PickResolvedDisplayName(card?.Name, card?.Code);
-            if (name == null)
+            if (resolved is not { } hit)
             {
                 PastePreviewError = ShareSheetStrings.NoUserWithId(Lang);
                 return;
             }
-            _pasteResolvedUserId = userId;
-            PastePreviewName = name;
+            _pasteResolvedUserId = hit.Id;
+            PastePreviewName = hit.DisplayName;
         }
         catch
         {

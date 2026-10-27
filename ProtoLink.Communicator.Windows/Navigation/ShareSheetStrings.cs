@@ -191,13 +191,17 @@ public static class ShareSheetStrings
         IsRussian(lang) ? "Поиск по контактам…" : "Search your contacts…";
 
     public static string PasteIdHint(string? lang) =>
-        IsRussian(lang) ? "Нет в контактах? Вставьте их ID пользователя" : "Not in your contacts? Paste their user ID";
+        IsRussian(lang)
+            ? "Нет в контактах? Вставьте их ID или email"
+            : "Not in your contacts? Paste their user ID or email";
 
     public static string PasteIdPlaceholder(string? lang) =>
-        IsRussian(lang) ? "ID пользователя или ссылка /{id}" : "User ID or /{id} link";
+        IsRussian(lang) ? "ID, email или ссылка /{id}" : "User ID, email, or /{id} link";
 
     public static string NoUserWithId(string? lang) =>
-        IsRussian(lang) ? "Нет пользователя ProtoLink с таким ID" : "No ProtoLink user with this ID";
+        IsRussian(lang)
+            ? "Нет пользователя ProtoLink с таким ID или email"
+            : "No ProtoLink user with this ID or email";
 
     public static string CanEditHelper(string? lang) =>
         IsRussian(lang)
