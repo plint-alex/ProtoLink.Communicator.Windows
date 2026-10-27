@@ -136,9 +136,11 @@ public class CloudSharedWithMeScopeTests
         Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.SharedWithMeId);
         Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.RecentId);
         Assert.NotEqual(CloudVirtualNodes.SharedWithMeId, CloudVirtualNodes.RecentId);
+        Assert.NotEqual(CloudVirtualNodes.SharedByMeId, CloudVirtualNodes.SharedWithMeId);
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.HubId));
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.SharedWithMeId));
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.RecentId));
+        Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.SharedByMeId));
         Assert.False(CloudVirtualNodes.IsVirtual(Guid.NewGuid()));
     }
 

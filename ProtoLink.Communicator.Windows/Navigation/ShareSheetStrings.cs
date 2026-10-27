@@ -227,6 +227,10 @@ public static class ShareSheetStrings
     public static string SharedWithMe(string? lang) =>
         IsRussian(lang) ? "Доступные мне" : "Shared with me";
 
+    /// <summary>Outbound inventory hub (AT-S53 / AC-SO-1).</summary>
+    public static string SharedByMe(string? lang) =>
+        IsRussian(lang) ? "Я поделился" : "Shared by me";
+
     public static string MyCloud(string? lang) =>
         IsRussian(lang) ? "Моё облако" : "My Cloud";
 
@@ -250,6 +254,17 @@ public static class ShareSheetStrings
         IsRussian(lang)
             ? "Когда кто-то даст вам доступ, это появится здесь."
             : "When someone gives you access, it shows up here.";
+
+    public static string EmptySharedByMeTitle(string? lang) =>
+        IsRussian(lang) ? "Пока ничем не поделились" : "Nothing shared yet";
+
+    public static string EmptySharedByMeBody(string? lang) =>
+        IsRussian(lang)
+            ? "Когда вы откроете доступ, это появится здесь."
+            : "When you give someone access, it shows up here.";
+
+    public static string SharedByMeLoadFailed(string? lang) =>
+        IsRussian(lang) ? "Не удалось загрузить «Я поделился»." : "Couldn't load Shared by me.";
 
     public static string EmptyRecentTitle(string? lang) =>
         IsRussian(lang) ? "Пока нет недавних" : "No recent items yet";

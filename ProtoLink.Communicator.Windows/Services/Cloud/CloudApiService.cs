@@ -485,6 +485,18 @@ public class CloudApiService
                ?? new LeaveSharedWithMeResult { EntityId = entityId, Left = true };
     }
 
+    /// <summary>AT-S53: outbound share roots the caller can write (people/guest/public summary).</summary>
+    public async Task<List<SharedByMeRootResult>> ListSharedByMeAsync(int skip = 0, int? take = null)
+    {
+        var qs = take is null
+            ? $"api/Share/ListSharedByMe?skip={skip}"
+            : $"api/Share/ListSharedByMe?skip={skip}&take={take.Value}";
+        var response = await _http.GetAsync(qs);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<List<SharedByMeRootResult>>()
+               ?? new List<SharedByMeRootResult>();
+    }
+
     public async Task AddPermissionAsync(Guid entityId, Guid permissionForId, bool canWrite)
     {
         var response = await _http.PostAsJsonAsync("api/Entities/AddPermission", new AddPermissionContract

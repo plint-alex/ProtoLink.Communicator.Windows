@@ -82,3 +82,28 @@ public sealed class LeaveSharedWithMeResult
     /// <summary>True when a direct personal grant was removed; false when already absent (idempotent).</summary>
     public bool Left { get; set; }
 }
+
+/// <summary>Outbound Shared by me root (AT-S51 / AT-S52 / AT-S53). No raw tokens.</summary>
+public sealed class SharedByMeRootResult
+{
+    public Guid EntityId { get; set; }
+
+    public string? EntityName { get; set; }
+
+    public List<SharedByMePrincipalPreviewResult> PeoplePreview { get; set; } = new();
+
+    public int PeopleMoreCount { get; set; }
+
+    public int LiveGuestLinkCount { get; set; }
+
+    public bool HasPublicAccess { get; set; }
+}
+
+public sealed class SharedByMePrincipalPreviewResult
+{
+    public string PrincipalKind { get; set; } = string.Empty;
+
+    public Guid PermissionForId { get; set; }
+
+    public string DisplayName { get; set; } = string.Empty;
+}

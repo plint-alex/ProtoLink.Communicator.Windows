@@ -7,6 +7,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Models.Share;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -169,13 +170,16 @@ public partial class CloudViewModel : ViewModelBase
     public bool IsSharedWithMeListing =>
         CurrentEntity?.Id == CloudVirtualNodes.SharedWithMeId;
 
+    public bool IsSharedByMeListing =>
+        CurrentEntity?.Id == CloudVirtualNodes.SharedByMeId;
+
     public bool IsRecentListing =>
         CurrentEntity?.Id == CloudVirtualNodes.RecentId;
 
     public bool IsCloudHubListing =>
         CurrentEntity?.Id == CloudVirtualNodes.HubId;
 
-    /// <summary>Real Cloud folders only — not hub / Shared with me / Recent virtual nodes.</summary>
+    /// <summary>Real Cloud folders only — not hub / Shared with me / Shared by me / Recent virtual nodes.</summary>
     public bool CanMutateListedFolder =>
         ListedFolderId is { } id
         && !CloudVirtualNodes.IsVirtual(id);
@@ -203,6 +207,7 @@ public partial class CloudViewModel : ViewModelBase
         {
             var lang = _settingsService.LoadSettings().UiLanguage;
             if (IsSharedWithMeListing) return ShareSheetStrings.EmptySharedTitle(lang);
+            if (IsSharedByMeListing) return ShareSheetStrings.EmptySharedByMeTitle(lang);
             if (IsRecentListing) return ShareSheetStrings.EmptyRecentTitle(lang);
             return ShareSheetStrings.EmptyFolderTitle(lang);
         }
@@ -214,13 +219,14 @@ public partial class CloudViewModel : ViewModelBase
         {
             var lang = _settingsService.LoadSettings().UiLanguage;
             if (IsSharedWithMeListing) return ShareSheetStrings.EmptySharedBody(lang);
+            if (IsSharedByMeListing) return ShareSheetStrings.EmptySharedByMeBody(lang);
             if (IsRecentListing) return ShareSheetStrings.EmptyRecentBody(lang);
             return ShareSheetStrings.EmptyFolderBody(lang);
         }
     }
 
     public string EmptyListGlyph =>
-        IsSharedWithMeListing ? "👥"
+        IsSharedWithMeListing || IsSharedByMeListing ? "👥"
         : IsRecentListing ? "🕒"
         : "📁";
 
@@ -325,7 +331,8 @@ public partial class CloudViewModel : ViewModelBase
     public string HeaderTitle => CurrentEntity?.Name ?? ShareSheetStrings.CloudHub(_settingsService.LoadSettings().UiLanguage);
     public string HeaderTypeGlyph =>
         CurrentEntity is null ? ""
-        : CurrentEntity.Id == CloudVirtualNodes.SharedWithMeId ? "👥"
+        : CurrentEntity.Id == CloudVirtualNodes.SharedWithMeId
+          || CurrentEntity.Id == CloudVirtualNodes.SharedByMeId ? "👥"
         : CurrentEntity.Id == CloudVirtualNodes.RecentId ? "🕒"
         : _photosLibraryId is { } lib && CurrentEntity.Id == lib ? "🖼"
         : CurrentEntity.IsFolder ? "📁" : "📄";
@@ -557,6 +564,10 @@ public partial class CloudViewModel : ViewModelBase
             {
                 fresh = await LoadSharedWithMeListingAsync();
             }
+            else if (folderId == CloudVirtualNodes.SharedByMeId)
+            {
+                fresh = await LoadSharedByMeListingAsync();
+            }
             else if (folderId == CloudVirtualNodes.RecentId)
             {
                 fresh = await LoadRecentListingAsync();
@@ -600,6 +611,7 @@ public partial class CloudViewModel : ViewModelBase
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsSharedWithMeListing));
+        OnPropertyChanged(nameof(IsSharedByMeListing));
         OnPropertyChanged(nameof(IsRecentListing));
         OnPropertyChanged(nameof(IsCloudHubListing));
         OnPropertyChanged(nameof(ShowEmptyUpload));
@@ -663,6 +675,16 @@ public partial class CloudViewModel : ViewModelBase
             IsFolder = true,
             IsVirtualEntry = true,
             TypeGlyphOverride = "👥",
+            SubtitleOverride = string.Empty,
+            UpdateTime = DateTime.UtcNow
+        });
+        rows.Add(new CloudItemViewModel
+        {
+            Id = CloudVirtualNodes.SharedByMeId,
+            Name = ShareSheetStrings.SharedByMe(lang),
+            IsFolder = true,
+            IsVirtualEntry = true,
+            TypeGlyphOverride = "📤",
             SubtitleOverride = string.Empty,
             UpdateTime = DateTime.UtcNow
         });
@@ -781,6 +803,90 @@ public partial class CloudViewModel : ViewModelBase
                 CanWriteShare = canWrite,
                 SubtitleOverride = caption,
                 UpdateTime = e.UpdateTime
+            });
+        }
+
+        return fresh;
+    }
+
+    /// <summary>
+    /// Shared by me (AT-S53): outbound writeable roots + people/guest summary.
+    /// Sheet remains detail truth — Share… via existing OpenShareCommand. No AddParent / Leave.
+    /// </summary>
+    private async Task<List<CloudItemViewModel>> LoadSharedByMeListingAsync()
+    {
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        List<SharedByMeRootResult> roots;
+        try
+        {
+            roots = await _api.ListSharedByMeAsync(skip: 0, take: 100);
+        }
+        catch (Exception ex)
+        {
+            // Prod may lag LocalStand tip; never crash Cloud chrome on HTML/404 bodies.
+            StatusText = ShareSheetStrings.SharedByMeLoadFailed(lang) + " " + ex.Message;
+            return new List<CloudItemViewModel>();
+        }
+
+        if (roots.Count == 0)
+            return new List<CloudItemViewModel>();
+
+        var ids = roots.Select(r => r.EntityId).Where(id => id != Guid.Empty).ToArray();
+        var metaById = new Dictionary<Guid, GetEntitiesResult>();
+        if (ids.Length > 0)
+        {
+            try
+            {
+                var found = await _api.GetEntitiesByIdsAsync(ids, includeValues: true);
+                foreach (var e in found)
+                    metaById[e.Id] = e;
+            }
+            catch
+            {
+                // Listing still usable with API names; treat unknown codes as folders.
+            }
+        }
+
+        var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var fresh = new List<CloudItemViewModel>();
+        foreach (var root in roots)
+        {
+            if (root.EntityId == Guid.Empty)
+                continue;
+            metaById.TryGetValue(root.EntityId, out var meta);
+            var name = !string.IsNullOrWhiteSpace(root.EntityName)
+                ? root.EntityName!
+                : meta is not null
+                    ? CloudApiService.GetDisplayName(meta)
+                    : root.EntityId.ToString("N")[..8];
+            var isFolder = meta?.Code switch
+            {
+                CloudEntityCodes.CloudFile => false,
+                CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot => true,
+                _ => true
+            };
+            var peopleNames = root.PeoplePreview
+                .Select(p => p.DisplayName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .ToList();
+            var caption = SharedByMeSummary.RowSubtitle(
+                lang,
+                peopleNames,
+                root.PeopleMoreCount,
+                root.LiveGuestLinkCount,
+                root.HasPublicAccess);
+            if (!string.IsNullOrWhiteSpace(caption))
+                _shareRootCaptions[root.EntityId] = caption;
+            fresh.Add(new CloudItemViewModel
+            {
+                Id = root.EntityId,
+                Name = name,
+                IsFolder = isFolder,
+                IsSynced = isFolder && syncedIds.Contains(root.EntityId),
+                IsShareRoot = true,
+                CanWriteShare = true,
+                SubtitleOverride = caption,
+                UpdateTime = meta?.UpdateTime ?? DateTime.UtcNow
             });
         }
 

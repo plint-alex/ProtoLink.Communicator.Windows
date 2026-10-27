@@ -21,6 +21,7 @@ public class CloudCopyIdTests
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.HubId));
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.SharedWithMeId));
         Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.RecentId));
+        Assert.True(CloudVirtualNodes.IsVirtual(CloudVirtualNodes.SharedByMeId));
     }
 
     [Fact]
