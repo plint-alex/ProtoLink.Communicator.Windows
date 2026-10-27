@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels;
 using ProtoLink.Communicator.Windows.Views;
 
@@ -238,6 +239,8 @@ public partial class MainWindow : Window
             _tabToolbarPanel = toolbarPanel;
             MainTabControl.SelectionChanged += (s2, e2) =>
             {
+                // Toolbar + selection chrome first; Notes activate defers tree/WebView2
+                // (#shell-tab-responsiveness / change-then-wait).
                 UpdateTabToolbar(toolbarPanel);
                 if (MainTabControl.SelectedIndex == 1)
                     _notesView.ActivateNotesTab();
@@ -345,46 +348,56 @@ public partial class MainWindow : Window
             return;
         }
 
-        // While logged out, settings gear opens API/theme settings; keep auth gate underneath after close.
-        if (SettingsPanel.Children.Count == 0)
-        {
-            var settings = _settingsService.LoadSettings();
-            var handler = CreateAuthHandler();
-            handler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
-            {
-                InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
-            };
-            var settingsClient = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
-            var vm = new SettingsViewModel(_settingsService, _authService, _tokenService, settingsClient, _logger);
-            vm.OnLoginSuccess += () =>
-            {
-                CloseSettingsPanel();
-                _ = EnsureRealtimeConnectedAsync();
-            };
-            vm.OnCloseRequested += CloseSettingsPanel;
-            vm.OnContactAdded += CloseSettingsPanel;
-            vm.OnSettingsSaved += () =>
-            {
-                var updated = _settingsService.LoadSettings();
-                _httpClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
-                {
-                    InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
-                }) { BaseAddress = new Uri(updated.ApiBaseAddress) };
-                _notesViewModel.ReloadFromSettings();
-                ShowMessengerContent();
-                UpdateAuthGate();
-            };
-            SettingsPanel.Children.Add(new SettingsView
-            {
-                DataContext = vm,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Stretch
-            });
-        }
-        // Settings replaces the main tabs (full width).
+        // Change chrome first (hide tabs / show Settings host), then build content
+        // (#shell-tab-responsiveness / change-then-wait).
         MainTabControl.Visibility = Visibility.Collapsed;
         AuthFlowPanel.Visibility = Visibility.Collapsed;
         SettingsPanel.Visibility = Visibility.Visible;
+
+        if (SettingsPanel.Children.Count > 0)
+            return;
+
+        ShellTabActivation.ScheduleAfterChromePaint(Dispatcher, EnsureSettingsContent);
+    }
+
+    private void EnsureSettingsContent()
+    {
+        if (SettingsPanel.Children.Count > 0)
+            return;
+
+        // While logged out, settings gear opens API/theme settings; keep auth gate underneath after close.
+        var settings = _settingsService.LoadSettings();
+        var handler = CreateAuthHandler();
+        handler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+        {
+            InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+        };
+        var settingsClient = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        var vm = new SettingsViewModel(_settingsService, _authService, _tokenService, settingsClient, _logger);
+        vm.OnLoginSuccess += () =>
+        {
+            CloseSettingsPanel();
+            _ = EnsureRealtimeConnectedAsync();
+        };
+        vm.OnCloseRequested += CloseSettingsPanel;
+        vm.OnContactAdded += CloseSettingsPanel;
+        vm.OnSettingsSaved += () =>
+        {
+            var updated = _settingsService.LoadSettings();
+            _httpClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)
+            {
+                InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
+            }) { BaseAddress = new Uri(updated.ApiBaseAddress) };
+            _notesViewModel.ReloadFromSettings();
+            ShowMessengerContent();
+            UpdateAuthGate();
+        };
+        SettingsPanel.Children.Add(new SettingsView
+        {
+            DataContext = vm,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+            VerticalAlignment = System.Windows.VerticalAlignment.Stretch
+        });
     }
 
     private void OnRealtimeRefreshRequested(string? commandType, System.Text.Json.JsonElement? parameters)

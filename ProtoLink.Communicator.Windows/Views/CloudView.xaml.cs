@@ -21,6 +21,9 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private GridLength _listColumnWidth = new(360);
     private bool _pdfWebViewReady;
     private string? _pdfNavigatedPath;
+    /// <summary>TabControl remounts this view; skip full GetEntities cold-nav on every switch.</summary>
+    private bool _initialNavigationDone;
+    private bool _deferredSyncStarted;
 
     public CloudView()
     {
@@ -30,17 +33,44 @@ public partial class CloudView : System.Windows.Controls.UserControl
         DataContextChanged += OnDataContextChanged;
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
         HookViewModel(DataContext as CloudViewModel);
-        if (_vm != null)
-        {
-            await _vm.InitializeNavigationAsync();
-            // Defer sync so messenger contact GetEntities is not starved at startup.
-            _ = StartDeferredSyncAsync();
-        }
+        // Layout only — InitializeNavigationAsync / sync must not block tab chrome paint.
         ApplyResponsiveLayout();
         RebuildEntityMoreMenu();
+        if (_vm == null)
+            return;
+
+        if (!_initialNavigationDone && _vm.CurrentEntity == null)
+            _vm.StatusText = "Loading...";
+
+        ShellTabActivation.ScheduleAfterChromePaint(Dispatcher, ActivateCloudSurfaceAfterChromePaint);
+    }
+
+    private async Task ActivateCloudSurfaceAfterChromePaint()
+    {
+        if (!IsLoaded || _vm == null)
+            return;
+
+        if (!_initialNavigationDone)
+        {
+            try
+            {
+                await _vm.InitializeNavigationAsync();
+            }
+            finally
+            {
+                _initialNavigationDone = true;
+            }
+        }
+
+        // One deferred mapped-sync kickoff per view instance (014cd52 Sync lane; not on Interactive).
+        if (!_deferredSyncStarted)
+        {
+            _deferredSyncStarted = true;
+            _ = StartDeferredSyncAsync();
+        }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e) => UnhookViewModel();

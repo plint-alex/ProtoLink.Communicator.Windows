@@ -71,13 +71,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         HookViewModel(DataContext as NotesViewModel);
-        // Always repaint: TabControl SelectedContent unloads this view when leaving the Notes tab,
-        // so async TreeRefreshed can be missed while unhooked / Items can be empty on return.
-        PopulateTree();
-        StartRootWatcher();
+        // Cheap layout only here — TabControl remount runs Loaded before chrome paints.
+        // Heavy tree rebuild is deferred (#shell-tab-responsiveness / change-then-wait).
         ApplyResponsiveLayout();
         ApplySiblingPanelLayout();
         ApplyShareSheetPopup();
+        ShellTabActivation.ScheduleAfterChromePaint(Dispatcher, ActivateNotesSurfaceAfterChromePaint);
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -502,14 +501,38 @@ public partial class NotesView : System.Windows.Controls.UserControl
     /// <summary>Call when the Notes tab becomes selected (WebView2 needs a visible HWND).</summary>
     public void ActivateNotesTab()
     {
+        // SelectionChanged runs in the same turn as tab chrome update — defer heavy work.
+        ShellTabActivation.ScheduleAfterChromePaint(Dispatcher, ActivateNotesSurfaceAfterChromePaint);
+    }
+
+    /// <summary>
+    /// After tab chrome paints: repaint tree if empty (TabControl unload drops Items),
+    /// start WebView2, reload clean open page from disk.
+    /// </summary>
+    private void ActivateNotesSurfaceAfterChromePaint()
+    {
+        if (!IsLoaded)
+            return;
+
         EnsureNotesEventHandlers();
+        StartRootWatcher();
+
         if (NotesTreeView.Items.Count == 0)
         {
             if (_vm?.TreeRoot != null)
+            {
+                if (_vm.StatusText == "Ready")
+                    _vm.StatusText = "Loading…";
                 PopulateTree();
+            }
             else
+            {
+                if (_vm != null && _vm.StatusText == "Ready")
+                    _vm.StatusText = "Loading…";
                 _vm?.RefreshTree();
+            }
         }
+
         TryStartWebViewInit();
         _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
     }
