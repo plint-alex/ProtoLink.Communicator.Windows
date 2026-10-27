@@ -11,6 +11,7 @@ public class CloudItemViewModel : ViewModelBase
     private bool _isSynced;
     private DateTime _updateTime;
     private string? _mimeType;
+    private long? _sizeBytes;
     private string? _subtitleOverride;
     private string? _typeGlyphOverride;
     private bool _isVirtualEntry;
@@ -33,6 +34,7 @@ public class CloudItemViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(SubtitleText));
             OnPropertyChanged(nameof(TypeGlyph));
+            OnPropertyChanged(nameof(TypeDisplay));
         }
     }
 
@@ -46,6 +48,8 @@ public class CloudItemViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(SubtitleText));
             OnPropertyChanged(nameof(TypeGlyph));
+            OnPropertyChanged(nameof(TypeDisplay));
+            OnPropertyChanged(nameof(SizeDisplay));
         }
     }
 
@@ -85,6 +89,23 @@ public class CloudItemViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(SubtitleText));
             OnPropertyChanged(nameof(TypeGlyph));
+            OnPropertyChanged(nameof(TypeDisplay));
+        }
+    }
+
+    /// <summary>
+    /// Cheap size for Explorer details (local FileInfo / sync meta). Null → SizeDisplay em-dash.
+    /// Never set from N+1 content-length probes.
+    /// </summary>
+    public long? SizeBytes
+    {
+        get => _sizeBytes;
+        set
+        {
+            if (_sizeBytes == value) return;
+            _sizeBytes = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SizeDisplay));
         }
     }
 
@@ -162,10 +183,18 @@ public class CloudItemViewModel : ViewModelBase
         {
             if (!string.IsNullOrEmpty(SubtitleOverride))
                 return SubtitleOverride!;
-            var type = IsFolder ? "Folder" : CloudFileTypeCue.ShortLabel(MimeType, Name);
+            var type = TypeDisplay;
             return IsSynced ? $"{type} · Synced" : type;
         }
     }
+
+    /// <summary>Explorer Type column: Folder or mime/ext cue (ignores Shared caption override).</summary>
+    public string TypeDisplay =>
+        IsFolder ? "Folder" : CloudFileTypeCue.ShortLabel(MimeType, Name);
+
+    /// <summary>Explorer Size column: cheap length or em-dash (AT-CE2).</summary>
+    public string SizeDisplay =>
+        IsFolder || IsVirtualEntry ? CloudItemSizeCue.Unknown : CloudItemSizeCue.Format(SizeBytes);
 
     public string ModifiedDisplay =>
         IsVirtualEntry ? string.Empty : ChatTime.FormatListMeta(UpdateTime);

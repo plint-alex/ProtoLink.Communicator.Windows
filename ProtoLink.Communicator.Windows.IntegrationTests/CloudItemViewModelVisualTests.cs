@@ -56,4 +56,38 @@ public class CloudItemViewModelVisualTests
         };
         Assert.Equal("PDF · Synced", item.SubtitleText);
     }
+
+    [Fact]
+    public void Details_TypeAndSize_FolderEmDash()
+    {
+        var item = new CloudItemViewModel { Name = "Docs", IsFolder = true, SizeBytes = 99 };
+        Assert.Equal("Folder", item.TypeDisplay);
+        Assert.Equal("—", item.SizeDisplay);
+    }
+
+    [Fact]
+    public void Details_TypeAndSize_FileCheapBytes()
+    {
+        var item = new CloudItemViewModel
+        {
+            Name = "a.txt",
+            IsFolder = false,
+            SizeBytes = 2048
+        };
+        Assert.Equal("TXT", item.TypeDisplay);
+        Assert.Equal("2 KB", item.SizeDisplay);
+    }
+
+    [Fact]
+    public void Details_TypeIgnoresSharedCaptionOverride()
+    {
+        var item = new CloudItemViewModel
+        {
+            Name = "SharedRoot",
+            IsFolder = true,
+            SubtitleOverride = "from Alice · can edit"
+        };
+        Assert.Equal("Folder", item.TypeDisplay);
+        Assert.Equal("from Alice · can edit", item.SubtitleText);
+    }
 }

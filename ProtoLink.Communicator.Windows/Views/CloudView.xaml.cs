@@ -18,7 +18,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
 {
     private const double CompactBreakpoint = 700;
     private CloudViewModel? _vm;
-    private GridLength _listColumnWidth = new(360);
+    private GridLength _treeColumnWidth = new(220);
     private bool _pdfWebViewReady;
     private string? _pdfNavigatedPath;
     /// <summary>TabControl remounts this view; skip full GetEntities cold-nav on every switch.</summary>
@@ -177,34 +177,46 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
         if (_vm.IsCompactLayout)
         {
-            if (ListColumn.Width.Value > 0)
-                _listColumnWidth = ListColumn.Width;
+            if (TreeColumn.Width.Value > 0)
+                _treeColumnWidth = TreeColumn.Width;
 
-            PaneSplitter.Visibility = Visibility.Collapsed;
-            SplitterColumn.Width = new GridLength(0);
+            // Narrow: collapse Folders tree (may stack later); keep list ↔ entity toggle (AT-C9).
+            TreeColumn.Width = new GridLength(0);
+            TreeColumn.MinWidth = 0;
+            TreeSplitterColumn.Width = new GridLength(0);
+            TreePaneSplitter.Visibility = Visibility.Collapsed;
+            EntitySplitterColumn.Width = new GridLength(0);
+            EntityPaneSplitter.Visibility = Visibility.Collapsed;
 
             if (_vm.ShowEntityInCompact)
             {
                 ListColumn.Width = new GridLength(0);
                 ListColumn.MinWidth = 0;
+                EntityColumn.MinWidth = 0;
                 EntityColumn.Width = new GridLength(1, GridUnitType.Star);
             }
             else
             {
                 ListColumn.MinWidth = 0;
-                ListColumn.MaxWidth = double.PositiveInfinity;
                 ListColumn.Width = new GridLength(1, GridUnitType.Star);
                 EntityColumn.Width = new GridLength(0);
+                EntityColumn.MinWidth = 0;
             }
         }
         else
         {
-            ListColumn.MinWidth = 320;
-            ListColumn.MaxWidth = 420;
-            ListColumn.Width = _listColumnWidth.Value > 0 ? _listColumnWidth : new GridLength(360);
-            SplitterColumn.Width = new GridLength(4);
+            TreeColumn.MinWidth = 160;
+            TreeColumn.MaxWidth = 360;
+            TreeColumn.Width = _treeColumnWidth.Value > 0 ? _treeColumnWidth : new GridLength(220);
+            TreeSplitterColumn.Width = new GridLength(4);
+            TreePaneSplitter.Visibility = Visibility.Visible;
+
+            ListColumn.MinWidth = 280;
+            ListColumn.Width = new GridLength(1, GridUnitType.Star);
+            EntitySplitterColumn.Width = new GridLength(4);
+            EntityPaneSplitter.Visibility = Visibility.Visible;
+            EntityColumn.MinWidth = 240;
             EntityColumn.Width = new GridLength(1, GridUnitType.Star);
-            PaneSplitter.Visibility = Visibility.Visible;
         }
     }
 

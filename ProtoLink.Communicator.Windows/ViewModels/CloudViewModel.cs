@@ -651,6 +651,7 @@ public partial class CloudViewModel : ViewModelBase
             // User may have navigated away while the request was in flight.
             if (ListedFolderId != folderId) return;
 
+            ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: folderChanged);
             _listedFolderId = folderId;
             ClearNetworkBanner();
@@ -964,6 +965,26 @@ public partial class CloudViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// AT-CE2: Size from mapped local FileInfo only — never N+1 content-length probes.
+    /// </summary>
+    private void ApplyCheapItemSizes(List<CloudItemViewModel> items)
+    {
+        var breadcrumb = BreadcrumbPath.ToList();
+        var mappings = SyncMappings.ToList();
+        foreach (var item in items)
+        {
+            if (item.IsFolder || item.IsVirtualEntry)
+            {
+                item.SizeBytes = null;
+                continue;
+            }
+
+            var local = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, breadcrumb, mappings);
+            item.SizeBytes = CloudItemSizeCue.TryReadLocalFileLength(local, isFolder: false);
+        }
+    }
+
+    /// <summary>
     /// Update <see cref="Items"/> in place so ListBox does not flash empty and selection stays on the same row.
     /// </summary>
     private void MergeListing(List<CloudItemViewModel> fresh, Guid? selectedId, bool reset)
@@ -1002,6 +1023,7 @@ public partial class CloudViewModel : ViewModelBase
             existing.IsFolder = want.IsFolder;
             existing.IsSynced = want.IsSynced;
             existing.MimeType = want.MimeType;
+            existing.SizeBytes = want.SizeBytes;
             existing.UpdateTime = want.UpdateTime;
             existing.IsVirtualEntry = want.IsVirtualEntry;
             existing.IsShareRoot = want.IsShareRoot;
