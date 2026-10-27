@@ -110,8 +110,12 @@ public partial class NotesViewModel : ViewModelBase
             OnPropertyChanged(nameof(HeaderSubtitle));
             OnPropertyChanged(nameof(CanNavigateParent));
             if (string.IsNullOrEmpty(value))
+            {
                 CurrentRemoteId = null;
-            RefreshSiblingFiles();
+                // Clear Folder-files panel immediately; do not enumerate FS on the UI thread here
+                // (#notes-responsiveness — callers RefreshSiblingFiles after chrome paint).
+                SiblingTreeRoot = null;
+            }
         }
     }
 

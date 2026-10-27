@@ -119,8 +119,12 @@ public partial class NotesViewModel
         };
     }
 
-    /// <summary>Call when the view opens a note (tree click / create / rename). Pushes history for the previous page.</summary>
-    public void RecordOpenedPage(string? previousPath, string newPath, bool pushHistory = true)
+    /// <summary>
+    /// Call when the view opens a note (tree click / create / rename). Pushes history for the previous page.
+    /// By default resolves Cloud remote id; pass <paramref name="resolveRemote"/> false when the caller
+    /// will resolve after chrome paint (#notes-responsiveness).
+    /// </summary>
+    public void RecordOpenedPage(string? previousPath, string newPath, bool pushHistory = true, bool resolveRemote = true)
     {
         if (pushHistory
             && !string.IsNullOrEmpty(previousPath)
@@ -129,7 +133,11 @@ public partial class NotesViewModel
             _history.Push(new NavigationEntry<string>(previousPath));
         }
 
-        RefreshRemoteLinkState();
+        if (resolveRemote)
+            RefreshRemoteLinkState();
+        else
+            CurrentRemoteId = null;
+
         OnPropertyChanged(nameof(HeaderTitle));
         OnPropertyChanged(nameof(HeaderSubtitle));
         OnPropertyChanged(nameof(CanNavigateParent));
@@ -146,6 +154,26 @@ public partial class NotesViewModel
         }
 
         CurrentRemoteId = _remoteIdResolver.Resolve(CurrentPagePath);
+    }
+
+    /// <summary>
+    /// Resolve remote id off the UI thread (sync-meta index build can be large — bf2ff77 class).
+    /// No-ops if <see cref="CurrentPagePath"/> changed while the resolve was running.
+    /// </summary>
+    public async Task RefreshRemoteLinkStateAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentPagePath) || _remoteIdResolver == null)
+        {
+            CurrentRemoteId = null;
+            return;
+        }
+
+        var path = CurrentPagePath;
+        var resolver = _remoteIdResolver;
+        var id = await Task.Run(() => resolver.Resolve(path)).ConfigureAwait(true);
+        if (!string.Equals(CurrentPagePath, path, StringComparison.OrdinalIgnoreCase))
+            return;
+        CurrentRemoteId = id;
     }
 
     /// <summary>E2 Cloud RemoteId for any note folder path (tree context menu Copy id). Null if unmapped / not synced.</summary>

@@ -23,6 +23,8 @@ public class NotesViewModelSiblingFilesTests
             Assert.False(vm.ShowSiblingFiles);
 
             vm.CurrentPagePath = note;
+            // Path set no longer enumerates siblings on the UI thread (#notes-responsiveness).
+            vm.RefreshSiblingFiles();
 
             Assert.True(vm.ShowSiblingFiles);
             Assert.Contains(vm.SiblingFiles, f => f.Name == "sibling-verify.txt");
@@ -48,6 +50,7 @@ public class NotesViewModelSiblingFilesTests
         {
             var vm = new NotesViewModel(new MemorySettingsService(new AppSettings { NotesRootPath = root }));
             vm.CurrentPagePath = note;
+            vm.RefreshSiblingFiles();
 
             Assert.False(vm.ShowSiblingFiles);
             Assert.Empty(vm.SiblingFiles);

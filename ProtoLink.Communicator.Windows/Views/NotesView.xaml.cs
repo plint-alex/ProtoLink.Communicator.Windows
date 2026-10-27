@@ -27,6 +27,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
 {
     private const double CompactBreakpoint = 700;
     private bool _isLoading;
+    /// <summary>Bumps on each NavigateToAsync so a stale load after rapid tree clicks is dropped.</summary>
+    private int _notesNavigateGeneration;
     private bool _isInternalSave;
     private bool _suppressExternalReloadPrompt;
     private NotesViewModel? _vm;
@@ -1638,15 +1640,38 @@ public partial class NotesView : System.Windows.Controls.UserControl
             return;
         }
 
+        // Change-then-wait (#notes-responsiveness): paint selection/header/Loading first; defer
+        // sync-meta Resolve, sibling enumerate, index read, and WebView remount until after chrome.
+        var previous = _vm.CurrentPagePath;
+        var gen = ++_notesNavigateGeneration;
+        _vm.CurrentPagePath = folderPath;
+        _vm.RecordOpenedPage(previous, folderPath, pushHistory: !fromHistory, resolveRemote: false);
+        if (NotesPageNavigation.ShouldShowLoading(previous, folderPath, forceReload))
+            _vm.StatusText = NotesPageNavigation.LoadingStatus;
+        // Drop prior note HTML so the pane does not keep the old page while waiting.
+        if (NotesPageNavigation.ShouldClearEditorForNavigation(previous, folderPath, forceReload)
+            && NotesWebView.CoreWebView2 != null)
+        {
+            NotesWebView.CoreWebView2.NavigateToString("about:blank");
+        }
+
+        _pendingViewportRestore = null;
         _isLoading = true;
         try
         {
-            var previous = _vm.CurrentPagePath;
-            _vm.CurrentPagePath = folderPath;
-            _vm.RecordOpenedPage(previous, folderPath, pushHistory: !fromHistory);
-            _vm.StatusText = "Loading…";
-            _pendingViewportRestore = null;
+            await NotesPageNavigation.YieldForChromePaintAsync(Dispatcher);
+            if (gen != _notesNavigateGeneration || _vm == null
+                || !string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await _vm.RefreshRemoteLinkStateAsync();
+            if (gen != _notesNavigateGeneration) return;
+
             var html = await _vm.LoadPageContentAsync(folderPath);
+            if (gen != _notesNavigateGeneration || _vm == null
+                || !string.Equals(_vm.CurrentPagePath, folderPath, StringComparison.OrdinalIgnoreCase))
+                return;
+
             if (NotesWebView.CoreWebView2 != null)
                 NotesWebView.CoreWebView2.NavigateToString(html);
             _vm.StatusText = "Ready";
@@ -1658,7 +1683,8 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
         finally
         {
-            _isLoading = false;
+            if (gen == _notesNavigateGeneration)
+                _isLoading = false;
         }
     }
 
