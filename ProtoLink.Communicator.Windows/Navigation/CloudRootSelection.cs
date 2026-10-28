@@ -13,7 +13,9 @@ public static class CloudRootSelection
 
     /// <summary>
     /// Prefer a CloudRoot that is not a sync-mapping target; then earliest <see cref="Candidate.CreationTime"/>;
-    /// then Id. When <paramref name="preferredId"/> is among the preferred pool, keep it.
+    /// then Id. When <paramref name="preferredId"/> is among the preferred pool, keep it
+    /// (LastOpen / prior My Cloud — required when mappings are empty so earliest CreationTime does not
+    /// crown a bloated Drive-style root).
     /// </summary>
     public static Guid? PickCanonical(
         IReadOnlyList<Candidate> roots,
@@ -34,6 +36,24 @@ public static class CloudRootSelection
             .ThenBy(c => c.Id)
             .First()
             .Id;
+    }
+
+    /// <summary>
+    /// Preferred My Cloud id: LastOpen when it is itself a known CloudRoot (ops/healthy root),
+    /// else the current in-memory My Cloud id when still under the user.
+    /// </summary>
+    public static Guid? ResolvePreferredCloudRootId(
+        IReadOnlySet<Guid>? knownCloudRootIds,
+        Guid? lastOpenCloudEntityId,
+        Guid currentMyCloudRootId)
+    {
+        if (knownCloudRootIds == null || knownCloudRootIds.Count == 0)
+            return null;
+        if (lastOpenCloudEntityId is { } lo && lo != Guid.Empty && knownCloudRootIds.Contains(lo))
+            return lo;
+        if (currentMyCloudRootId != Guid.Empty && knownCloudRootIds.Contains(currentMyCloudRootId))
+            return currentMyCloudRootId;
+        return null;
     }
 
     /// <summary>E6 / notes-and-cloud-sync: map targets a CloudFolder under My Cloud — never a CloudRoot entity.</summary>

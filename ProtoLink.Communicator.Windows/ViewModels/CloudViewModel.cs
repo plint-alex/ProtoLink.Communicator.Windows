@@ -608,7 +608,8 @@ public partial class CloudViewModel : ViewModelBase
 
     /// <summary>
     /// Resolve My Cloud among possibly duplicate user CloudRoots. Prefers non-mapped roots so a bloated
-    /// Drive-style CloudRoot mapped to NotesRoot cannot become the hub “My Cloud” target.
+    /// Drive-style CloudRoot mapped to NotesRoot cannot become the hub “My Cloud” target. When mappings
+    /// are empty, prefer LastOpen if it is a known CloudRoot (not earliest CreationTime alone).
     /// </summary>
     private async Task ApplyCanonicalCloudRootFromUserChildrenAsync(
         IReadOnlyList<GetEntitiesResult>? underUser,
@@ -624,9 +625,9 @@ public partial class CloudViewModel : ViewModelBase
             _knownCloudRootIds.Add(r.Id);
 
         var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
-        var preferred = _myCloudRootId != Guid.Empty && _knownCloudRootIds.Contains(_myCloudRootId)
-            ? _myCloudRootId
-            : (Guid?)null;
+        var lastOpen = _settingsService.LoadSettings().LastOpenCloudEntityId;
+        var preferred = CloudRootSelection.ResolvePreferredCloudRootId(
+            _knownCloudRootIds, lastOpen, _myCloudRootId);
         var picked = CloudRootSelection.PickCanonical(roots, mapped, preferred);
         if (picked is { } id && id != Guid.Empty)
         {

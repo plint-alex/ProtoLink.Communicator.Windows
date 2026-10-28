@@ -56,6 +56,38 @@ public class CloudRootSelectionTests
         Assert.Equal(b, CloudRootSelection.PickCanonical(roots, preferredId: b));
     }
 
+    /// <summary>
+    /// Agents FAIL 1.0.56: mappings [] → both roots non-mapped → earliest CreationTime crowned Drive;
+    /// LastOpen healthy must win via preferredId so ShouldSkipLastOpenCloudRoot does not drop it.
+    /// </summary>
+    [Fact]
+    public void PickCanonical_WhenMappingsEmpty_PrefersLastOpenOverEarliestDrive()
+    {
+        var healthy = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var drive = Guid.Parse("3e5a2d6e-27ca-4c8b-89e6-e3cb253c05d6");
+        var roots = new[]
+        {
+            new CloudRootSelection.Candidate(drive, new DateTime(2023, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+            new CloudRootSelection.Candidate(healthy, new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc))
+        };
+        var mappedEmpty = new HashSet<Guid>();
+        Assert.Equal(drive, CloudRootSelection.PickCanonical(roots, mappedEmpty));
+        Assert.Equal(healthy, CloudRootSelection.PickCanonical(roots, mappedEmpty, preferredId: healthy));
+        Assert.False(CloudRootSelection.ShouldSkipLastOpenCloudRoot(
+            CloudEntityCodes.CloudRoot, healthy, healthy, cloudRootCountUnderUser: 2));
+    }
+
+    [Fact]
+    public void ResolvePreferredCloudRootId_PrefersLastOpenCloudRootOverStaleMyCloud()
+    {
+        var healthy = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var drive = Guid.Parse("3e5a2d6e-27ca-4c8b-89e6-e3cb253c05d6");
+        var known = new HashSet<Guid> { healthy, drive };
+        Assert.Equal(healthy, CloudRootSelection.ResolvePreferredCloudRootId(known, healthy, drive));
+        Assert.Equal(drive, CloudRootSelection.ResolvePreferredCloudRootId(known, Guid.NewGuid(), drive));
+        Assert.Null(CloudRootSelection.ResolvePreferredCloudRootId(known, Guid.NewGuid(), Guid.Empty));
+    }
+
     [Fact]
     public void ShouldRefuseMapping_CloudRootCode()
     {
