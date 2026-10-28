@@ -17,6 +17,12 @@ public class CloudApiService
     /// <summary>Same page size the Cloud tab uses for GetEntities (M3 picker must not exceed this).</summary>
     public const int GetEntitiesPageSize = 200;
 
+    /// <summary>
+    /// Interactive Cloud folder listing: paint the first page(s) instead of walking every page of a
+    /// bloated CloudRoot (Drive-style duplicates) before the UI can recover.
+    /// </summary>
+    public const int InteractiveListingMaxPages = 1;
+
     private readonly HttpClient _http;
 
     public CloudApiService(HttpClient http)
@@ -42,13 +48,16 @@ public class CloudApiService
             $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Request: {requestUri}{Environment.NewLine}Response: {body}");
     }
 
-    public async Task<List<GetEntitiesResult>> GetEntitiesAsync(Guid[]? parentIds, bool includeValues = true)
+    public async Task<List<GetEntitiesResult>> GetEntitiesAsync(
+        Guid[]? parentIds,
+        bool includeValues = true,
+        int maxPages = int.MaxValue)
     {
         return await GetEntitiesPagedAsync(new GetEntitiesContract
         {
             ParentIds = parentIds,
             IncludeValues = includeValues
-        });
+        }, maxPages);
     }
 
     /// <summary>S6 Shared with me: caller's direct share roots (AT-S17).</summary>
@@ -82,12 +91,16 @@ public class CloudApiService
         });
     }
 
-    private async Task<List<GetEntitiesResult>> GetEntitiesPagedAsync(GetEntitiesContract template)
+    private async Task<List<GetEntitiesResult>> GetEntitiesPagedAsync(
+        GetEntitiesContract template,
+        int maxPages = int.MaxValue)
     {
         var pageSize = GetEntitiesPageSize;
         var all = new List<GetEntitiesResult>();
         var skip = 0;
-        while (true)
+        var pages = 0;
+        var limit = maxPages < 1 ? 1 : maxPages;
+        while (pages < limit)
         {
             var response = await _http.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
             {
@@ -104,6 +117,7 @@ public class CloudApiService
             var list = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>()
                        ?? new List<GetEntitiesResult>();
             all.AddRange(list);
+            pages++;
             if (list.Count < pageSize) break;
             skip += pageSize;
         }

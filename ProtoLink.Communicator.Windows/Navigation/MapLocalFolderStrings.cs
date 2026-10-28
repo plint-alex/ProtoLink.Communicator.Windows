@@ -65,4 +65,17 @@ public static class MapLocalFolderStrings
         IsRussian(lang)
             ? "Нет незамапленных папок здесь. Создайте новую."
             : "No unmapped folders here. Create a new one.";
+
+    public static string RefuseMapTitle(string? lang) =>
+        IsRussian(lang) ? "Нельзя сопоставить с CloudRoot" : "Cannot map onto Cloud root";
+
+    public static string RefuseMapOntoCloudRoot(string? lang) =>
+        IsRussian(lang)
+            ? "Сопоставляйте локальную папку с обычной папкой Cloud (под «Моё облако»), а не с самим CloudRoot. Создайте папку или выберите существующую."
+            : "Map a local folder to a normal Cloud folder under My Cloud — not onto CloudRoot itself. Create a folder or pick an existing one.";
+
+    public static string RefuseNotesRootOntoCloudRoot(string? lang) =>
+        IsRussian(lang)
+            ? "Корень Notes нельзя сопоставить со вторым/корневым CloudRoot (это перегружает список Cloud). Используйте «Добавить локальную папку в облако…» и создайте папку под «Моё облако»."
+            : "Do not map Notes root onto a CloudRoot (including a second Drive-style root) — that starves Cloud listings. Use “Add local folder to Cloud…” and create a folder under My Cloud.";
 }

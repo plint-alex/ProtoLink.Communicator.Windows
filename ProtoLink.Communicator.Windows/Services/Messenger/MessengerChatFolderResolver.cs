@@ -1,6 +1,7 @@
 using System.Net.Http;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.Services.Messenger;
@@ -132,9 +133,13 @@ public sealed class MessengerChatFolderResolver
     {
         var underUser = await _api.GetEntitiesAsync(new[] { ownerUserId }, includeValues: false)
             .ConfigureAwait(false);
-        var root = underUser.FirstOrDefault(e => e.Code == CloudEntityCodes.CloudRoot);
-        if (root != null)
-            return root.Id;
+        var candidates = underUser
+            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
+            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
+            .ToList();
+        var picked = CloudRootSelection.PickCanonical(candidates);
+        if (picked is { } id && id != Guid.Empty)
+            return id;
         return await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { ownerUserId })
             .ConfigureAwait(false);
     }

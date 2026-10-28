@@ -21,7 +21,7 @@ Cloud owns mapped folders: **FS ↔ local sync metadata ↔ server file entities
 | Trigger | Mode |
 |---------|------|
 | App start / login | **Full reconcile** (scan local + remote → upload / download / Conflict) |
-| **Map local folder** | **Full reconcile** into the **existing** cloud folder id (never creates a new mapped-root folder). **E6 discoverability:** Cloud hub “Add local folder to Cloud…” may create a normal Cloud folder first, then call the same map API — see Agents `docs/features/entity-navigation/map-local-folder-ux`. |
+| **Map local folder** | **Full reconcile** into the **existing** cloud folder id (never creates a new mapped-root folder). **E6 discoverability:** Cloud hub “Add local folder to Cloud…” may create a normal Cloud folder first, then call the same map API — see Agents `docs/features/entity-navigation/map-local-folder-ux`. **Never map onto a `CloudRoot` entity** (including a second Drive-style root or NotesRoot→CloudRoot): that starves interactive listings. Windows picks a canonical user CloudRoot (prefer non-mapped) for My Cloud / EnsureRoot. |
 | SignalR `data_changed` | **Full reconcile** (same as start) |
 | Manual Sync | **Full reconcile** |
 | Periodic timer (**15s**) | **Local-only push** (no remote scan/download; upload when local ≠ meta). If metadata for a mapping is empty, upgrades to **full reconcile** for that mapping first. |

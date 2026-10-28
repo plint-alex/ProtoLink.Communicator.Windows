@@ -33,6 +33,18 @@ public partial class CloudViewModel
     {
         if (_authService.CurrentToken == null) return;
 
+        // Resolve canonical My Cloud before LastOpen so a Drive-style duplicate CloudRoot is not hub target.
+        try
+        {
+            var userId = _authService.CurrentToken.UserId;
+            var underUser = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false);
+            await ApplyCanonicalCloudRootFromUserChildrenAsync(underUser, userId).ConfigureAwait(true);
+        }
+        catch
+        {
+            // EnsureRootAsync will retry / create.
+        }
+
         var lastId = _settingsService.LoadSettings().LastOpenCloudEntityId;
         if (lastId is { } id)
         {
@@ -43,6 +55,18 @@ public partial class CloudViewModel
                 if (CloudEntityRestore.Decide(lastId, exists) == CloudEntityRestore.Decision.OpenEntity
                     && resolved is { } open)
                 {
+                    // Skip restoring onto a non-canonical CloudRoot when duplicates exist (ops 2026-10-28).
+                    var openCode = _folderTreeCodes.TryGetValue(open.Entity.Id, out var c) ? c : null;
+                    if (CloudRootSelection.ShouldSkipLastOpenCloudRoot(
+                            openCode,
+                            open.Entity.Id,
+                            _myCloudRootId == Guid.Empty ? null : _myCloudRootId,
+                            _knownCloudRootIds.Count))
+                    {
+                        await EnsureRootAsync();
+                        return;
+                    }
+
                     _history.Clear();
                     _locations.Clear();
                     await OpenAsync(open.Entity, open.Breadcrumb, pushHistory: false);
@@ -124,9 +148,18 @@ public partial class CloudViewModel
         var open = CloudEntityRestore.BuildOpenTarget(chain);
         if (open is null) return null;
 
-        // Remember My Cloud root for hub listing (InitializeNavigation may skip EnsureRootAsync).
+        // Remember ancestor CloudRoot for tree codes; do not override canonical My Cloud when duplicates exist.
         if (chain[0].Code == CloudEntityCodes.CloudRoot)
-            _myCloudRootId = chain[0].Id;
+        {
+            _knownCloudRootIds.Add(chain[0].Id);
+            _folderTreeCodes[chain[0].Id] = CloudEntityCodes.CloudRoot;
+            if (_myCloudRootId == Guid.Empty
+                || !_knownCloudRootIds.Contains(_myCloudRootId)
+                || _knownCloudRootIds.Count == 1)
+            {
+                _myCloudRootId = chain[0].Id;
+            }
+        }
 
         var lang = _settingsService.LoadSettings().UiLanguage;
         return CloudEntityRestore.WithCloudHub(

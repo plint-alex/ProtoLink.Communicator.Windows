@@ -39,6 +39,9 @@ public partial class CloudViewModel : ViewModelBase
     private bool _showEntityInCompact;
     private Guid? _listedFolderId;
     private Guid _myCloudRootId;
+    /// <summary>User-parented CloudRoot ids from the last EnsureRoot / resolve pass (multi-root guard).</summary>
+    private readonly HashSet<Guid> _knownCloudRootIds = new();
+    private bool _recoveringFromRootListingFailure;
     private readonly Dictionary<Guid, string> _shareRootCaptions = new();
     /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
     private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
@@ -592,8 +595,7 @@ public partial class CloudViewModel : ViewModelBase
         if (_authService.CurrentToken == null) return;
         var userId = _authService.CurrentToken.UserId;
         var list = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false);
-        _myCloudRootId = list?.FirstOrDefault(e => e.Code == CloudEntityCodes.CloudRoot)?.Id
-            ?? await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { userId });
+        await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
         _history.Clear();
         _locations.Clear();
         var lang = _settingsService.LoadSettings().UiLanguage;
@@ -602,6 +604,41 @@ public partial class CloudViewModel : ViewModelBase
             new CloudEntityRef(CloudVirtualNodes.HubId, CloudEntityKind.Folder, hubName, null),
             new[] { new CloudBreadcrumbEntry { Id = CloudVirtualNodes.HubId, Name = hubName } },
             pushHistory: false);
+    }
+
+    /// <summary>
+    /// Resolve My Cloud among possibly duplicate user CloudRoots. Prefers non-mapped roots so a bloated
+    /// Drive-style CloudRoot mapped to NotesRoot cannot become the hub “My Cloud” target.
+    /// </summary>
+    private async Task ApplyCanonicalCloudRootFromUserChildrenAsync(
+        IReadOnlyList<GetEntitiesResult>? underUser,
+        Guid userId)
+    {
+        var roots = (underUser ?? Array.Empty<GetEntitiesResult>())
+            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
+            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
+            .ToList();
+
+        _knownCloudRootIds.Clear();
+        foreach (var r in roots)
+            _knownCloudRootIds.Add(r.Id);
+
+        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var preferred = _myCloudRootId != Guid.Empty && _knownCloudRootIds.Contains(_myCloudRootId)
+            ? _myCloudRootId
+            : (Guid?)null;
+        var picked = CloudRootSelection.PickCanonical(roots, mapped, preferred);
+        if (picked is { } id && id != Guid.Empty)
+        {
+            _myCloudRootId = id;
+            _folderTreeCodes[id] = CloudEntityCodes.CloudRoot;
+            return;
+        }
+
+        _myCloudRootId = await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { userId })
+            .ConfigureAwait(true);
+        _knownCloudRootIds.Add(_myCloudRootId);
+        _folderTreeCodes[_myCloudRootId] = CloudEntityCodes.CloudRoot;
     }
 
     public async Task LoadCurrentAsync(bool quiet = true, Guid? restoreSelectionId = null)
@@ -636,7 +673,11 @@ public partial class CloudViewModel : ViewModelBase
             }
             else
             {
-                var list = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
+                // First-page paint: do not walk every page of a bloated CloudRoot before showing rows.
+                var list = await _api.GetEntitiesAsync(
+                    new[] { folderId },
+                    includeValues: true,
+                    maxPages: CloudApiService.InteractiveListingMaxPages);
                 if (ListedFolderId != folderId) return;
 
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
@@ -665,6 +706,24 @@ public partial class CloudViewModel : ViewModelBase
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
             ReportCaughtException(ex, asNetworkFailure: true);
             ClearFolderTree();
+            // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
+            if (!_recoveringFromRootListingFailure
+                && CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds))
+            {
+                _recoveringFromRootListingFailure = true;
+                try
+                {
+                    await EnsureRootAsync().ConfigureAwait(true);
+                }
+                catch
+                {
+                    // Banner stays; user can Retry / Refresh.
+                }
+                finally
+                {
+                    _recoveringFromRootListingFailure = false;
+                }
+            }
         }
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsSharedWithMeListing));

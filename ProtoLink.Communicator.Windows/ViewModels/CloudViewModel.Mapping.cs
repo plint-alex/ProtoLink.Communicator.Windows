@@ -48,6 +48,7 @@ public partial class CloudViewModel
     {
         if (!item.IsFolder) return false;
         if (item.IsVirtualEntry) return false;
+        if (IsForbiddenCloudRootMapTarget(item.Id)) return false;
         var crumbIds = BreadcrumbPath.Select(b => b.Id);
         if (!CloudSharedScope.AllowsMapUnderSharedScope(crumbIds, item.Id, _shareRootCanWrite))
             return false;
@@ -60,6 +61,7 @@ public partial class CloudViewModel
         get
         {
             if (CurrentEntity is not { IsFolder: true } entity) return false;
+            if (IsForbiddenCloudRootMapTarget(entity.Id)) return false;
             var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
             return CloudSharedScope.CanMapCurrentFolder(
                 entity.Id,
@@ -67,6 +69,14 @@ public partial class CloudViewModel
                 mapped,
                 _shareRootCanWrite);
         }
+    }
+
+    private bool IsForbiddenCloudRootMapTarget(Guid folderId)
+    {
+        _folderTreeCodes.TryGetValue(folderId, out var code);
+        if (folderId == _myCloudRootId)
+            code = CloudEntityCodes.CloudRoot;
+        return CloudRootSelection.ShouldRefuseMapping(code, folderId, _knownCloudRootIds);
     }
 
     public CloudSyncMapping? CurrentFolderMapping =>
@@ -85,6 +95,25 @@ public partial class CloudViewModel
         if (SyncMappings.Any(m => m.CloudFolderId == cloudFolderId)) return;
         var ancestorSynced = BreadcrumbPath.Any(b => IsFolderSynced(b.Id));
         if (ancestorSynced) return;
+
+        _folderTreeCodes.TryGetValue(cloudFolderId, out var code);
+        if (cloudFolderId == _myCloudRootId)
+            code = CloudEntityCodes.CloudRoot;
+        if (CloudRootSelection.ShouldRefuseMapping(code, cloudFolderId, _knownCloudRootIds))
+        {
+            var lang = _settingsService.LoadSettings().UiLanguage;
+            var notesRoot = _settingsService.LoadSettings().NotesRootPath;
+            var isNotes = CloudRootSelection.IsNotesRootPath(localPath, notesRoot);
+            System.Windows.MessageBox.Show(
+                isNotes
+                    ? MapLocalFolderStrings.RefuseNotesRootOntoCloudRoot(lang)
+                    : MapLocalFolderStrings.RefuseMapOntoCloudRoot(lang),
+                MapLocalFolderStrings.RefuseMapTitle(lang),
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+            return;
+        }
+
         SyncMappings.Add(new CloudSyncMapping { CloudFolderId = cloudFolderId, LocalPath = localPath.Trim(), CloudFolderName = cloudFolderName ?? "" });
         _syncStore.Save(SyncMappings);
         StatusText = "Mapped — syncing into existing cloud folder…";

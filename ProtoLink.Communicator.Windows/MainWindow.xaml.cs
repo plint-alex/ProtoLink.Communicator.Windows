@@ -56,7 +56,12 @@ public partial class MainWindow : Window
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        _cloudUiHttpClient = new HttpClient(cloudUiHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        // Shorter than default 100s so a bloated CloudRoot listing soft-fails to the network banner / hub recover path.
+        _cloudUiHttpClient = new HttpClient(cloudUiHandler)
+        {
+            BaseAddress = new Uri(settings.ApiBaseAddress),
+            Timeout = TimeSpan.FromSeconds(45)
+        };
         var cloudSyncHandler = CreateAuthHandler();
         cloudSyncHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
         {

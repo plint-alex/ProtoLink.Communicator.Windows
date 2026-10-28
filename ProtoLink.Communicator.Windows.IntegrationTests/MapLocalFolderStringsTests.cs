@@ -19,4 +19,11 @@ public class MapLocalFolderStringsTests
         Assert.Contains("Add this folder to Cloud", MapLocalFolderStrings.NotesNudgeText("en-US"));
         Assert.Contains("облаке", MapLocalFolderStrings.NotesNudgeText("ru-RU"), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void RefuseMapOntoCloudRoot_MentionsMyCloud()
+    {
+        Assert.Contains("My Cloud", MapLocalFolderStrings.RefuseMapOntoCloudRoot("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Notes root", MapLocalFolderStrings.RefuseNotesRootOntoCloudRoot("en"), StringComparison.OrdinalIgnoreCase);
+    }
 }
