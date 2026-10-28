@@ -130,7 +130,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
             RebuildEntityMoreMenu();
 
         if (e.PropertyName is nameof(CloudViewModel.ShowListPane) or nameof(CloudViewModel.ShowEntityPane)
-            or nameof(CloudViewModel.IsCompactLayout))
+            or nameof(CloudViewModel.IsCompactLayout)
+            or nameof(CloudViewModel.ShowFolderTree))
             ApplyColumnLayout();
 
         if (e.PropertyName is nameof(CloudViewModel.ShowPreviewPdf)
@@ -181,10 +182,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
                 _treeColumnWidth = TreeColumn.Width;
 
             // Narrow: collapse Folders tree (may stack later); keep list ↔ entity toggle (AT-C9).
-            TreeColumn.Width = new GridLength(0);
-            TreeColumn.MinWidth = 0;
-            TreeSplitterColumn.Width = new GridLength(0);
-            TreePaneSplitter.Visibility = Visibility.Collapsed;
+            CollapseTreeColumn();
             EntitySplitterColumn.Width = new GridLength(0);
             EntityPaneSplitter.Visibility = Visibility.Collapsed;
 
@@ -202,22 +200,38 @@ public partial class CloudView : System.Windows.Controls.UserControl
                 EntityColumn.Width = new GridLength(0);
                 EntityColumn.MinWidth = 0;
             }
+            return;
         }
-        else
-        {
-            TreeColumn.MinWidth = 160;
-            TreeColumn.MaxWidth = 360;
-            TreeColumn.Width = _treeColumnWidth.Value > 0 ? _treeColumnWidth : new GridLength(220);
-            TreeSplitterColumn.Width = new GridLength(4);
-            TreePaneSplitter.Visibility = Visibility.Visible;
 
-            ListColumn.MinWidth = 280;
-            ListColumn.Width = new GridLength(1, GridUnitType.Star);
-            EntitySplitterColumn.Width = new GridLength(4);
-            EntityPaneSplitter.Visibility = Visibility.Visible;
-            EntityColumn.MinWidth = 240;
-            EntityColumn.Width = new GridLength(1, GridUnitType.Star);
+        // Wide: list + preview always; Folders column only when tree has rows (E9d / AT-CE15).
+        ListColumn.MinWidth = 280;
+        ListColumn.Width = new GridLength(1, GridUnitType.Star);
+        EntitySplitterColumn.Width = new GridLength(4);
+        EntityPaneSplitter.Visibility = Visibility.Visible;
+        EntityColumn.MinWidth = 240;
+        EntityColumn.Width = new GridLength(1, GridUnitType.Star);
+
+        if (!CloudExplorerColumnLayout.ShouldReserveTreeColumn(_vm.IsCompactLayout, _vm.ShowFolderTree))
+        {
+            if (TreeColumn.Width.Value > 0)
+                _treeColumnWidth = TreeColumn.Width;
+            CollapseTreeColumn();
+            return;
         }
+
+        TreeColumn.MinWidth = 160;
+        TreeColumn.MaxWidth = 360;
+        TreeColumn.Width = _treeColumnWidth.Value > 0 ? _treeColumnWidth : new GridLength(220);
+        TreeSplitterColumn.Width = new GridLength(4);
+        TreePaneSplitter.Visibility = Visibility.Visible;
+    }
+
+    private void CollapseTreeColumn()
+    {
+        TreeColumn.Width = new GridLength(0);
+        TreeColumn.MinWidth = 0;
+        TreeSplitterColumn.Width = new GridLength(0);
+        TreePaneSplitter.Visibility = Visibility.Collapsed;
     }
 
     private async Task UpdatePdfPreviewAsync()

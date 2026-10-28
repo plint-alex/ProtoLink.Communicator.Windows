@@ -51,9 +51,10 @@
             </Grid.ColumnDefinitions>
 
             <!-- Folders tree — full height left column (AT-CE1 / AT-CE7) -->
+            <!-- Visibility tied to ShowFolderTree so empty tree does not paint ListBackground (E9d / AT-CE15). -->
             <Grid x:Name="TreePane" Grid.Column="0" Background="{DynamicResource ListBackground}"
-                  Visibility="{Binding ShowListPane, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <DockPanel Visibility="{Binding ShowFolderTree, Converter={StaticResource BooleanToVisibilityConverter}}">
+                  Visibility="{Binding ShowFolderTree, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <DockPanel>
                     <Border DockPanel.Dock="Top" Background="{DynamicResource ToolbarBackground}"
                             BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,10">
                         <TextBlock Text="{Binding FolderTreeHeading}"
