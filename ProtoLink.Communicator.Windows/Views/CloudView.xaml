@@ -42,16 +42,14 @@
     </UserControl.Resources>
     <Grid Background="{DynamicResource ContentBackground}">
         <Grid x:Name="PanesGrid">
+            <!-- E9e / AT-CE16: outer shell is Tree | Main only (never three simultaneous columns). -->
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TreeColumn" Width="220" MinWidth="160" MaxWidth="360"/>
                 <ColumnDefinition x:Name="TreeSplitterColumn" Width="4"/>
-                <ColumnDefinition x:Name="ListColumn" Width="*" MinWidth="280"/>
-                <ColumnDefinition x:Name="EntitySplitterColumn" Width="4"/>
-                <ColumnDefinition x:Name="EntityColumn" Width="*" MinWidth="240"/>
+                <ColumnDefinition x:Name="MainColumn" Width="*" MinWidth="280"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Folders tree — full height left column (AT-CE1 / AT-CE7) -->
-            <!-- Visibility tied to ShowFolderTree so empty tree does not paint ListBackground (E9d / AT-CE15). -->
+            <!-- Folders tree — full height left column (AT-CE1 / AT-CE7); collapsed when empty (E9d / AT-CE15). -->
             <Grid x:Name="TreePane" Grid.Column="0" Background="{DynamicResource ListBackground}"
                   Visibility="{Binding ShowFolderTree, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <DockPanel>
@@ -132,8 +130,21 @@
                           ResizeBehavior="PreviousAndNext" ShowsPreview="True"
                           AutomationProperties.Name="Resize Cloud folders tree"/>
 
+            <!-- Main browse: empty tree = contents|info side-by-side; populated tree = stacked contents+info (E9e). -->
+            <Grid x:Name="MainPanesGrid" Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="BrowseRowTop" Height="*"/>
+                    <RowDefinition x:Name="BrowseRowSplitter" Height="0"/>
+                    <RowDefinition x:Name="BrowseRowBottom" Height="0"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="ListColumn" Width="*" MinWidth="280"/>
+                    <ColumnDefinition x:Name="EntitySplitterColumn" Width="4"/>
+                    <ColumnDefinition x:Name="EntityColumn" Width="*" MinWidth="240"/>
+                </Grid.ColumnDefinitions>
+
             <!-- Contents details list (AT-CE2) -->
-            <Grid x:Name="ListPane" Grid.Column="2" Background="{DynamicResource ListBackground}"
+            <Grid x:Name="ListPane" Grid.Row="0" Grid.Column="0" Background="{DynamicResource ListBackground}"
                   Visibility="{Binding ShowListPane, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -347,12 +358,13 @@
                 </Grid>
             </Grid>
 
-            <GridSplitter x:Name="EntityPaneSplitter" Grid.Column="3" Width="4" HorizontalAlignment="Stretch"
+            <GridSplitter x:Name="EntityPaneSplitter" Grid.Row="0" Grid.Column="1" Width="4" HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
-                          ResizeBehavior="PreviousAndNext" ShowsPreview="True"/>
+                          ResizeBehavior="PreviousAndNext" ShowsPreview="True"
+                          AutomationProperties.Name="Resize Cloud contents and info"/>
 
-            <!-- Entity pane -->
-            <Grid x:Name="EntityPane" Grid.Column="4"
+            <!-- Entity pane (info / preview) — stacked under list when Folders tree is present (E9e / AT-CE16) -->
+            <Grid x:Name="EntityPane" Grid.Row="0" Grid.Column="2"
                   Visibility="{Binding ShowEntityPane, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -505,6 +517,7 @@
                     <views:ShareSheetView DataContext="{Binding ShareSheet}"/>
                 </Border>
             </Grid>
+            </Grid><!-- MainPanesGrid -->
         </Grid>
     </Grid>
 </UserControl>

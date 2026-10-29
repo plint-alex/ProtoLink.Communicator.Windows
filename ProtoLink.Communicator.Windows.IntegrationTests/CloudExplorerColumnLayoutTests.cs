@@ -15,4 +15,22 @@ public class CloudExplorerColumnLayoutTests
     {
         Assert.Equal(expected, CloudExplorerColumnLayout.ShouldReserveTreeColumn(compact, showTree));
     }
+
+    [Theory]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    public void ShouldStackBrowsePanes_MatchesE9ePolicy(bool compact, bool showTree, bool expected)
+    {
+        Assert.Equal(expected, CloudExplorerColumnLayout.ShouldStackBrowsePanes(compact, showTree));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WideVisiblePaneCount_AlwaysTwo(bool showTree)
+    {
+        Assert.Equal(2, CloudExplorerColumnLayout.WideVisiblePaneCount(showTree));
+    }
 }

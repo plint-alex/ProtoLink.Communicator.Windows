@@ -19,6 +19,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
     private const double CompactBreakpoint = 700;
     private CloudViewModel? _vm;
     private GridLength _treeColumnWidth = new(220);
+    private GridLength _stackedListRowHeight = new(1, GridUnitType.Star);
+    private GridLength _stackedEntityRowHeight = new(1, GridUnitType.Star);
     private bool _pdfWebViewReady;
     private string? _pdfNavigatedPath;
     /// <summary>TabControl remounts this view; skip full GetEntities cold-nav on every switch.</summary>
@@ -181,10 +183,9 @@ public partial class CloudView : System.Windows.Controls.UserControl
             if (TreeColumn.Width.Value > 0)
                 _treeColumnWidth = TreeColumn.Width;
 
-            // Narrow: collapse Folders tree (may stack later); keep list ↔ entity toggle (AT-C9).
+            // Narrow: collapse Folders tree; keep list ↔ entity toggle (AT-C9).
             CollapseTreeColumn();
-            EntitySplitterColumn.Width = new GridLength(0);
-            EntityPaneSplitter.Visibility = Visibility.Collapsed;
+            ApplySideBySideBrowsePanes(compactToggle: true);
 
             if (_vm.ShowEntityInCompact)
             {
@@ -203,19 +204,14 @@ public partial class CloudView : System.Windows.Controls.UserControl
             return;
         }
 
-        // Wide: list + preview always; Folders column only when tree has rows (E9d / AT-CE15).
-        ListColumn.MinWidth = 280;
-        ListColumn.Width = new GridLength(1, GridUnitType.Star);
-        EntitySplitterColumn.Width = new GridLength(4);
-        EntityPaneSplitter.Visibility = Visibility.Visible;
-        EntityColumn.MinWidth = 240;
-        EntityColumn.Width = new GridLength(1, GridUnitType.Star);
-
+        // Wide: Folders column only when tree has rows (E9d / AT-CE15).
+        // E9e / AT-CE16: with tree → Tree | stacked contents+info; without → contents | info.
         if (!CloudExplorerColumnLayout.ShouldReserveTreeColumn(_vm.IsCompactLayout, _vm.ShowFolderTree))
         {
             if (TreeColumn.Width.Value > 0)
                 _treeColumnWidth = TreeColumn.Width;
             CollapseTreeColumn();
+            ApplySideBySideBrowsePanes(compactToggle: false);
             return;
         }
 
@@ -224,6 +220,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
         TreeColumn.Width = _treeColumnWidth.Value > 0 ? _treeColumnWidth : new GridLength(220);
         TreeSplitterColumn.Width = new GridLength(4);
         TreePaneSplitter.Visibility = Visibility.Visible;
+        ApplyStackedBrowsePanes();
     }
 
     private void CollapseTreeColumn()
@@ -232,6 +229,101 @@ public partial class CloudView : System.Windows.Controls.UserControl
         TreeColumn.MinWidth = 0;
         TreeSplitterColumn.Width = new GridLength(0);
         TreePaneSplitter.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Empty-tree / compact: contents | info as two columns inside MainPanesGrid.</summary>
+    private void ApplySideBySideBrowsePanes(bool compactToggle)
+    {
+        RememberStackedRowHeightsIfActive();
+
+        BrowseRowTop.Height = new GridLength(1, GridUnitType.Star);
+        BrowseRowSplitter.Height = new GridLength(0);
+        BrowseRowBottom.Height = new GridLength(0);
+
+        Grid.SetRow(ListPane, 0);
+        Grid.SetColumn(ListPane, 0);
+        Grid.SetColumnSpan(ListPane, 1);
+        Grid.SetRowSpan(ListPane, 1);
+
+        Grid.SetRow(EntityPaneSplitter, 0);
+        Grid.SetColumn(EntityPaneSplitter, 1);
+        Grid.SetColumnSpan(EntityPaneSplitter, 1);
+        Grid.SetRowSpan(EntityPaneSplitter, 1);
+        EntityPaneSplitter.Width = 4;
+        EntityPaneSplitter.Height = double.NaN;
+        EntityPaneSplitter.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        EntityPaneSplitter.VerticalAlignment = VerticalAlignment.Stretch;
+        EntityPaneSplitter.ResizeDirection = GridResizeDirection.Columns;
+        EntityPaneSplitter.ResizeBehavior = GridResizeBehavior.PreviousAndNext;
+
+        Grid.SetRow(EntityPane, 0);
+        Grid.SetColumn(EntityPane, 2);
+        Grid.SetColumnSpan(EntityPane, 1);
+        Grid.SetRowSpan(EntityPane, 1);
+
+        if (compactToggle)
+        {
+            EntitySplitterColumn.Width = new GridLength(0);
+            EntityPaneSplitter.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ListColumn.MinWidth = 280;
+        ListColumn.Width = new GridLength(1, GridUnitType.Star);
+        EntitySplitterColumn.Width = new GridLength(4);
+        EntityPaneSplitter.Visibility = Visibility.Visible;
+        EntityColumn.MinWidth = 240;
+        EntityColumn.Width = new GridLength(1, GridUnitType.Star);
+    }
+
+    /// <summary>Populated tree (E9e): stack contents above info inside one main pane.</summary>
+    private void ApplyStackedBrowsePanes()
+    {
+        ListColumn.MinWidth = 0;
+        ListColumn.Width = new GridLength(1, GridUnitType.Star);
+        EntitySplitterColumn.Width = new GridLength(0);
+        EntityColumn.MinWidth = 0;
+        EntityColumn.Width = new GridLength(0);
+
+        BrowseRowTop.Height = _stackedListRowHeight.Value > 0 || _stackedListRowHeight.IsStar
+            ? _stackedListRowHeight
+            : new GridLength(1, GridUnitType.Star);
+        BrowseRowSplitter.Height = new GridLength(4);
+        BrowseRowBottom.Height = _stackedEntityRowHeight.Value > 0 || _stackedEntityRowHeight.IsStar
+            ? _stackedEntityRowHeight
+            : new GridLength(1, GridUnitType.Star);
+
+        Grid.SetRow(ListPane, 0);
+        Grid.SetColumn(ListPane, 0);
+        Grid.SetColumnSpan(ListPane, 3);
+        Grid.SetRowSpan(ListPane, 1);
+
+        Grid.SetRow(EntityPaneSplitter, 1);
+        Grid.SetColumn(EntityPaneSplitter, 0);
+        Grid.SetColumnSpan(EntityPaneSplitter, 3);
+        Grid.SetRowSpan(EntityPaneSplitter, 1);
+        EntityPaneSplitter.Height = 4;
+        EntityPaneSplitter.Width = double.NaN;
+        EntityPaneSplitter.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+        EntityPaneSplitter.VerticalAlignment = VerticalAlignment.Stretch;
+        EntityPaneSplitter.ResizeDirection = GridResizeDirection.Rows;
+        EntityPaneSplitter.ResizeBehavior = GridResizeBehavior.PreviousAndNext;
+        EntityPaneSplitter.Visibility = Visibility.Visible;
+
+        Grid.SetRow(EntityPane, 2);
+        Grid.SetColumn(EntityPane, 0);
+        Grid.SetColumnSpan(EntityPane, 3);
+        Grid.SetRowSpan(EntityPane, 1);
+    }
+
+    private void RememberStackedRowHeightsIfActive()
+    {
+        if (BrowseRowSplitter.Height.Value <= 0)
+            return;
+        if (BrowseRowTop.Height.Value > 0 || BrowseRowTop.Height.IsStar)
+            _stackedListRowHeight = BrowseRowTop.Height;
+        if (BrowseRowBottom.Height.Value > 0 || BrowseRowBottom.Height.IsStar)
+            _stackedEntityRowHeight = BrowseRowBottom.Height;
     }
 
     private async Task UpdatePdfPreviewAsync()
