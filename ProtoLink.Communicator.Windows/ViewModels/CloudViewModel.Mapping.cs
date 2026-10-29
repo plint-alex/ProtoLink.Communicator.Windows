@@ -13,13 +13,21 @@ public partial class CloudViewModel
 {
     public bool IsFolderSynced(Guid folderId) => SyncMappings.Any(m => m.CloudFolderId == folderId);
 
-    /// <summary>E6 hub / writable unmapped folder — not Shared browse-only / Recent / under a mapping.</summary>
+    /// <summary>
+    /// E6 hub / writable folder / inside a mapped tree (AT-MAP-1 + affordance when mapped) —
+    /// not Shared browse-only (AT-MAP-5).
+    /// </summary>
     public bool ShowAddLocalFolderCta =>
-        _authService.IsAuthenticated
-        && (IsCloudHubListing || CanMutateListedFolder)
-        && !ShowSharedBrowseOnlyHint
-        && !BreadcrumbPath.Any(b => IsFolderSynced(b.Id))
-        && !(CurrentEntity is { IsFolder: true } e && IsFolderSynced(e.Id));
+        MapLocalFolderCta.ShouldShow(
+            _authService.IsAuthenticated,
+            ShowSharedBrowseOnlyHint,
+            IsCloudHubListing,
+            CanMutateListedFolder,
+            IsInsideMappedTree);
+
+    private bool IsInsideMappedTree =>
+        BreadcrumbPath.Any(b => IsFolderSynced(b.Id))
+        || (CurrentEntity is { IsFolder: true } e && IsFolderSynced(e.Id));
 
     public string AddLocalFolderCtaLabel =>
         MapLocalFolderStrings.HubCta(_settingsService.LoadSettings().UiLanguage);
@@ -126,6 +134,7 @@ public partial class CloudViewModel
 
     /// <summary>
     /// E6 local-first wizard: pick local → create or pick Cloud folder → <see cref="AddMapping"/> + full reconcile.
+    /// Candidate listing soft-fails (first page only) so a bloated Drive-style CloudRoot cannot block create-then-map.
     /// </summary>
     public async Task RunAddLocalFolderWizardAsync(string? prefilledLocalPath = null)
     {
@@ -135,18 +144,26 @@ public partial class CloudViewModel
             return;
         }
 
-        // Hub CTA uses CanExecute; Notes nudge may call with a prefilled path from any listing.
         var lang = _settingsService.LoadSettings().UiLanguage;
-        await EnsureRootAsync().ConfigureAwait(true);
-        var parentId = ResolveWizardParentFolderId();
-        if (parentId == Guid.Empty) return;
-
-        var candidates = await LoadUnmappedChildFoldersAsync(parentId).ConfigureAwait(true);
-        var choice = MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates);
-        if (choice is null) return;
-
         try
         {
+            // Resolve My Cloud id without navigating to hub (FolderPicker must open promptly).
+            await EnsureWizardCloudRootAsync().ConfigureAwait(true);
+            var parentId = ResolveWizardParentFolderId();
+            if (parentId == Guid.Empty)
+            {
+                System.Windows.MessageBox.Show(
+                    MapLocalFolderStrings.WizardParentMissing(lang),
+                    MapLocalFolderStrings.WizardTitle(lang),
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Warning);
+                return;
+            }
+
+            var candidates = await LoadUnmappedChildFoldersAsync(parentId).ConfigureAwait(true);
+            var choice = MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates);
+            if (choice is null) return;
+
             Guid folderId;
             string folderName;
             if (choice.CreateNew)
@@ -163,7 +180,10 @@ public partial class CloudViewModel
             }
 
             AddMapping(folderId, choice.LocalPath, folderName);
-            await LoadCurrentAsync(quiet: true).ConfigureAwait(true);
+            await OpenAsync(
+                new CloudEntityRef(folderId, CloudEntityKind.Folder, folderName, parentId),
+                BuildBreadcrumbForMappedFolder(parentId, folderId, folderName),
+                pushHistory: true).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -171,31 +191,107 @@ public partial class CloudViewModel
         }
     }
 
+    /// <summary>Ensure <see cref="_myCloudRootId"/> without opening the hub (wizard must not stall on navigation).</summary>
+    private async Task EnsureWizardCloudRootAsync()
+    {
+        if (_authService.CurrentToken == null) return;
+        var userId = _authService.CurrentToken.UserId;
+        var list = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false).ConfigureAwait(true);
+        var roots = (list ?? new List<GetEntitiesResult>())
+            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
+            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
+            .ToList();
+
+        _knownCloudRootIds.Clear();
+        foreach (var r in roots)
+            _knownCloudRootIds.Add(r.Id);
+
+        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        // Create-then-map prefers newest non-mapped root (not LastOpen Drive).
+        var wizardRoot = CloudRootSelection.PickWizardCreateParentRoot(roots, mapped);
+        if (wizardRoot is { } id && id != Guid.Empty)
+        {
+            _myCloudRootId = id;
+            _folderTreeCodes[id] = CloudEntityCodes.CloudRoot;
+            return;
+        }
+
+        await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
+    }
+
     private Guid ResolveWizardParentFolderId()
     {
+        // Hub / CloudRoot / inside a mapping → create under My Cloud (never map onto CloudRoot).
+        if (IsCloudHubListing
+            || IsInsideMappedTree
+            || (ListedFolderId is { } listedRoot && IsForbiddenCloudRootMapTarget(listedRoot)))
+            return _myCloudRootId;
+
         if (CanMutateListedFolder && ListedFolderId is { } listed)
             return listed;
         return _myCloudRootId;
     }
 
-    private async Task<IReadOnlyList<MapLocalFolderCandidate>> LoadUnmappedChildFoldersAsync(Guid parentId)
+    private IReadOnlyList<CloudBreadcrumbEntry> BuildBreadcrumbForMappedFolder(
+        Guid parentId,
+        Guid folderId,
+        string folderName)
     {
-        var list = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true).ConfigureAwait(true);
-        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
-        var result = new List<MapLocalFolderCandidate>();
-        foreach (var e in list ?? Enumerable.Empty<GetEntitiesResult>())
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        var crumbs = new List<CloudBreadcrumbEntry>
         {
-            if (e.Code != CloudEntityCodes.CloudFolder) continue;
-            if (mapped.Contains(e.Id)) continue;
-            if (IsFolderSynced(e.Id)) continue;
-            result.Add(new MapLocalFolderCandidate
+            new() { Id = CloudVirtualNodes.HubId, Name = ShareSheetStrings.CloudHub(lang) }
+        };
+        if (parentId != Guid.Empty && parentId != folderId)
+        {
+            crumbs.Add(new CloudBreadcrumbEntry
             {
-                Id = e.Id,
-                Name = CloudApiService.GetDisplayName(e)
+                Id = parentId,
+                Name = parentId == _myCloudRootId
+                    ? ShareSheetStrings.MyCloud(lang)
+                    : "Cloud"
             });
         }
 
-        return result;
+        crumbs.Add(new CloudBreadcrumbEntry { Id = folderId, Name = folderName });
+        return crumbs;
+    }
+
+    /// <summary>
+    /// First page only + soft-fail: bloated CloudRoot must not block the create-new path (AT-MAP-2).
+    /// </summary>
+    private async Task<IReadOnlyList<MapLocalFolderCandidate>> LoadUnmappedChildFoldersAsync(Guid parentId)
+    {
+        try
+        {
+            var list = await _api.GetEntitiesAsync(
+                    new[] { parentId },
+                    includeValues: true,
+                    maxPages: CloudApiService.InteractiveListingMaxPages)
+                .ConfigureAwait(true);
+            var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            var result = new List<MapLocalFolderCandidate>();
+            foreach (var e in list ?? Enumerable.Empty<GetEntitiesResult>())
+            {
+                if (e.Code != CloudEntityCodes.CloudFolder) continue;
+                if (mapped.Contains(e.Id)) continue;
+                if (IsFolderSynced(e.Id)) continue;
+                result.Add(new MapLocalFolderCandidate
+                {
+                    Id = e.Id,
+                    Name = CloudApiService.GetDisplayName(e)
+                });
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            // Create-new still works with an empty pick list; do not abort the wizard.
+            System.Diagnostics.Debug.WriteLine(
+                $"LoadUnmappedChildFolders soft-fail: {ex.GetType().Name}: {ex.Message}");
+            return Array.Empty<MapLocalFolderCandidate>();
+        }
     }
 
     public void RemoveMapping(Guid cloudFolderId)

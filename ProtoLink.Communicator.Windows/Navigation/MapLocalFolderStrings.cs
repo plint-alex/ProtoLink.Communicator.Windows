@@ -78,4 +78,9 @@ public static class MapLocalFolderStrings
         IsRussian(lang)
             ? "Корень Notes нельзя сопоставить со вторым/корневым CloudRoot (это перегружает список Cloud). Используйте «Добавить локальную папку в облако…» и создайте папку под «Моё облако»."
             : "Do not map Notes root onto a CloudRoot (including a second Drive-style root) — that starves Cloud listings. Use “Add local folder to Cloud…” and create a folder under My Cloud.";
+
+    public static string WizardParentMissing(string? lang) =>
+        IsRussian(lang)
+            ? "Не удалось определить «Моё облако». Обновите Cloud и попробуйте снова."
+            : "Could not resolve My Cloud. Refresh Cloud and try again.";
 }

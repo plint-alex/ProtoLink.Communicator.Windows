@@ -56,6 +56,26 @@ public static class CloudRootSelection
         return null;
     }
 
+    /// <summary>
+    /// Parent CloudRoot for E6 create-then-map: among non-mapped roots prefer the newest
+    /// (healthy AT root tends to be newer than a legacy Drive-style duplicate). Does not use LastOpen,
+    /// so a bloated LastOpen Drive does not become the create parent.
+    /// </summary>
+    public static Guid? PickWizardCreateParentRoot(
+        IReadOnlyList<Candidate> roots,
+        IReadOnlySet<Guid>? mappedCloudFolderIds = null)
+    {
+        if (roots == null || roots.Count == 0) return null;
+        mappedCloudFolderIds ??= new HashSet<Guid>();
+        var nonMapped = roots.Where(r => !mappedCloudFolderIds.Contains(r.Id)).ToList();
+        var pool = nonMapped.Count > 0 ? nonMapped : roots;
+        return pool
+            .OrderByDescending(c => c.CreationTime)
+            .ThenBy(c => c.Id)
+            .First()
+            .Id;
+    }
+
     /// <summary>E6 / notes-and-cloud-sync: map targets a CloudFolder under My Cloud — never a CloudRoot entity.</summary>
     public static bool IsCloudRootCode(string? cloudEntityCode) =>
         string.Equals(cloudEntityCode, CloudEntityCodes.CloudRoot, StringComparison.Ordinal);

@@ -89,6 +89,20 @@ public class CloudRootSelectionTests
     }
 
     [Fact]
+    public void PickWizardCreateParentRoot_PrefersNewestNonMapped_NotOldestDrive()
+    {
+        var healthy = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var drive = Guid.Parse("3e5a2d6e-27ca-4c8b-89e6-e3cb253c05d6");
+        var roots = new[]
+        {
+            new CloudRootSelection.Candidate(drive, new DateTime(2023, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+            new CloudRootSelection.Candidate(healthy, new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc))
+        };
+        Assert.Equal(healthy, CloudRootSelection.PickWizardCreateParentRoot(roots));
+        Assert.Equal(healthy, CloudRootSelection.PickWizardCreateParentRoot(roots, new HashSet<Guid>()));
+    }
+
+    [Fact]
     public void ShouldRefuseMapping_CloudRootCode()
     {
         Assert.True(CloudRootSelection.ShouldRefuseMapping(CloudEntityCodes.CloudRoot, Guid.NewGuid()));
