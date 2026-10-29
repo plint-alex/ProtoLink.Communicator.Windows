@@ -7,7 +7,8 @@ using Xunit;
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
 /// <summary>
-/// Expected connectivity faults soft-fail Messenger LoadMessages / App unobserved and MainWindow Sync error modal.
+/// Expected connectivity faults soft-fail Messenger LoadMessages, Cloud folder-tree expand/refresh
+/// (ToggleFolderTreeExpandAsync / TryEnsureFolderTreeChildrenLoadedAsync), App unobserved, and MainWindow Sync error modal.
 /// </summary>
 [Trait("Category", "Offline")]
 public class ApiExceptionHelperTests
@@ -22,10 +23,24 @@ public class ApiExceptionHelperTests
         Assert.True(ApiExceptionHelper.IsExpectedConnectivityFailure(ex));
     }
 
+    /// <summary>
+    /// HttpClient.Timeout surfaces as TaskCanceledException — same class as Exception intake
+    /// 2026-10-30 Cloud tree expand crash; folder-tree Expand must soft-fail via this helper.
+    /// </summary>
     [Fact]
     public void IsExpectedConnectivityFailure_TaskCanceledException()
     {
         Assert.True(ApiExceptionHelper.IsExpectedConnectivityFailure(new TaskCanceledException("timeout")));
+    }
+
+    [Fact]
+    public void IsExpectedConnectivityFailure_TaskCanceledException_WithTimeoutInner()
+    {
+        // Mirrors HttpClient timeout wrapping (TimeoutException inner is still connectivity soft-fail).
+        var wrapped = new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout of 45 seconds elapsing.",
+            new TimeoutException("A task was canceled."));
+        Assert.True(ApiExceptionHelper.IsExpectedConnectivityFailure(wrapped));
     }
 
     [Fact]

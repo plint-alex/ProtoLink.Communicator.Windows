@@ -113,7 +113,8 @@ public partial class CloudViewModel
 
         try
         {
-            await EnsureFolderTreeChildrenLoadedAsync(row.Id);
+            if (!await TryEnsureFolderTreeChildrenLoadedAsync(row.Id))
+                return; // soft-fail: leave unloaded so retry works; loading cleared in finally
             if (_folderTreeChildren.TryGetValue(row.Id, out var kids) && kids.Count > 0)
                 _folderTreeExpanded.Add(row.Id);
         }
@@ -161,7 +162,8 @@ public partial class CloudViewModel
                                : "Cloud");
             _folderTreeNames[treeRoot] = rootName;
 
-            await EnsureFolderTreeChildrenLoadedAsync(treeRoot);
+            if (!await TryEnsureFolderTreeChildrenLoadedAsync(treeRoot))
+                return; // keep prior FolderTreeRows chrome; cache may already be reset
             if (ListedFolderId is not { } still || CloudVirtualNodes.IsVirtual(still))
             {
                 ClearFolderTree();
@@ -173,9 +175,29 @@ public partial class CloudViewModel
             _folderTreeRootId = treeRoot;
             RebuildFolderTreeRows();
         }
-        catch
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
         {
-            // Keep prior tree on transient failure.
+            // Keep prior tree on transient failure (ResetFolderTreeCache already ran).
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+    }
+
+    /// <summary>
+    /// Loads children for <paramref name="parentId"/>. Returns false on expected connectivity
+    /// failure (timeout/cancel/IO) without marking the parent loaded — retry on next expand.
+    /// </summary>
+    private async Task<bool> TryEnsureFolderTreeChildrenLoadedAsync(Guid parentId)
+    {
+        try
+        {
+            await EnsureFolderTreeChildrenLoadedAsync(parentId);
+            return true;
+        }
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+        {
+            // Soft-fail: do not add to _folderTreeLoaded; clear loading at call-site finally.
+            System.Diagnostics.Debug.WriteLine(ex);
+            return false;
         }
     }
 
