@@ -511,13 +511,14 @@ public class CloudApiService
                ?? new List<SharedByMeRootResult>();
     }
 
-    public async Task AddPermissionAsync(Guid entityId, Guid permissionForId, bool canWrite)
+    public async Task AddPermissionAsync(Guid entityId, Guid permissionForId, bool canWrite, bool includeSubtree = false)
     {
         var response = await _http.PostAsJsonAsync("api/Entities/AddPermission", new AddPermissionContract
         {
             Id = entityId,
             PermissionForId = permissionForId,
-            CanWrite = canWrite
+            CanWrite = canWrite,
+            IncludeSubtree = includeSubtree
         });
         await EnsureSuccessAsync(response);
     }

@@ -390,7 +390,7 @@ public sealed partial class ShareSheetViewModel
                 targets[pasteId] = PastePreviewName;
 
             foreach (var (userId, _) in targets)
-                await _api.AddPermissionAsync(_entityId, userId, AddCanWrite);
+                await _api.AddPermissionAsync(_entityId, userId, AddCanWrite, includeSubtree: _isFolder);
 
             var firstName = targets.Values.First();
             var toast = ShareSheetStrings.AddedToast(Lang, firstName, AddCanWrite);
