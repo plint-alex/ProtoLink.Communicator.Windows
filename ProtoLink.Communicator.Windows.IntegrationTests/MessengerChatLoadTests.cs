@@ -11,11 +11,12 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 public class MessengerChatLoadTests
 {
     [Fact]
-    public void InteractiveHttpTimeout_IsAboutTenSeconds()
+    public void InteractiveHttpTimeout_IsAboutTenSeconds_ForChatGetEntitiesOnly()
     {
         Assert.Equal(TimeSpan.FromSeconds(10), MessengerChatLoad.InteractiveHttpTimeout);
         Assert.True(MessengerChatLoad.InteractiveHttpTimeout <= TimeSpan.FromSeconds(10));
         Assert.True(MessengerChatLoad.InteractiveHttpTimeout >= TimeSpan.FromSeconds(5));
+        // Shared Messenger HttpClient stays longer (MainWindow 45s) so Contacts init is not starved.
     }
 
     [Fact]

@@ -516,11 +516,12 @@ public partial class MainWindow : Window
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        // Bound hang: default HttpClient 100s left chat Loading forever on blackholed HTTPS (Wave B 1.0.61).
+        // Contacts/init share this client — keep Cloud-UI-class headroom. Chat Loading hang is bounded
+        // inside LoadMessagesCoreAsync (MessengerChatLoad.InteractiveHttpTimeout), not here.
         var client = new HttpClient(handler)
         {
             BaseAddress = new Uri(settings.ApiBaseAddress),
-            Timeout = MessengerChatLoad.InteractiveHttpTimeout
+            Timeout = TimeSpan.FromSeconds(45)
         };
         var vm = new MessengerViewModel(_authService, client, _settingsService);
         vm.UnreadChanged += count => TaskbarUnreadBadge.Apply(this, count);

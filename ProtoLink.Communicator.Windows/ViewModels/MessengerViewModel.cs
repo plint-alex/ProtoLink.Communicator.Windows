@@ -658,6 +658,7 @@ public partial class MessengerViewModel : ViewModelBase
 
         try
         {
+            using var loadCts = new CancellationTokenSource(MessengerChatLoad.InteractiveHttpTimeout);
             var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
             {
                 ParentIds = new[] { SystemEntities.Message },
@@ -665,10 +666,10 @@ public partial class MessengerViewModel : ViewModelBase
                 Skip = 0,
                 Take = ConversationMessagePageSize,
                 ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
-            });
+            }, loadCts.Token);
             if (!response.IsSuccessStatusCode)
                 return;
-            var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
+            var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: loadCts.Token);
             if (all == null)
                 return;
             // Contact may have changed while the request was in flight.
@@ -676,7 +677,7 @@ public partial class MessengerViewModel : ViewModelBase
 
             var myLoginTask = GetUserLoginAsync(myUserId);
             var partnerLoginTask = GetUserLoginAsync(partnerUserId);
-            await Task.WhenAll(myLoginTask, partnerLoginTask);
+            await Task.WhenAll(myLoginTask, partnerLoginTask).WaitAsync(loadCts.Token);
             var myLogin = await myLoginTask;
             var partnerLogin = await partnerLoginTask;
 

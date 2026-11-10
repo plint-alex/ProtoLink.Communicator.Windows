@@ -8,8 +8,9 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 public static class MessengerChatLoad
 {
     /// <summary>
-    /// Interactive Messenger GetEntities / GetUser timeout. Matches AC ~10s leave-Loading;
-    /// shorter than Cloud UI 45s so chat chrome recovers while sync/browse can wait longer.
+    /// Per open-chat history GetEntities budget (AC ~10s leave-Loading).
+    /// Applied via CancellationToken on LoadMessagesCore only — Messenger HttpClient stays 45s
+    /// so contact list / EnsureBag init is not starved by the chat-loading bound.
     /// </summary>
     public static readonly TimeSpan InteractiveHttpTimeout = TimeSpan.FromSeconds(10);
 
