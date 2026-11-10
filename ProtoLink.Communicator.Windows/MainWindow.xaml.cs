@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private bool _logoutUiQueued;
     private System.Windows.Controls.Panel? _tabToolbarPanel;
     private bool _developerToolsOpen;
+    private bool _authTabRedirecting;
     private int _realtimeRefreshBusy;
     private int _realtimeRefreshPending;
 
@@ -254,14 +255,37 @@ public partial class MainWindow : Window
             _tabToolbarPanel = toolbarPanel;
             MainTabControl.SelectionChanged += (s2, e2) =>
             {
+                if (_authTabRedirecting)
+                    return;
+
+                // Notes-without-login: Messenger/Cloud stay login-gated.
+                if (AuthShellGate.ShouldPromptLoginForTab(
+                        _authService.IsAuthenticated, MainTabControl.SelectedIndex))
+                {
+                    _authTabRedirecting = true;
+                    try
+                    {
+                        MainTabControl.SelectedIndex = AuthShellGate.UnsignedDefaultTabIndex;
+                    }
+                    finally
+                    {
+                        _authTabRedirecting = false;
+                    }
+                    OpenSettingsForLogin();
+                    UpdateTabToolbar(toolbarPanel);
+                    _notesView.ActivateNotesTab();
+                    return;
+                }
+
                 // Toolbar + selection chrome first; Notes activate defers tree/WebView2
                 // (#shell-tab-responsiveness / change-then-wait).
                 UpdateTabToolbar(toolbarPanel);
-                if (MainTabControl.SelectedIndex == 1)
+                if (MainTabControl.SelectedIndex == AuthShellGate.NotesTabIndex)
                     _notesView.ActivateNotesTab();
             };
+            ApplyUnsignedDefaultTabIfNeeded();
             UpdateTabToolbar(toolbarPanel);
-            if (MainTabControl.SelectedIndex == 1)
+            if (MainTabControl.SelectedIndex == AuthShellGate.NotesTabIndex)
                 _notesView.ActivateNotesTab();
         }
     }
@@ -323,35 +347,37 @@ public partial class MainWindow : Window
 
     private void UpdateAuthGate()
     {
-        if (_authService.IsAuthenticated)
-        {
-            AuthFlowPanel.Children.Clear();
-            AuthFlowPanel.Visibility = Visibility.Collapsed;
-            return;
-        }
+        // Notes-without-login: never collapse MainTabControl behind AuthFlow when unsigned.
+        AuthFlowPanel.Children.Clear();
+        AuthFlowPanel.Visibility = Visibility.Collapsed;
 
-        MainTabControl.Visibility = Visibility.Collapsed;
-        SettingsPanel.Visibility = Visibility.Collapsed;
-        AuthFlowPanel.Visibility = Visibility.Visible;
-        if (AuthFlowPanel.Children.Count == 0)
+        if (SettingsPanel.Visibility != Visibility.Visible)
+            MainTabControl.Visibility = Visibility.Visible;
+
+        ApplyUnsignedDefaultTabIfNeeded();
+
+        if (_tabToolbarPanel != null)
+            UpdateTabToolbar(_tabToolbarPanel);
+    }
+
+    private void ApplyUnsignedDefaultTabIfNeeded()
+    {
+        if (AuthShellGate.HideTabsUntilAuthenticated)
+            return;
+
+        var resolved = AuthShellGate.ResolveTabAfterAuthChange(
+            _authService.IsAuthenticated, MainTabControl.SelectedIndex);
+        if (resolved == MainTabControl.SelectedIndex)
+            return;
+
+        _authTabRedirecting = true;
+        try
         {
-            var vm = new AuthFlowViewModel(_authService, _settingsService);
-            vm.OnLoginSuccess += () =>
-            {
-                AuthFlowPanel.Children.Clear();
-                AuthFlowPanel.Visibility = Visibility.Collapsed;
-                MainTabControl.Visibility = Visibility.Visible;
-                RebuildCloudTab();
-                ShowMessengerContent();
-                _ = EnsureRealtimeConnectedAsync();
-            };
-            vm.OnOpenSettings += () => Settings_Click(this, new RoutedEventArgs());
-            AuthFlowPanel.Children.Add(new AuthFlowView
-            {
-                DataContext = vm,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
-                VerticalAlignment = System.Windows.VerticalAlignment.Stretch
-            });
+            MainTabControl.SelectedIndex = resolved;
+        }
+        finally
+        {
+            _authTabRedirecting = false;
         }
     }
 
@@ -380,7 +406,7 @@ public partial class MainWindow : Window
         if (SettingsPanel.Children.Count > 0)
             return;
 
-        // While logged out, settings gear opens API/theme settings; keep auth gate underneath after close.
+        // While logged out, settings gear opens API/theme + login; tabs stay available for Notes.
         var settings = _settingsService.LoadSettings();
         var handler = CreateAuthHandler();
         handler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Interactive)

@@ -77,7 +77,7 @@
             <!-- Settings: full-width page instead of the tab strip -->
             <Grid x:Name="SettingsPanel" Visibility="Collapsed" Background="{DynamicResource SettingsOverlayBackground}"
                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-            <!-- Auth gate when logged out -->
+            <!-- Legacy AuthFlow host (unused for shell gate; Notes stays reachable unsigned) -->
             <Grid x:Name="AuthFlowPanel" Visibility="Collapsed" Background="{DynamicResource WindowBackground}"
                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
         </Grid>
