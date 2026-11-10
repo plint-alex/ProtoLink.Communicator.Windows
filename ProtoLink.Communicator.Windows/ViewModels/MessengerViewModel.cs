@@ -621,9 +621,10 @@ public partial class MessengerViewModel : ViewModelBase
             }
             while (System.Threading.Interlocked.Exchange(ref _loadMessagesQueued, 0) == 1);
         }
-        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+        catch (Exception ex) when (MessengerChatLoad.ShouldClearLoadingOnFault(ex))
         {
-            // Fire-and-forget select/poll/SignalR: keep cache UI; do not fault the Task.
+            // Fire-and-forget select/poll/SignalR: keep cache UI; never leave IsChatLoading stuck
+            // (HttpClient timeout, blackholed HTTPS, or unexpected parse) — do not fault the Task.
             System.Diagnostics.Debug.WriteLine(ex);
             IsChatLoading = false;
         }
@@ -655,67 +656,68 @@ public partial class MessengerViewModel : ViewModelBase
         var partnerUserId = SelectedContact.Id;
         var myStr = myUserId.ToString();
 
-        var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+        try
         {
-            ParentIds = new[] { SystemEntities.Message },
-            IncludeValues = true,
-            Skip = 0,
-            Take = ConversationMessagePageSize,
-            ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
-        });
-        if (!response.IsSuccessStatusCode)
-        {
-            if (SelectedContact?.Id == partnerUserId)
-                IsChatLoading = false;
-            return;
-        }
-        var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
-        if (all == null)
-        {
-            if (SelectedContact?.Id == partnerUserId)
-                IsChatLoading = false;
-            return;
-        }
-        // Contact may have changed while the request was in flight.
-        if (SelectedContact?.Id != partnerUserId) return;
-
-        var myLoginTask = GetUserLoginAsync(myUserId);
-        var partnerLoginTask = GetUserLoginAsync(partnerUserId);
-        await Task.WhenAll(myLoginTask, partnerLoginTask);
-        var myLogin = await myLoginTask;
-        var partnerLogin = await partnerLoginTask;
-
-        var list = new List<MessageViewModel>();
-        foreach (var msg in all)
-        {
-            if (msg.Values == null) continue;
-            string? sender = null;
-            foreach (var val in msg.Values)
+            var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
             {
-                if (val is EntityValue ev && ev.Type == "StringValue")
-                {
-                    var s = ev.Value?.ToString();
-                    if (s != null && s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase))
-                        sender = s.Substring(7);
-                }
-            }
-            // Android may store GUIDs with different casing than Guid.ToString().
-            var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
-            var vm = ParseMessage(msg, isFromMe, isFromMe ? myLogin : partnerLogin);
-            if (vm != null) list.Add(vm);
-        }
+                ParentIds = new[] { SystemEntities.Message },
+                IncludeValues = true,
+                Skip = 0,
+                Take = ConversationMessagePageSize,
+                ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
+            });
+            if (!response.IsSuccessStatusCode)
+                return;
+            var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
+            if (all == null)
+                return;
+            // Contact may have changed while the request was in flight.
+            if (SelectedContact?.Id != partnerUserId) return;
 
-        if (SelectedContact?.Id != partnerUserId) return;
-        list = MergeInFlightLocalMessages(partnerUserId, list);
-        // Server returns newest-first; UI list is oldest→newest.
-        _cachedMessages[partnerUserId] = list
-            .OrderBy(x => x.Timestamp)
-            .ThenBy(x => x.EntityId)
-            .ToList();
-        _loadedContacts.Add(partnerUserId);
-        ShowMessages(_cachedMessages[partnerUserId]);
-        IsChatLoading = false;
-        await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
+            var myLoginTask = GetUserLoginAsync(myUserId);
+            var partnerLoginTask = GetUserLoginAsync(partnerUserId);
+            await Task.WhenAll(myLoginTask, partnerLoginTask);
+            var myLogin = await myLoginTask;
+            var partnerLogin = await partnerLoginTask;
+
+            var list = new List<MessageViewModel>();
+            foreach (var msg in all)
+            {
+                if (msg.Values == null) continue;
+                string? sender = null;
+                foreach (var val in msg.Values)
+                {
+                    if (val is EntityValue ev && ev.Type == "StringValue")
+                    {
+                        var s = ev.Value?.ToString();
+                        if (s != null && s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase))
+                            sender = s.Substring(7);
+                    }
+                }
+                // Android may store GUIDs with different casing than Guid.ToString().
+                var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
+                var vm = ParseMessage(msg, isFromMe, isFromMe ? myLogin : partnerLogin);
+                if (vm != null) list.Add(vm);
+            }
+
+            if (SelectedContact?.Id != partnerUserId) return;
+            list = MergeInFlightLocalMessages(partnerUserId, list);
+            // Server returns newest-first; UI list is oldest→newest.
+            _cachedMessages[partnerUserId] = list
+                .OrderBy(x => x.Timestamp)
+                .ThenBy(x => x.EntityId)
+                .ToList();
+            _loadedContacts.Add(partnerUserId);
+            ShowMessages(_cachedMessages[partnerUserId]);
+            await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
+        }
+        finally
+        {
+            // Always drop Loading for this partner (or if selection cleared) so paint cannot stick
+            // when ShowMessages/parse throws after a successful GetEntities.
+            if (SelectedContact?.Id == partnerUserId || SelectedContact == null)
+                IsChatLoading = false;
+        }
     }
 
     private static MessageViewModel? ParseMessage(GetEntitiesResult message, bool isFromMe, string senderName)

@@ -516,7 +516,12 @@ public partial class MainWindow : Window
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        var client = new HttpClient(handler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        // Bound hang: default HttpClient 100s left chat Loading forever on blackholed HTTPS (Wave B 1.0.61).
+        var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(settings.ApiBaseAddress),
+            Timeout = MessengerChatLoad.InteractiveHttpTimeout
+        };
         var vm = new MessengerViewModel(_authService, client, _settingsService);
         vm.UnreadChanged += count => TaskbarUnreadBadge.Apply(this, count);
         vm.TryOpenEntityInAppAsync = async entityId =>
