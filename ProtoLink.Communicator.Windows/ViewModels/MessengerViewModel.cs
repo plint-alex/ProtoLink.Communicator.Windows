@@ -151,7 +151,7 @@ public partial class MessengerViewModel : ViewModelBase
             if (ContactSelection.ShouldClearMessagesForSelection(previousId, nextId) && Messages.Count > 0)
                 Messages.Clear();
 
-            // Loading until deferred cache paint or GetEntities finishes — never block selection chrome.
+            // Loading until cache paint or GetEntities finishes — never block selection chrome.
             IsChatLoading = ContactSelection.ShouldShowLoading(nextId, hasCache)
                             || (hasCache && ContactSelection.ShouldClearMessagesForSelection(previousId, nextId));
 
@@ -159,7 +159,12 @@ public partial class MessengerViewModel : ViewModelBase
             var cachedThread = hasCache ? cached : null;
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
 
-            void ContinueAfterChrome()
+            // Wall-clock leave-Loading from select (not from when Background work eventually runs).
+            // Under contacts Refresh / enrich, Background deferral alone pushed clear past ~12s AC.
+            if (IsChatLoading)
+                _ = EnforceLeaveLoadingBudgetAsync(gen, contactId);
+
+            void ContinueOpenChat()
             {
                 if (gen != _contactSelectGeneration || SelectedContact?.Id != contactId)
                     return;
@@ -174,11 +179,33 @@ public partial class MessengerViewModel : ViewModelBase
                 StartChatPoll();
             }
 
+            // Input (not Background): Messenger tab already visible — do not wait behind EnrichContactNames.
             if (dispatcher != null)
-                ContactSelection.ScheduleAfterChromePaint(dispatcher, ContinueAfterChrome);
+                dispatcher.BeginInvoke(ContinueOpenChat, DispatcherPriority.Input);
             else
-                ContinueAfterChrome();
+                ContinueOpenChat();
         }
+    }
+
+    /// <summary>
+    /// Forces IsChatLoading off when the interactive budget elapses from contact select,
+    /// even if GetEntities has not started yet (UI thread busy / deferred open).
+    /// </summary>
+    private async Task EnforceLeaveLoadingBudgetAsync(int generation, Guid contactId)
+    {
+        try
+        {
+            await Task.Delay(MessengerChatLoad.InteractiveHttpTimeout).ConfigureAwait(true);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (generation != _contactSelectGeneration) return;
+        if (SelectedContact?.Id != contactId) return;
+        if (IsChatLoading)
+            IsChatLoading = false;
     }
     public string MessageText
     {

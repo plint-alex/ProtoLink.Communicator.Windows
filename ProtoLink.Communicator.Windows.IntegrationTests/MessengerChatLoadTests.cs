@@ -29,6 +29,14 @@ public class MessengerChatLoadTests
     }
 
     [Fact]
+    public void InteractiveHttpTimeout_LeavesMarginUnderTwelveSecondWaveB()
+    {
+        // Select-time Delay + UIA poll slack must still clear before AC ≤12s.
+        Assert.True(MessengerChatLoad.InteractiveHttpTimeout + TimeSpan.FromSeconds(3)
+            <= TimeSpan.FromSeconds(12));
+    }
+
+    [Fact]
     public void ShouldClearLoadingOnFault_AnyException_IncludingNonConnectivity()
     {
         Assert.True(MessengerChatLoad.ShouldClearLoadingOnFault(new InvalidOperationException("parse")));

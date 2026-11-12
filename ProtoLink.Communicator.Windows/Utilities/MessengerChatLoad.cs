@@ -8,9 +8,10 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 public static class MessengerChatLoad
 {
     /// <summary>
-    /// Hard leave-Loading budget for open-chat (Wave B ≤~12s wall clock; margin for UIA).
-    /// HttpClient CancellationToken alone can leave the await running until the response
-    /// arrives (~11.5s+ on tip) — always pair with <see cref="AwaitWithinBudgetAsync"/>.
+    /// Hard leave-Loading budget measured from contact select (Wave B ≤~12s wall clock).
+    /// Pair with <see cref="AwaitWithinBudgetAsync"/> on GetEntities <em>and</em> a select-time
+    /// <c>Task.Delay</c> clear — CTS alone can stall until response, and Background deferral
+    /// can delay LoadMessages start so wall clock exceeds AC.
     /// Messenger HttpClient stays 45s so contacts / EnsureBag are not starved.
     /// </summary>
     public static readonly TimeSpan InteractiveHttpTimeout = TimeSpan.FromSeconds(8);
