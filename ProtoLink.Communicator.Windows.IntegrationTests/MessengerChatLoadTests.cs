@@ -5,18 +5,27 @@ using Xunit;
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
 /// <summary>
-/// Open-chat Loading must clear within InteractiveHttpTimeout (Wave B AT-M11 / tip 1.0.61 hang).
+/// Open-chat Loading must clear within InteractiveHttpTimeout (Wave B AT-M11 / tip over-12s FAIL).
 /// </summary>
 [Trait("Category", "Offline")]
 public class MessengerChatLoadTests
 {
     [Fact]
-    public void InteractiveHttpTimeout_IsAboutTenSeconds_ForChatGetEntitiesOnly()
+    public void InteractiveHttpTimeout_IsUnderTwelveSeconds_WithMargin()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10), MessengerChatLoad.InteractiveHttpTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(8), MessengerChatLoad.InteractiveHttpTimeout);
         Assert.True(MessengerChatLoad.InteractiveHttpTimeout <= TimeSpan.FromSeconds(10));
         Assert.True(MessengerChatLoad.InteractiveHttpTimeout >= TimeSpan.FromSeconds(5));
         // Shared Messenger HttpClient stays longer (MainWindow 45s) so Contacts init is not starved.
+    }
+
+    [Fact]
+    public async Task AwaitWithinBudgetAsync_ThrowsWhenBudgetElapses_EvenIfTaskStillRunning()
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromMilliseconds(80));
+        var never = Task.Delay(Timeout.InfiniteTimeSpan);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await MessengerChatLoad.AwaitWithinBudgetAsync(never, budget.Token));
     }
 
     [Fact]

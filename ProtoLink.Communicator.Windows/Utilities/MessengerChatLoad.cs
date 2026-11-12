@@ -8,11 +8,26 @@ namespace ProtoLink.Communicator.Windows.Utilities;
 public static class MessengerChatLoad
 {
     /// <summary>
-    /// Per open-chat history GetEntities budget (AC ~10s leave-Loading).
-    /// Applied via CancellationToken on LoadMessagesCore only — Messenger HttpClient stays 45s
-    /// so contact list / EnsureBag init is not starved by the chat-loading bound.
+    /// Hard leave-Loading budget for open-chat (Wave B ≤~12s wall clock; margin for UIA).
+    /// HttpClient CancellationToken alone can leave the await running until the response
+    /// arrives (~11.5s+ on tip) — always pair with <see cref="AwaitWithinBudgetAsync"/>.
+    /// Messenger HttpClient stays 45s so contacts / EnsureBag are not starved.
     /// </summary>
-    public static readonly TimeSpan InteractiveHttpTimeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan InteractiveHttpTimeout = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// Completes when <paramref name="task"/> does, or throws when <paramref name="budget"/>
+    /// cancels — even if the underlying HTTP request has not aborted yet.
+    /// </summary>
+    public static Task<T> AwaitWithinBudgetAsync<T>(Task<T> task, CancellationToken budget) =>
+        task.WaitAsync(budget);
+
+    /// <summary>
+    /// Completes when <paramref name="task"/> does, or throws when <paramref name="budget"/>
+    /// cancels — even if the underlying HTTP request has not aborted yet.
+    /// </summary>
+    public static Task AwaitWithinBudgetAsync(Task task, CancellationToken budget) =>
+        task.WaitAsync(budget);
 
     /// <summary>
     /// Fire-and-forget LoadMessages must clear loading for any fault (connectivity or parse),

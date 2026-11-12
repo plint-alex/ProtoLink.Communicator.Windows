@@ -377,15 +377,17 @@ public partial class MessengerViewModel : ViewModelBase
         EnsureMessageUnfurls(message);
     }
 
-    private async Task<string> GetUserLoginAsync(Guid userId)
+    private async Task<string> GetUserLoginAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         if (_userLoginCache.TryGetValue(userId, out var cached)) return cached;
         try
         {
-            var response = await _httpClient.GetAsync($"api/Authentication/GetUserById?userId={userId}");
+            var response = await _httpClient.GetAsync(
+                $"api/Authentication/GetUserById?userId={userId}",
+                cancellationToken);
             if (response.IsSuccessStatusCode)
             {
-                var user = await response.Content.ReadFromJsonAsync<JsonElement>();
+                var user = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
                 if (user.TryGetProperty("login", out var loginEl))
                 {
                     var login = loginEl.GetString() ?? userId.ToString();
@@ -393,6 +395,10 @@ public partial class MessengerViewModel : ViewModelBase
                     return login;
                 }
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch { }
         return userId.ToString();
@@ -507,7 +513,7 @@ public partial class MessengerViewModel : ViewModelBase
     {
         try
         {
-            var loginTasks = contactUserIds.Select(GetUserLoginAsync).ToArray();
+            var loginTasks = contactUserIds.Select(id => GetUserLoginAsync(id)).ToArray();
             var names = await Task.WhenAll(loginTasks);
             for (var i = 0; i < contactUserIds.Count; i++)
             {
@@ -656,61 +662,77 @@ public partial class MessengerViewModel : ViewModelBase
         var partnerUserId = SelectedContact.Id;
         var myStr = myUserId.ToString();
 
+        using var loadCts = new CancellationTokenSource(MessengerChatLoad.InteractiveHttpTimeout);
         try
         {
-            using var loadCts = new CancellationTokenSource(MessengerChatLoad.InteractiveHttpTimeout);
-            var response = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+            try
             {
-                ParentIds = new[] { SystemEntities.Message },
-                IncludeValues = true,
-                Skip = 0,
-                Take = ConversationMessagePageSize,
-                ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
-            }, loadCts.Token);
-            if (!response.IsSuccessStatusCode)
-                return;
-            var all = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: loadCts.Token);
-            if (all == null)
-                return;
-            // Contact may have changed while the request was in flight.
-            if (SelectedContact?.Id != partnerUserId) return;
-
-            var myLoginTask = GetUserLoginAsync(myUserId);
-            var partnerLoginTask = GetUserLoginAsync(partnerUserId);
-            await Task.WhenAll(myLoginTask, partnerLoginTask).WaitAsync(loadCts.Token);
-            var myLogin = await myLoginTask;
-            var partnerLogin = await partnerLoginTask;
-
-            var list = new List<MessageViewModel>();
-            foreach (var msg in all)
-            {
-                if (msg.Values == null) continue;
-                string? sender = null;
-                foreach (var val in msg.Values)
-                {
-                    if (val is EntityValue ev && ev.Type == "StringValue")
+                var response = await MessengerChatLoad.AwaitWithinBudgetAsync(
+                    _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
                     {
-                        var s = ev.Value?.ToString();
-                        if (s != null && s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase))
-                            sender = s.Substring(7);
-                    }
-                }
-                // Android may store GUIDs with different casing than Guid.ToString().
-                var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
-                var vm = ParseMessage(msg, isFromMe, isFromMe ? myLogin : partnerLogin);
-                if (vm != null) list.Add(vm);
-            }
+                        ParentIds = new[] { SystemEntities.Message },
+                        IncludeValues = true,
+                        Skip = 0,
+                        Take = ConversationMessagePageSize,
+                        ConversationUserIds = BuildConversationUserIds(myUserId, partnerUserId)
+                    }, loadCts.Token),
+                    loadCts.Token);
+                if (!response.IsSuccessStatusCode)
+                    return;
+                var all = await MessengerChatLoad.AwaitWithinBudgetAsync(
+                    response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: loadCts.Token),
+                    loadCts.Token);
+                if (all == null)
+                    return;
+                // Contact may have changed while the request was in flight.
+                if (SelectedContact?.Id != partnerUserId) return;
 
-            if (SelectedContact?.Id != partnerUserId) return;
-            list = MergeInFlightLocalMessages(partnerUserId, list);
-            // Server returns newest-first; UI list is oldest→newest.
-            _cachedMessages[partnerUserId] = list
-                .OrderBy(x => x.Timestamp)
-                .ThenBy(x => x.EntityId)
-                .ToList();
-            _loadedContacts.Add(partnerUserId);
-            ShowMessages(_cachedMessages[partnerUserId]);
-            await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
+                var myLoginTask = GetUserLoginAsync(myUserId, loadCts.Token);
+                var partnerLoginTask = GetUserLoginAsync(partnerUserId, loadCts.Token);
+                await MessengerChatLoad.AwaitWithinBudgetAsync(
+                    Task.WhenAll(myLoginTask, partnerLoginTask),
+                    loadCts.Token);
+                var myLogin = await myLoginTask;
+                var partnerLogin = await partnerLoginTask;
+
+                var list = new List<MessageViewModel>();
+                foreach (var msg in all)
+                {
+                    if (msg.Values == null) continue;
+                    string? sender = null;
+                    foreach (var val in msg.Values)
+                    {
+                        if (val is EntityValue ev && ev.Type == "StringValue")
+                        {
+                            var s = ev.Value?.ToString();
+                            if (s != null && s.StartsWith("sender:", StringComparison.OrdinalIgnoreCase))
+                                sender = s.Substring(7);
+                        }
+                    }
+                    // Android may store GUIDs with different casing than Guid.ToString().
+                    var isFromMe = string.Equals(sender, myStr, StringComparison.OrdinalIgnoreCase);
+                    var vm = ParseMessage(msg, isFromMe, isFromMe ? myLogin : partnerLogin);
+                    if (vm != null) list.Add(vm);
+                }
+
+                if (SelectedContact?.Id != partnerUserId) return;
+                list = MergeInFlightLocalMessages(partnerUserId, list);
+                // Server returns newest-first; UI list is oldest→newest.
+                _cachedMessages[partnerUserId] = list
+                    .OrderBy(x => x.Timestamp)
+                    .ThenBy(x => x.EntityId)
+                    .ToList();
+                _loadedContacts.Add(partnerUserId);
+                ShowMessages(_cachedMessages[partnerUserId]);
+                // Receipts / realtime must not keep Chat loading past interactive paint.
+                IsChatLoading = false;
+                await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
+            }
+            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            {
+                // Budget elapsed — clear Loading even while HTTP may still be in flight.
+                System.Diagnostics.Debug.WriteLine("Messenger chat load interactive budget elapsed");
+            }
         }
         finally
         {
