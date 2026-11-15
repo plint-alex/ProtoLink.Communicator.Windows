@@ -228,12 +228,16 @@ public sealed class SyncEngine
                         break;
                     }
                     case SyncDirectionDecide.Action.Conflict:
-                        throw new SyncConflictException(
-                            path,
-                            localHash,
-                            remoteHash,
-                            meta.ContentHash,
-                            "Local and remote both differ from sync baseline (or baseline is empty). Use Force Upload or Force Download.");
+                    {
+                        // DecideByHash no longer returns Conflict (cloud-wins Read); keep as Read.
+                        await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
+                        meta.SizeBytes = remoteBytes.Length;
+                        meta.ContentHash = remoteHash;
+                        meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
+                        _store.Upsert(meta);
+                        dirty.Add(path);
+                        break;
+                    }
                 }
             }
             catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
@@ -468,15 +472,6 @@ public sealed class SyncEngine
                         var action = ContentHashUtil.DecideByHash(
                             localHash, remoteHash, metaHash: null,
                             existingRemote.Entry.UpdateTime, metaUpdateTime: null);
-                        if (action == SyncDirectionDecide.Action.Conflict)
-                        {
-                            throw new SyncConflictException(
-                                path,
-                                localHash,
-                                remoteHash,
-                                null,
-                                "Local add collides with different remote content. Use Force Upload or Force Download.");
-                        }
                         if (action == SyncDirectionDecide.Action.Write)
                         {
                             await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
@@ -496,7 +491,8 @@ public sealed class SyncEngine
                         }
                         else
                         {
-                            if (action == SyncDirectionDecide.Action.Read)
+                            // Read / Skip / Conflict(legacy) → adopt cloud bytes when hashes differ.
+                            if (action != SyncDirectionDecide.Action.Skip)
                                 await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                             _store.Upsert(new SyncItemMeta
                             {

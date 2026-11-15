@@ -257,10 +257,10 @@ public class SyncRemoteDownloadSoftFailTests
 
         var ex = await Record.ExceptionAsync(() => engine.ReconcileAllAsync(new[] { mapping }));
 
-        Assert.NotNull(ex);
-        Assert.IsType<SyncConflictException>(ex);
-        Assert.DoesNotContain("returned empty", ex!.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("download failed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // Empty remote bytes are legitimate content; cloud-wins converge overwrites local (no throw).
+        Assert.Null(ex);
+        var localAfter = await File.ReadAllBytesAsync(Path.Combine(fileDir, "index.html"));
+        Assert.Empty(localAfter);
 
         try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
         try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }

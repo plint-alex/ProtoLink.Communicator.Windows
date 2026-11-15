@@ -109,28 +109,28 @@ public class SyncDirectionDecideTests
     }
 
     [Fact]
-    public void DecideByHash_EmptyMeta_Diverged_Conflicts()
+    public void DecideByHash_EmptyMeta_Diverged_ReadsCloud()
     {
         var local = ContentHashUtil.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("Test6"));
         var remote = ContentHashUtil.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("Test5"));
-        Assert.Equal(SyncDirectionDecide.Action.Conflict, ContentHashUtil.DecideByHash(local, remote, metaHash: null));
+        Assert.Equal(SyncDirectionDecide.Action.Read, ContentHashUtil.DecideByHash(local, remote, metaHash: null));
         Assert.Equal(
-            SyncDirectionDecide.Action.Conflict,
+            SyncDirectionDecide.Action.Read,
             ContentHashUtil.DecideByHash(local, remote, metaHash: "",
                 remoteUpdateTime: DateTime.UnixEpoch,
                 metaUpdateTime: DateTime.UnixEpoch));
         Assert.Equal(
-            SyncDirectionDecide.Action.Conflict,
+            SyncDirectionDecide.Action.Read,
             ContentHashUtil.DecideByHash(local, remote, metaHash: "",
                 remoteUpdateTime: new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
                 metaUpdateTime: new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
     }
 
     [Fact]
-    public void DecideByHash_UnseededMeta_LocalDiffersFromRemote_Conflicts()
+    public void DecideByHash_UnseededMeta_LocalDiffersFromRemote_ReadsCloud()
     {
         Assert.Equal(
-            SyncDirectionDecide.Action.Conflict,
+            SyncDirectionDecide.Action.Read,
             ContentHashUtil.DecideByHash("aaa", remoteHash: "bbb", metaHash: ""));
         Assert.Equal(
             SyncDirectionDecide.Action.Skip,
@@ -138,11 +138,11 @@ public class SyncDirectionDecideTests
     }
 
     [Fact]
-    public void DecideByHash_BothDivergedFromMeta_Conflicts()
+    public void DecideByHash_BothDivergedFromMeta_ReadsCloud()
     {
         var local = ContentHashUtil.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("local"));
         var remote = ContentHashUtil.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("remote"));
         var meta = ContentHashUtil.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("baseline"));
-        Assert.Equal(SyncDirectionDecide.Action.Conflict, ContentHashUtil.DecideByHash(local, remote, meta));
+        Assert.Equal(SyncDirectionDecide.Action.Read, ContentHashUtil.DecideByHash(local, remote, meta));
     }
 }

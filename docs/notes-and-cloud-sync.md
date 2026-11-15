@@ -58,12 +58,12 @@ Server stores file bytes + entity `UpdateTime` — **no** mirrored content-hash 
 | local == remote | Skip (seed meta hash) |
 | local == meta, remote ≠ meta | Read (download) |
 | remote == meta, local ≠ meta | Write (upload) |
-| empty meta and local ≠ remote | **Conflict** |
-| both ≠ meta | **Conflict** |
+| empty meta and local ≠ remote | **Read** (cloud wins — converge) |
+| both ≠ meta | **Read** (cloud wins — converge; overwrite/delete local OK) |
 
-Conflicts throw `SyncConflictException` and surface in a popup. Resolve with **Force Upload** or **Force Download**.
+Ambiguous hash cases no longer abort the pass. Cloud is the shared truth for a mapped `CloudFolderId` so Win+Android end with the same bytes. **Force Upload** / **Force Download** remain for intentional full-tree repair.
 
-Failed remote download throws `SyncException` (no silent skip).
+Failed remote download soft-fails that item and continues (NFR-SYNC-1); null download ≠ empty bytes.
 
 Local-only push does **not** download or Conflict-check remote; it uploads when local content differs from meta (and applies local adds/renames/removes against meta). It **never** seeds a brand-new mapping from an empty metadata store — that path runs full reconcile first so existing remote children are adopted.
 
