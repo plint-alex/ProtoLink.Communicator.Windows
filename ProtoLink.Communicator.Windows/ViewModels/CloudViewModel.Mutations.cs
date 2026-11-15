@@ -153,7 +153,14 @@ public partial class CloudViewModel
     {
         try
         {
+            if (!CanDeleteItem(item))
+            {
+                StatusText = "You don't have permission to delete this item.";
+                return;
+            }
+
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
+            var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
             _mappedSync.SuspendMappedRootWatchers();
             try
             {
@@ -174,7 +181,11 @@ public partial class CloudViewModel
                     await _api.DeleteEntityAsync(item.Id);
                 }
 
+                // NFR-SYNC-1: mirror IO soft-fails; Cloud tree already deleted.
                 CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);
+                if (wasMappedRoot)
+                    RemoveMappingQuiet(item.Id);
+
                 Items.Remove(item);
                 _locations.Remove(item.Id);
                 if (CurrentEntity?.Id == item.Id && ListedFolderId is { } listedId && _locations.TryGetValue(listedId, out var folder))

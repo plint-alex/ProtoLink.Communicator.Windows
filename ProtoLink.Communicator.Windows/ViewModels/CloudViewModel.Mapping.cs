@@ -296,13 +296,20 @@ public partial class CloudViewModel
 
     public void RemoveMapping(Guid cloudFolderId)
     {
+        if (!RemoveMappingQuiet(cloudFolderId)) return;
+        _onAfterMappedSync?.Invoke();
+        _ = LoadCurrentAsync();
+    }
+
+    /// <summary>Drop a mapping row without reload (e.g. after Cloud folder delete already refreshes).</summary>
+    private bool RemoveMappingQuiet(Guid cloudFolderId)
+    {
         var mapping = SyncMappings.FirstOrDefault(m => m.CloudFolderId == cloudFolderId);
-        if (mapping == null) return;
+        if (mapping == null) return false;
         SyncMappings.Remove(mapping);
         _syncStore.Save(SyncMappings);
         NotifyHeaderAndInfoChanged();
-        _onAfterMappedSync?.Invoke();
-        _ = LoadCurrentAsync();
+        return true;
     }
 
     public Task SyncMappingAsync(CloudSyncMapping mapping)

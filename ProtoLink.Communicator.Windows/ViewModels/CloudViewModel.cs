@@ -124,7 +124,7 @@ public partial class CloudViewModel : ViewModelBase
         UploadCommand = new RelayCommand(_ => Upload(), _ => CanMutateListedFolder);
         DeleteCommand = new RelayCommand(
             async p => await DeleteAsync((CloudItemViewModel)p!),
-            p => p is CloudItemViewModel item && !item.IsVirtualEntry && !CloudVirtualNodes.IsVirtual(item.Id));
+            p => p is CloudItemViewModel item && CanDeleteItem(item));
         BackCommand = new RelayCommand(async _ => await HandleBackAsync(), _ => CanGoBack);
         NavigateToBreadcrumbCommand = new RelayCommand(async p => await NavigateToBreadcrumbAsync((int)p!));
         NavigateParentCommand = new RelayCommand(async _ => await NavigateToParentAsync(), _ => CanNavigateParent);
@@ -154,7 +154,7 @@ public partial class CloudViewModel : ViewModelBase
                     ?? new CloudItemViewModel { Id = CurrentEntity.Id, Name = CurrentEntity.Name, IsFolder = CurrentEntity.IsFolder };
                 _ = DeleteAsync(item);
             },
-            _ => CurrentEntity is { ParentId: not null });
+            _ => CanDeleteCurrentEntity);
         CopyLinkCommand = new RelayCommand(p => CopyLink(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         CopyIdCommand = new RelayCommand(p => CopyId(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
         OpenInBrowserCommand = new RelayCommand(p => OpenInBrowser(LinkTargetId(p)), p => LinkTargetId(p).HasValue);
@@ -201,6 +201,24 @@ public partial class CloudViewModel : ViewModelBase
     public bool CanMutateListedFolder =>
         ListedFolderId is { } id
         && !CloudVirtualNodes.IsVirtual(id);
+
+    /// <summary>AT-CFD-5: hide Delete when Shared-with-me share root is known read-only.</summary>
+    public bool CanDeleteItem(CloudItemViewModel item)
+    {
+        if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return false;
+        return CloudSharedScope.AllowsWriteUnderSharedScope(
+            BreadcrumbPath.Select(b => b.Id),
+            item.Id,
+            _shareRootCanWrite);
+    }
+
+    public bool CanDeleteCurrentEntity =>
+        CurrentEntity is { ParentId: not null } entity
+        && !CloudVirtualNodes.IsVirtual(entity.Id)
+        && CloudSharedScope.AllowsWriteUnderSharedScope(
+            BreadcrumbPath.Select(b => b.Id),
+            entity.Id,
+            _shareRootCanWrite);
 
     public bool ShowEmptyUpload => IsEmpty && CanMutateListedFolder;
 
@@ -1126,7 +1144,10 @@ public partial class CloudViewModel : ViewModelBase
         ClearNetworkBanner();
         _lastError = ex;
         OnPropertyChanged(nameof(HasErrorDetails));
-        StatusText = "Something went wrong. See details.";
+        // AT-CFD-5: permission refuse must be visible — never a silent no-op.
+        StatusText = ApiExceptionHelper.IndicatesForbiddenHttp(ex)
+            ? "You don't have permission. See details."
+            : "Something went wrong. See details.";
         CommandManager.InvalidateRequerySuggested();
     }
 }

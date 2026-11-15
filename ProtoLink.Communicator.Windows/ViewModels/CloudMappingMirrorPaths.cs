@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -96,12 +97,34 @@ public static class CloudMappingMirrorPaths
         return Path.Combine(segments.ToArray());
     }
 
-    public static void DeleteLocalMirror(CloudItemViewModel item, string? fullPath)
+    /// <summary>
+    /// Removes the local mirror path when present. Missing path is a no-op.
+    /// NFR-SYNC-1: IO failures soft-fail (log + return false) so Cloud delete is not aborted.
+    /// </summary>
+    /// <returns>True when nothing to do or delete succeeded; false on soft-failed IO.</returns>
+    public static bool DeleteLocalMirror(CloudItemViewModel item, string? fullPath)
     {
-        if (string.IsNullOrEmpty(fullPath)) return;
-        if (item.IsFolder && Directory.Exists(fullPath))
-            Directory.Delete(fullPath, recursive: true);
-        else if (!item.IsFolder && File.Exists(fullPath))
-            File.Delete(fullPath);
+        if (string.IsNullOrEmpty(fullPath)) return true;
+        try
+        {
+            if (item.IsFolder)
+            {
+                if (!Directory.Exists(fullPath)) return true;
+                Directory.Delete(fullPath, recursive: true);
+            }
+            else
+            {
+                if (!File.Exists(fullPath)) return true;
+                File.Delete(fullPath);
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"DeleteLocalMirror soft-fail: {ex.GetType().Name}: {ex.Message} path={fullPath}");
+            return false;
+        }
     }
 }

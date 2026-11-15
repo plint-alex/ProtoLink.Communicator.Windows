@@ -131,6 +131,45 @@ public class CloudSharedWithMeScopeTests
     }
 
     [Fact]
+    public void AllowsWrite_ReadOnlyShare_False_MyCloud_True()
+    {
+        var readRoot = Guid.NewGuid();
+        var writeRoot = Guid.NewGuid();
+        var myCloud = Guid.NewGuid();
+        var canWrite = new Dictionary<Guid, bool>
+        {
+            [readRoot] = false,
+            [writeRoot] = true
+        };
+
+        var readCrumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            readRoot
+        };
+        Assert.False(CloudSharedScope.AllowsWriteUnderSharedScope(readCrumbs, readRoot, canWrite));
+        Assert.False(CloudSharedScope.AllowsWriteUnderSharedScope(
+            readCrumbs.Concat(new[] { Guid.NewGuid() }).ToArray(),
+            Guid.NewGuid(),
+            canWrite));
+
+        var writeCrumbs = new[]
+        {
+            CloudVirtualNodes.HubId,
+            CloudVirtualNodes.SharedWithMeId,
+            writeRoot
+        };
+        Assert.True(CloudSharedScope.AllowsWriteUnderSharedScope(writeCrumbs, writeRoot, canWrite));
+
+        var myCrumbs = new[] { CloudVirtualNodes.HubId, myCloud };
+        Assert.True(CloudSharedScope.AllowsWriteUnderSharedScope(
+            myCrumbs,
+            Guid.NewGuid(),
+            new Dictionary<Guid, bool>()));
+    }
+
+    [Fact]
     public void VirtualNodeIds_AreDistinctAndFlagged()
     {
         Assert.NotEqual(CloudVirtualNodes.HubId, CloudVirtualNodes.SharedWithMeId);

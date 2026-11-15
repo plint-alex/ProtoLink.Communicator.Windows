@@ -422,7 +422,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
             menu.Items.Add(leaveItem);
         }
 
-        if (_vm.CurrentEntity?.ParentId != null)
+        if (_vm.CanDeleteCurrentEntity)
         {
             var deleteItem = new MenuItem { Header = "Delete" };
             deleteItem.Click += (_, _) => OnDeleteCurrentEntity();
@@ -663,6 +663,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
     private void AddDeleteMenuItem(ContextMenu menu, CloudItemViewModel item)
     {
+        if (_vm == null || !_vm.CanDeleteItem(item)) return;
         var deleteItem = new MenuItem { Header = "Delete" };
         deleteItem.Click += (s, e) => OnDeleteItem(item);
         menu.Items.Add(deleteItem);

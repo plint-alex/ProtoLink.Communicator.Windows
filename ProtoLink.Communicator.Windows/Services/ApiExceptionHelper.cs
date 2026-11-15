@@ -18,6 +18,16 @@ internal static class ApiExceptionHelper
         return ChainHasUnauthorizedHttp(ex);
     }
 
+    /// <summary>True when the exception chain represents HTTP 403 Forbidden (write ACL refuse, not auth).</summary>
+    public static bool IndicatesForbiddenHttp(Exception? ex)
+    {
+        if (ex == null) return false;
+        if (ex is AggregateException agg)
+            return agg.Flatten().InnerExceptions.Any(ChainHasForbiddenHttp);
+
+        return ChainHasForbiddenHttp(ex);
+    }
+
     /// <summary>
     /// Transient network / unreachable API failures that background loads and Cloud auto-sync
     /// should soft-fail (keep cache UI; no Background task / Sync error modals).
@@ -57,6 +67,23 @@ internal static class ApiExceptionHelper
             if (msg.Contains("401", StringComparison.Ordinal) &&
                 (msg.Contains("HTTP", StringComparison.OrdinalIgnoreCase)
                  || msg.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ChainHasForbiddenHttp(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is not HttpRequestException hre) continue;
+            if (hre.StatusCode == HttpStatusCode.Forbidden)
+                return true;
+            var msg = hre.Message;
+            if (msg.Contains("403", StringComparison.Ordinal) &&
+                (msg.Contains("HTTP", StringComparison.OrdinalIgnoreCase)
+                 || msg.Contains("Forbidden", StringComparison.OrdinalIgnoreCase)))
                 return true;
         }
 

@@ -44,13 +44,23 @@ public static class CloudSharedScope
         return shareRootCanWrite.TryGetValue(rootId, out var canWrite) && canWrite;
     }
 
+    /// <summary>
+    /// Outside Shared with me always true; inside, only when the active share root is writable.
+    /// Shared by Map, Delete, and other write mutations (AT-CFD-5 / AT-S42).
+    /// </summary>
+    public static bool AllowsWriteUnderSharedScope(
+        IEnumerable<Guid> breadcrumbIds,
+        Guid entityId,
+        IReadOnlyDictionary<Guid, bool> shareRootCanWrite) =>
+        !IsInSharedWithMeScope(breadcrumbIds)
+        || IsShareRootWritable(breadcrumbIds, entityId, shareRootCanWrite);
+
     /// <summary>Outside Shared with me always true; inside, only when the active share root is writable.</summary>
     public static bool AllowsMapUnderSharedScope(
         IEnumerable<Guid> breadcrumbIds,
         Guid folderId,
         IReadOnlyDictionary<Guid, bool> shareRootCanWrite) =>
-        !IsInSharedWithMeScope(breadcrumbIds)
-        || IsShareRootWritable(breadcrumbIds, folderId, shareRootCanWrite);
+        AllowsWriteUnderSharedScope(breadcrumbIds, folderId, shareRootCanWrite);
 
     public static bool ShowSharedBrowseOnlyHint(
         IEnumerable<Guid> breadcrumbIds,
