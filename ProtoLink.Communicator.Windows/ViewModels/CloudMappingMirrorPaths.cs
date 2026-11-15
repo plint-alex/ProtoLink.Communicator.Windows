@@ -76,6 +76,13 @@ public static class CloudMappingMirrorPaths
         IReadOnlyList<CloudBreadcrumbEntry> breadcrumbPath,
         IEnumerable<CloudSyncMapping> syncMappings)
     {
+        // Mapped root deleted from a parent list (breadcrumb tip is not the mapped folder):
+        // resolve LocalPath from item.Id itself — AT-CFD-6.
+        var selfMapping = syncMappings.FirstOrDefault(
+            x => x.CloudFolderId == item.Id && !string.IsNullOrWhiteSpace(x.LocalPath));
+        if (selfMapping != null)
+            return selfMapping.LocalPath;
+
         CloudSyncMapping? mapping = null;
         var mapIndex = -1;
         for (var i = breadcrumbPath.Count - 1; i >= 0; i--)

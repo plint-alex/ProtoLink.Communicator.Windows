@@ -67,4 +67,61 @@ public class CloudMappingMirrorPathsTests
         var path = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, crumbs, mappings);
         Assert.Equal(Path.Combine(localRoot, "Child", "doc.txt"), path);
     }
+
+    /// <summary>
+    /// AT-CFD-6: deleting a mapped root from My Cloud (parent list) — breadcrumb has no mapping;
+    /// local path must resolve from item.Id mapping, not null.
+    /// </summary>
+    [Fact]
+    public void GetLocalPathForCloudItem_MappedRootFromParentList_UsesItemMapping()
+    {
+        var mapId = Guid.NewGuid();
+        var cloudRootId = Guid.NewGuid();
+        var localRoot = Path.Combine(Path.GetTempPath(), "pl-cfd-map-root-" + Guid.NewGuid().ToString("N"));
+        var crumbs = new[]
+        {
+            new CloudBreadcrumbEntry { Id = cloudRootId, Name = "My Cloud", Index = 0 }
+        };
+        var mappings = new[]
+        {
+            new CloudSyncMapping
+            {
+                CloudFolderId = mapId,
+                CloudFolderName = "MappedRoot",
+                LocalPath = localRoot
+            }
+        };
+        var item = new CloudItemViewModel { Id = mapId, Name = "MappedRoot", IsFolder = true };
+
+        var path = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, crumbs, mappings);
+        Assert.Equal(localRoot, path);
+    }
+
+    [Fact]
+    public void GetLocalPathForCloudItem_MappedRootFromParentList_ThenDeleteRemovesTree()
+    {
+        var mapId = Guid.NewGuid();
+        var cloudRootId = Guid.NewGuid();
+        var localRoot = Path.Combine(Path.GetTempPath(), "pl-cfd-map-del-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(localRoot, "nested"));
+        File.WriteAllText(Path.Combine(localRoot, "nested", "a.txt"), "x");
+        var crumbs = new[]
+        {
+            new CloudBreadcrumbEntry { Id = cloudRootId, Name = "My Cloud", Index = 0 }
+        };
+        var mappings = new[]
+        {
+            new CloudSyncMapping
+            {
+                CloudFolderId = mapId,
+                CloudFolderName = "MappedRoot",
+                LocalPath = localRoot
+            }
+        };
+        var item = new CloudItemViewModel { Id = mapId, Name = "MappedRoot", IsFolder = true };
+
+        var path = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, crumbs, mappings);
+        Assert.True(CloudMappingMirrorPaths.DeleteLocalMirror(item, path));
+        Assert.False(Directory.Exists(localRoot));
+    }
 }
