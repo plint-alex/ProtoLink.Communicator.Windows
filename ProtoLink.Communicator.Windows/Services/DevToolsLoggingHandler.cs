@@ -49,6 +49,8 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
             }
             catch (Exception ex)
             {
+                // HttpContentBuffering already replaced drained content on failure; do not rethrow —
+                // logging must not turn a readable response into HttpClient LoadIntoBufferAsync IOE.
                 responsePreview = $"[could not read response: {ex.Message}]";
             }
 
@@ -116,16 +118,8 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
         if (request.Content == null)
             return null;
 
-        var old = request.Content;
-        var bytes = await old.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = await HttpContentBuffering.ReplaceRequestContentAsync(request, cancellationToken).ConfigureAwait(false);
         var preview = TruncateForDevTools(Encoding.UTF8.GetString(bytes));
-
-        var replacement = new ByteArrayContent(bytes);
-        foreach (var header in old.Headers)
-            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
-
-        old.Dispose();
-        request.Content = replacement;
         return string.IsNullOrEmpty(preview) ? null : preview;
     }
 
@@ -134,16 +128,8 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
         if (response.Content == null)
             return null;
 
-        var old = response.Content;
-        var bytes = await old.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = await HttpContentBuffering.ReplaceResponseContentAsync(response, cancellationToken).ConfigureAwait(false);
         var preview = TruncateForDevTools(Encoding.UTF8.GetString(bytes));
-
-        var replacement = new ByteArrayContent(bytes);
-        foreach (var header in old.Headers)
-            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
-
-        old.Dispose();
-        response.Content = replacement;
         return string.IsNullOrEmpty(preview) ? null : preview;
     }
 

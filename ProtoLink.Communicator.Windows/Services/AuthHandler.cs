@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -37,13 +38,7 @@ public class AuthHandler : System.Net.Http.DelegatingHandler
         // Buffer body up front so we can retry after a silent token refresh.
         byte[]? bodyBytes = null;
         if (request.Content != null)
-        {
-            bodyBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
-            var buffered = new ByteArrayContent(bodyBytes);
-            foreach (var header in request.Content.Headers)
-                buffered.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            request.Content = buffered;
-        }
+            bodyBytes = await HttpContentBuffering.ReplaceRequestContentAsync(request, cancellationToken);
 
         var response = await base.SendAsync(request, cancellationToken);
 
@@ -52,9 +47,9 @@ public class AuthHandler : System.Net.Http.DelegatingHandler
         var isLegacyAuthGap = false;
         if (!isUnauthorized && response.StatusCode == HttpStatusCode.Forbidden && hadToken && !IsAuthEndpoint(request))
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var bodyBytes403 = await HttpContentBuffering.ReplaceResponseContentAsync(response, cancellationToken);
+            var body = Encoding.UTF8.GetString(bodyBytes403);
             isLegacyAuthGap = body.Contains("User ID not found", StringComparison.OrdinalIgnoreCase);
-            response.Content = new StringContent(body, System.Text.Encoding.UTF8, response.Content.Headers.ContentType?.MediaType ?? "application/json");
             if (!isLegacyAuthGap)
                 return response;
         }

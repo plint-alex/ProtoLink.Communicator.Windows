@@ -118,7 +118,8 @@ public partial class App : System.Windows.Application
             logger.LogError(e.Exception, "Unobserved task exception");
 
             if (ApiExceptionHelper.IndicatesUnauthorizedHttp(e.Exception)
-                || ApiExceptionHelper.IsExpectedConnectivityFailure(e.Exception))
+                || ApiExceptionHelper.IsExpectedConnectivityFailure(e.Exception)
+                || ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(e.Exception))
             {
                 e.SetObserved();
                 return;

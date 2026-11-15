@@ -31,6 +31,20 @@ internal static class ApiExceptionHelper
         return ChainHasExpectedConnectivityFailure(ex);
     }
 
+    /// <summary>
+    /// Known HttpClient content mishandle: response/request stream drained then re-buffered
+    /// ("The stream was already consumed. It cannot be read again."). Soft-observe only this
+    /// message — do not blanket-swallow all <see cref="InvalidOperationException"/>.
+    /// </summary>
+    public static bool IsHttpStreamAlreadyConsumedFailure(Exception? ex)
+    {
+        if (ex == null) return false;
+        if (ex is AggregateException agg)
+            return agg.Flatten().InnerExceptions.Any(IsHttpStreamAlreadyConsumedFailure);
+
+        return ChainHasHttpStreamAlreadyConsumed(ex);
+    }
+
     private static bool ChainHasUnauthorizedHttp(Exception ex)
     {
         for (var e = ex; e != null; e = e.InnerException)
@@ -61,6 +75,18 @@ internal static class ApiExceptionHelper
                 return true;
             // HttpClient / sockets often wrap resets as IOException without HttpRequestException.
             if (e is IOException && e is not FileNotFoundException and not DirectoryNotFoundException)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ChainHasHttpStreamAlreadyConsumed(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is InvalidOperationException
+                && e.Message.Contains("stream was already consumed", StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 

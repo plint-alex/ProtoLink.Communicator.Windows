@@ -74,4 +74,24 @@ public class ApiExceptionHelperTests
         // HttpRequestException soft-fails LoadMessages / App unobserved path (auth also SetObserved).
         Assert.True(ApiExceptionHelper.IsExpectedConnectivityFailure(byStatus));
     }
+
+    [Fact]
+    public void IsHttpStreamAlreadyConsumedFailure_True_For_KnownMessage()
+    {
+        var ex = new InvalidOperationException("The stream was already consumed. It cannot be read again.");
+        Assert.True(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(ex));
+        Assert.True(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(new AggregateException(ex)));
+        Assert.True(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(
+            new Exception("outer", ex)));
+    }
+
+    [Fact]
+    public void IsHttpStreamAlreadyConsumedFailure_False_For_OtherInvalidOperation()
+    {
+        Assert.False(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(
+            new InvalidOperationException("Collection was modified")));
+        Assert.False(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(
+            new InvalidOperationException("bug")));
+        Assert.False(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(null));
+    }
 }
