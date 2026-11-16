@@ -5,7 +5,7 @@ using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.Services.Sync;
 
-/// <summary>3-way reconcile: FS ↔ metadata store ↔ remote. Local wins. Mirrors Android SyncEngine.</summary>
+/// <summary>3-way reconcile: FS ↔ metadata store ↔ remote. Cloud-first materialize; mirrors Android SyncEngine.</summary>
 public sealed class SyncEngine
 {
     private readonly JsonSyncMetadataStore _store;
@@ -28,7 +28,9 @@ public sealed class SyncEngine
         foreach (var mapping in mappings)
         {
             ct.ThrowIfCancellationRequested();
-            if (_store.GetAll(mapping.Id).Count == 0)
+            var meta = _store.GetAll(mapping.Id);
+            // Empty store OR folders-only (partial bootstrap died after mkdir) → pull remote files.
+            if (meta.Count == 0 || meta.All(m => m.IsFolder))
                 await BootstrapFromRemoteAsync(mapping, ct);
         }
 
@@ -45,14 +47,20 @@ public sealed class SyncEngine
             ct.ThrowIfCancellationRequested();
             var dirty = new HashSet<string>(StringComparer.Ordinal);
             await ApplyComparePhaseAsync(mapping, remoteLocated, dirty, ct);
-            var remoteForMapping = remoteLocated.Where(x => x.MappingId == mapping.Id).ToList();
-            await ApplyLocalPhaseAsync(mapping, dirty, skipSizeUpdates: true, remoteForMapping, ct);
             dirtyByMapping[mapping.Id] = dirty;
         }
+        // Cloud materialize before local upload so polluted Notes trees (local junk) cannot
+        // starve / timeout the pass before missing remote children are filled (cloud-wins).
         foreach (var mapping in mappings)
         {
             ct.ThrowIfCancellationRequested();
             await ApplyRemotePhaseAsync(mapping, byId, remoteLocated, dirtyByMapping[mapping.Id], ct);
+        }
+        foreach (var mapping in mappings)
+        {
+            ct.ThrowIfCancellationRequested();
+            var remoteForMapping = remoteLocated.Where(x => x.MappingId == mapping.Id).ToList();
+            await ApplyLocalPhaseAsync(mapping, dirtyByMapping[mapping.Id], skipSizeUpdates: true, remoteForMapping, ct);
             _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
         }
     }
@@ -708,35 +716,47 @@ public sealed class SyncEngine
                 {
                     if (!cross.Any(e => e.MappingId == mapping.Id && e.Entry.Id == add.Remote.Id)) break;
                     var full = ToFull(mapping.LocalRootPath, add.RelativePath);
-                    if (add.Remote.IsFolder)
+                    try
                     {
-                        Directory.CreateDirectory(full);
-                        _store.Upsert(new SyncItemMeta
+                        if (add.Remote.IsFolder)
                         {
-                            MappingId = mapping.Id,
-                            RemoteId = add.Remote.Id,
-                            ParentRemoteId = add.Remote.ParentId,
-                            RelativePath = add.RelativePath,
-                            IsFolder = true,
-                            SizeBytes = 0,
-                            RemoteUpdateTime = add.Remote.UpdateTime
-                        });
+                            Directory.CreateDirectory(full);
+                            _store.Upsert(new SyncItemMeta
+                            {
+                                MappingId = mapping.Id,
+                                RemoteId = add.Remote.Id,
+                                ParentRemoteId = add.Remote.ParentId,
+                                RelativePath = add.RelativePath,
+                                IsFolder = true,
+                                SizeBytes = 0,
+                                RemoteUpdateTime = add.Remote.UpdateTime
+                            });
+                        }
+                        else
+                        {
+                            var addBytes = await DownloadBytesOrNullAsync(add.Remote.Id, ct) ?? Array.Empty<byte>();
+                            await MappedFolderIoGate.WriteAllBytesAsync(full, addBytes, ct);
+                            _store.Upsert(new SyncItemMeta
+                            {
+                                MappingId = mapping.Id,
+                                RemoteId = add.Remote.Id,
+                                ParentRemoteId = add.Remote.ParentId,
+                                RelativePath = add.RelativePath,
+                                IsFolder = false,
+                                SizeBytes = addBytes.Length,
+                                ContentHash = addBytes.Length > 0 ? ContentHashUtil.Sha256Hex(addBytes) : "",
+                                RemoteUpdateTime = add.Remote.UpdateTime
+                            });
+                        }
                     }
-                    else
+                    catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex) || ex is IOException or UnauthorizedAccessException)
                     {
-                        var addBytes = await DownloadBytesOrNullAsync(add.Remote.Id, ct) ?? Array.Empty<byte>();
-                        await MappedFolderIoGate.WriteAllBytesAsync(full, addBytes, ct);
-                        _store.Upsert(new SyncItemMeta
-                        {
-                            MappingId = mapping.Id,
-                            RemoteId = add.Remote.Id,
-                            ParentRemoteId = add.Remote.ParentId,
-                            RelativePath = add.RelativePath,
-                            IsFolder = false,
-                            SizeBytes = addBytes.Length,
-                            ContentHash = addBytes.Length > 0 ? ContentHashUtil.Sha256Hex(addBytes) : "",
-                            RemoteUpdateTime = add.Remote.UpdateTime
-                        });
+                        // NFR-SYNC-1: soft-fail per item; continue siblings.
+                        SyncRemoteDownload.LogMaterializeFailed(
+                            "ApplyRemotePhase.Added",
+                            add.RelativePath,
+                            add.Remote.Id.ToString("D"),
+                            ex.Message);
                     }
                     break;
                 }

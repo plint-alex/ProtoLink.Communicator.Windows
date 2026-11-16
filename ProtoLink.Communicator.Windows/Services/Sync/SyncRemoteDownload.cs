@@ -14,4 +14,10 @@ public static class SyncRemoteDownload
         Trace.WriteLine(
             $"[SyncEngine] soft-fail remote download ({phase}): relative={relativePath} remoteId={remoteId}");
     }
+
+    public static void LogMaterializeFailed(string phase, string relativePath, string remoteId, string detail)
+    {
+        Trace.WriteLine(
+            $"[SyncEngine] soft-fail materialize ({phase}): relative={relativePath} remoteId={remoteId} detail={detail}");
+    }
 }
