@@ -22,7 +22,7 @@ public class CloudFolderSynchronizer
         _engine = new SyncEngine(_store, _api);
     }
 
-    public async Task<bool> SynchronizeAsync(
+    public virtual async Task<bool> SynchronizeAsync(
         Guid cloudFolderId,
         string localPath,
         Action<string> reportStatus,
@@ -50,6 +50,11 @@ public class CloudFolderSynchronizer
             reportStatus("Sync complete.");
             return true;
         }
+        catch (OperationCanceledException)
+        {
+            reportStatus("Sync cancelled.");
+            throw;
+        }
         catch (Exception ex) when (IsAuthFailure(ex))
         {
             reportStatus("Please log in.");
@@ -64,7 +69,7 @@ public class CloudFolderSynchronizer
         }
     }
 
-    public async Task<bool> SynchronizeAllAsync(
+    public virtual async Task<bool> SynchronizeAllAsync(
         IEnumerable<CloudSyncMapping> mappings,
         Action<string> reportStatus,
         Action<Exception>? reportFullError,
@@ -88,6 +93,11 @@ public class CloudFolderSynchronizer
             reportStatus("Sync complete.");
             return true;
         }
+        catch (OperationCanceledException)
+        {
+            reportStatus("Sync cancelled.");
+            throw;
+        }
         catch (Exception ex) when (IsAuthFailure(ex))
         {
             reportStatus("Please log in.");
@@ -103,7 +113,7 @@ public class CloudFolderSynchronizer
     }
 
     /// <summary>Local-only push (no remote scan). Returns ops applied, or -1 on failure.</summary>
-    public async Task<int> PushLocalChangesAllAsync(
+    public virtual async Task<int> PushLocalChangesAllAsync(
         IEnumerable<CloudSyncMapping> mappings,
         Action<string> reportStatus,
         Action<Exception>? reportFullError,
@@ -129,6 +139,11 @@ public class CloudFolderSynchronizer
                 : "No local changes to upload.");
             return applied;
         }
+        catch (OperationCanceledException)
+        {
+            reportStatus("Upload paused.");
+            throw;
+        }
         catch (Exception ex) when (IsAuthFailure(ex))
         {
             reportStatus("Please log in.");
@@ -143,7 +158,7 @@ public class CloudFolderSynchronizer
         }
     }
 
-    public async Task<bool> ForcePushAsync(
+    public virtual async Task<bool> ForcePushAsync(
         CloudSyncMapping mapping,
         Action<string> reportStatus,
         Action<Exception>? reportFullError,
@@ -157,6 +172,11 @@ public class CloudFolderSynchronizer
             await _engine.ForcePushMappingAsync(info, cancellationToken);
             reportStatus("Force upload complete.");
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            reportStatus("Force upload cancelled.");
+            throw;
         }
         catch (Exception ex) when (IsAuthFailure(ex))
         {
@@ -172,7 +192,7 @@ public class CloudFolderSynchronizer
         }
     }
 
-    public async Task<bool> ForcePullAsync(
+    public virtual async Task<bool> ForcePullAsync(
         CloudSyncMapping mapping,
         Action<string> reportStatus,
         Action<Exception>? reportFullError,
@@ -186,6 +206,11 @@ public class CloudFolderSynchronizer
             await _engine.ForcePullMappingAsync(info, cancellationToken);
             reportStatus("Force download complete.");
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            reportStatus("Force download cancelled.");
+            throw;
         }
         catch (Exception ex) when (IsAuthFailure(ex))
         {
