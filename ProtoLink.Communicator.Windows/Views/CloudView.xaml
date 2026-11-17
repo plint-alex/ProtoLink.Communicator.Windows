@@ -152,11 +152,10 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
+                <!-- CM-HD2: no 20pt "Cloud" title (tab names surface); keep search + map CTA -->
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
-                        BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="16,12">
+                        BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
                     <StackPanel>
-                        <TextBlock Text="Cloud" FontSize="20" FontWeight="Bold" Margin="0,0,0,8"
-                                   Foreground="{DynamicResource HeaderTitleBrush}"/>
                         <!-- CM-TT4: one listing Refresh beside search (TabToolbar create strip removed) -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -169,7 +168,8 @@
                                      Background="{DynamicResource ContentBackground}"
                                      Foreground="{DynamicResource ForegroundBrush}"
                                      BorderBrush="{DynamicResource BorderBrushStandard}"
-                                     ToolTip="Search in this folder (Ctrl+F)"/>
+                                     ToolTip="Search in this folder (Ctrl+F)"
+                                     AutomationProperties.Name="Search in this folder"/>
                             <Button Grid.Column="1" Content="Refresh" Margin="8,0,0,0"
                                     Padding="10,4" VerticalAlignment="Center"
                                     Style="{DynamicResource GhostButton}"
@@ -178,7 +178,7 @@
                                     AutomationProperties.Name="Refresh Cloud listing"/>
                         </Grid>
                         <!-- E6: discoverable local-first map (AT-MAP-1) -->
-                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,10,0,0"
+                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,8,0,0"
                                 HorizontalAlignment="Left" Padding="10,4"
                                 Style="{DynamicResource GhostButton}"
                                 Command="{Binding AddLocalFolderCommand}"
