@@ -419,6 +419,8 @@ public sealed class SyncEngine
                 g => g.Key,
                 g => g.OrderByDescending(x => x.Entry.UpdateTime ?? DateTime.MinValue).First(),
                 StringComparer.Ordinal);
+        // Parent→children cache for match-before-create (push / walk miss / synthetic skip).
+        var siblingCache = new Dictionary<Guid, List<RemoteEntryInfo>>();
 
         foreach (var r in changes.OfType<LocalChange.Renamed>())
         {
@@ -456,7 +458,36 @@ public sealed class SyncEngine
             var addFullProbe = ToFull(mapping.LocalRootPath, a.Entry.RelativePath);
             try
             {
-                if (remoteByPath.TryGetValue(path, out var existingRemote))
+                RemoteLocated? existingRemote = null;
+                if (remoteByPath.TryGetValue(path, out var byPath))
+                    existingRemote = byPath;
+                else
+                {
+                    // Path miss (synthetic skip / push with empty walk): match by name under parent.
+                    var parentPathProbe = SyncPathUtil.ParentOf(a.Entry.RelativePath);
+                    var parentIdProbe = ResolveParentId(mapping, parentPathProbe) ?? mapping.CloudFolderId;
+                    var nameProbe = SyncPathUtil.NameOf(a.Entry.RelativePath);
+                    var (byName, listingOk) = await ResolveExistingSiblingAsync(
+                        parentIdProbe, nameProbe, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                    if (byName != null)
+                    {
+                        existingRemote = new RemoteLocated
+                        {
+                            Entry = byName,
+                            MappingId = mapping.Id,
+                            RelativePath = path
+                        };
+                    }
+                    else if (!listingOk && remoteInMapping.Count == 0)
+                    {
+                        // Push with empty walk: cannot prove absence — soft-fail (do not mint sibling).
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Sync] skip create {path}: sibling listing failed under {parentIdProbe:D}");
+                        continue;
+                    }
+                }
+
+                if (existingRemote != null)
                 {
                     var name = SyncPathUtil.NameOf(a.Entry.RelativePath);
                     var full = addFullProbe;
@@ -567,10 +598,35 @@ public sealed class SyncEngine
                 var parentId = ResolveParentId(mapping, parentPath) ?? mapping.CloudFolderId;
                 var addName = SyncPathUtil.NameOf(a.Entry.RelativePath);
                 var addFull = addFullProbe;
+                // Final match-before-create (cache may have been filled by earlier Adds).
+                var (reuse, listingOkCreate) = await ResolveExistingSiblingAsync(
+                    parentId, addName, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                if (reuse == null && !listingOkCreate)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Sync] skip create {path}: sibling listing failed under {parentId:D}");
+                    continue;
+                }
                 Guid id;
-                if (a.Entry.IsFolder)
+                if (reuse != null)
+                {
+                    id = reuse.Id;
+                    if (!a.Entry.IsFolder)
+                    {
+                        if (!File.Exists(addFull))
+                        {
+                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFull);
+                            continue;
+                        }
+                        if (new FileInfo(addFull).Length == 0) continue;
+                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
+                        await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
+                    }
+                }
+                else if (a.Entry.IsFolder)
                 {
                     id = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, addName);
+                    RememberSibling(siblingCache, parentId, id, addName, isFolder: true);
                 }
                 else
                 {
@@ -583,6 +639,7 @@ public sealed class SyncEngine
                     id = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, addName);
                     await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
                     await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
+                    RememberSibling(siblingCache, parentId, id, addName, isFolder: false);
                 }
                 string addHash = "";
                 if (!a.Entry.IsFolder)
@@ -982,6 +1039,83 @@ public sealed class SyncEngine
             ?.RemoteId;
     }
 
+    /// <summary>
+    /// Match-before-create: walk list first, then live parent GetEntities (cached).
+    /// Match null + ListingOk false → soft-fail (do not create a possible duplicate).
+    /// Match null + ListingOk true → truly absent under parent.
+    /// </summary>
+    private async Task<(RemoteEntryInfo? Match, bool ListingOk)> ResolveExistingSiblingAsync(
+        Guid parentId,
+        string displayName,
+        bool isFolder,
+        List<RemoteLocated> remoteInMapping,
+        Dictionary<Guid, List<RemoteEntryInfo>> siblingCache,
+        CancellationToken ct)
+    {
+        var fromWalk = SameNamedCloudSibling.PreferExisting(
+            parentId, displayName, isFolder, remoteInMapping.Select(r => r.Entry));
+        if (fromWalk != null) return (fromWalk, true);
+
+        if (!siblingCache.TryGetValue(parentId, out var kids))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var entities = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true);
+                kids = new List<RemoteEntryInfo>();
+                foreach (var e in entities)
+                {
+                    var isFolderCode = e.Code == CloudEntityCodes.CloudFolder;
+                    var isFileCode = e.Code == CloudEntityCodes.CloudFile;
+                    if (!isFolderCode && !isFileCode) continue;
+                    var name = CloudApiService.GetDisplayName(e);
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (isFileCode && CloudApiService.IsSyntheticCloudFileDisplayName(e, name))
+                        continue;
+                    kids.Add(new RemoteEntryInfo
+                    {
+                        Id = e.Id,
+                        ParentId = parentId,
+                        Name = name,
+                        IsFolder = isFolderCode,
+                        UpdateTime = e.UpdateTime == default ? null : e.UpdateTime
+                    });
+                }
+                siblingCache[parentId] = kids;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Sync] sibling list failed parent={parentId:D}: {ex.Message}");
+                return (null, false);
+            }
+        }
+
+        return (SameNamedCloudSibling.PreferExisting(parentId, displayName, isFolder, kids), true);
+    }
+
+    private static void RememberSibling(
+        Dictionary<Guid, List<RemoteEntryInfo>> siblingCache,
+        Guid parentId,
+        Guid id,
+        string name,
+        bool isFolder)
+    {
+        if (!siblingCache.TryGetValue(parentId, out var kids))
+        {
+            kids = new List<RemoteEntryInfo>();
+            siblingCache[parentId] = kids;
+        }
+        kids.Add(new RemoteEntryInfo
+        {
+            Id = id,
+            ParentId = parentId,
+            Name = name,
+            IsFolder = isFolder,
+            UpdateTime = DateTime.UtcNow
+        });
+    }
+
     /// <summary>Overwrite server with all local files for a mapping; meta follows local.</summary>
     public Task ForcePushMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default) =>
         _store.RunInBatchAsync(() => ForcePushMappingCoreAsync(mapping, ct));
@@ -995,6 +1129,8 @@ public sealed class SyncEngine
             .OrderBy(e => e.RelativePath.Count(c => c == '/'))
             .ThenBy(e => e.IsFolder ? 0 : 1)
             .ToList();
+        var siblingCache = new Dictionary<Guid, List<RemoteEntryInfo>>();
+        var emptyWalk = new List<RemoteLocated>();
 
         foreach (var entry in fs)
         {
@@ -1009,7 +1145,13 @@ public sealed class SyncEngine
             if (entry.IsFolder)
             {
                 if (existing != null) continue;
-                var id = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, name);
+                var (reuseFolder, folderListingOk) = await ResolveExistingSiblingAsync(
+                    parentId, name, isFolder: true, emptyWalk, siblingCache, ct);
+                if (reuseFolder == null && !folderListingOk) continue;
+                var id = reuseFolder?.Id
+                    ?? await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, name);
+                if (reuseFolder == null)
+                    RememberSibling(siblingCache, parentId, id, name, isFolder: true);
                 _store.Upsert(new SyncItemMeta
                 {
                     MappingId = mapping.Id,
@@ -1043,9 +1185,23 @@ public sealed class SyncEngine
                 }
                 else
                 {
-                    remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
-                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
-                    await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+                    var (reuseFile, fileListingOk) = await ResolveExistingSiblingAsync(
+                        parentId, name, isFolder: false, emptyWalk, siblingCache, ct);
+                    if (reuseFile == null && !fileListingOk)
+                        continue;
+                    if (reuseFile != null)
+                    {
+                        remoteId = reuseFile.Id;
+                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                        await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+                    }
+                    else
+                    {
+                        remoteId = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, name);
+                        await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(full, ct);
+                        await _api.AddFileAsync(remoteId, name, content, MimeTypes.GetMimeType(name));
+                        RememberSibling(siblingCache, parentId, remoteId, name, isFolder: false);
+                    }
                 }
 
                 _store.Upsert(new SyncItemMeta
