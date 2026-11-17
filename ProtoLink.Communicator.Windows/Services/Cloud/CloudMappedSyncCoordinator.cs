@@ -15,7 +15,8 @@ namespace ProtoLink.Communicator.Windows.Services;
 /// SignalR full while an unlimited reconcile runs coalesces without cancel+restart.
 /// Force Download/Upload preempts the exclusive holder (Android SyncFlight.forcePreferred parity) so
 /// progressive prune+fill is not starved behind a long Syncing… pass.
-/// Same-named CloudFolder heal (prefer-populated + cross-CloudRoot) runs before Sync/Force start.
+/// Same-named CloudFolder heal (prefer-populated + cross-CloudRoot) runs before Sync/Force
+/// exclusive/coalesce (Android requestFullSync parity) and persists map file before UI apply.
 /// </summary>
 public sealed class CloudMappedSyncCoordinator
 {
@@ -164,13 +165,32 @@ public sealed class CloudMappedSyncCoordinator
     public void ResumeMappedRootWatchers() { }
     public void RestartFileWatchers() { }
 
-    public Task RunFolderSynchronizeAsync(Guid folderId, string localPath)
+    public Task RunFolderSynchronizeAsync(Guid folderId, string localPath) =>
+        RunFolderSynchronizeCoreAsync(folderId, localPath);
+
+    /// <summary>
+    /// Android parity: heal before exclusive/coalesce so remap persists even when Sync is deferred
+    /// behind interval push (installed FAIL 1.0.84 — Uploading… held lane, heal never ran).
+    /// </summary>
+    private async Task RunFolderSynchronizeCoreAsync(Guid folderId, string localPath)
     {
+        if (EnsureAuthenticatedForSync())
+            await HealSameNamedMappingsAsync(CancellationToken.None).ConfigureAwait(false);
+
+        var current = _syncMappings.FirstOrDefault(m =>
+            !string.IsNullOrWhiteSpace(m.LocalPath)
+            && string.Equals(
+                Path.GetFullPath(m.LocalPath),
+                Path.GetFullPath(localPath),
+                StringComparison.OrdinalIgnoreCase));
+        var syncId = current?.CloudFolderId ?? folderId;
+        var syncPath = current?.LocalPath ?? localPath;
+
         if (Volatile.Read(ref _forcePreferred) != 0)
         {
             // Force owns the lane — queue folder Sync without cancelling Force.
-            QueueDeferredFolder(folderId, localPath);
-            return Task.CompletedTask;
+            QueueDeferredFolder(syncId, syncPath);
+            return;
         }
 
         if (Volatile.Read(ref _syncActive) != 0)
@@ -178,12 +198,12 @@ public sealed class CloudMappedSyncCoordinator
             // User asked for THIS mapping. Do not escalate to SynchronizeAll — on 1.0.76
             // cancel+all-maps WalkRemote across ~15 roots never stamped LastSync within 15m
             // (EndBatch meta churn without SetLastSyncUtc).
-            RequestDeferredFolderAndCancelExclusiveWork(folderId, localPath);
-            return Task.CompletedTask;
+            RequestDeferredFolderAndCancelExclusiveWork(syncId, syncPath);
+            return;
         }
-        return RunExclusiveAsync(
-            ct => SynchronizeFolderBodyAsync(folderId, localPath, ct),
-            budget: null);
+        await RunExclusiveAsync(
+            ct => SynchronizeFolderBodyAsync(syncId, syncPath, ct, healAlreadyDone: true),
+            budget: null).ConfigureAwait(false);
     }
 
     public void StartManualSync(CloudSyncMapping mapping)
@@ -196,6 +216,7 @@ public sealed class CloudMappedSyncCoordinator
         _ = Task.Run(() => RunForceExclusiveAsync(async ct =>
         {
             if (!EnsureAuthenticatedForSync()) return;
+            // Heal before Force work (and before any deferred Sync drain) so remap is on disk.
             await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
             var current = ResolveMappingAfterHeal(mapping);
             if (current == null) return;
@@ -234,24 +255,36 @@ public sealed class CloudMappedSyncCoordinator
     /// <summary>Full reconcile (startup / SignalR). If busy, coalesce one deferred full after current finishes (and cancel interval push).</summary>
     public Task SynchronizeAllMappedAsync() => RequestFullSyncAsync();
 
-    public Task RequestFullSyncAsync()
+    /// <summary>
+    /// Android <c>requestFullSync</c> parity: heal <em>before</em> exclusive/coalesce so prefer-populated
+    /// remap is persisted even when reconcile is deferred behind interval Uploading…
+    /// </summary>
+    public Task RequestFullSyncAsync() => RequestFullSyncCoreAsync();
+
+    private async Task RequestFullSyncCoreAsync()
     {
+        if (EnsureAuthenticatedForSync())
+            await HealSameNamedMappingsAsync(CancellationToken.None).ConfigureAwait(false);
+
         if (Volatile.Read(ref _forcePreferred) != 0)
         {
             // Force wins — coalesce one full after Force releases (Android SyncFlight.deferredFull).
             Interlocked.Exchange(ref _deferredFullSync, 1);
-            return Task.CompletedTask;
+            return;
         }
 
         if (Volatile.Read(ref _syncActive) != 0)
         {
             // Coalesce: cancel budgeted push only. Never abort an in-flight unlimited
             // reconcile just to restart SynchronizeAll from zero (1.0.76 LastSync hang class).
+            // Heal already ran above — map file is correct even while Uploading… continues.
             Interlocked.Exchange(ref _deferredFullSync, 1);
             CancelBudgetedExclusiveOnly();
-            return Task.CompletedTask;
+            return;
         }
-        return RunExclusiveAsync(ct => SynchronizeAllBodyAsync(ct), budget: null);
+        await RunExclusiveAsync(
+            ct => SynchronizeAllBodyAsync(ct, healAlreadyDone: true),
+            budget: null).ConfigureAwait(false);
     }
 
     /// <summary>Local-only push (interval / note save). Skips entirely if sync is already running or full sync is deferred.</summary>
@@ -453,7 +486,7 @@ public sealed class CloudMappedSyncCoordinator
             Volatile.Write(ref _exclusiveWorkCts, folderCts);
             try
             {
-                await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token)
+                await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token, healAlreadyDone: false)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -484,7 +517,8 @@ public sealed class CloudMappedSyncCoordinator
             Volatile.Write(ref _exclusiveWorkCts, fullCts);
             try
             {
-                await SynchronizeAllBodyAsync(fullCts.Token).ConfigureAwait(false);
+                // Heal again on drain — covers deferred set without prior eager heal (Force path).
+                await SynchronizeAllBodyAsync(fullCts.Token, healAlreadyDone: false).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -520,7 +554,7 @@ public sealed class CloudMappedSyncCoordinator
                 Volatile.Write(ref _exclusiveWorkCts, folderCts);
                 try
                 {
-                    await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token)
+                    await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token, healAlreadyDone: false)
                         .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -539,10 +573,11 @@ public sealed class CloudMappedSyncCoordinator
         }
     }
 
-    private async Task SynchronizeAllBodyAsync(CancellationToken ct)
+    private async Task SynchronizeAllBodyAsync(CancellationToken ct, bool healAlreadyDone = false)
     {
         if (!EnsureAuthenticatedForSync()) return;
-        await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
+        if (!healAlreadyDone)
+            await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
 
         await _folderSynchronizer.SynchronizeAllAsync(
             _syncMappings.ToList(),
@@ -557,14 +592,20 @@ public sealed class CloudMappedSyncCoordinator
         catch { /* ignore notifier errors */ }
     }
 
-    private async Task SynchronizeFolderBodyAsync(Guid folderId, string localPath, CancellationToken ct)
+    private async Task SynchronizeFolderBodyAsync(
+        Guid folderId,
+        string localPath,
+        CancellationToken ct,
+        bool healAlreadyDone = false)
     {
         if (!EnsureAuthenticatedForSync()) return;
-        await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
+        if (!healAlreadyDone)
+            await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
         var healedId = folderId;
         var healedPath = localPath;
         var byLocal = _syncMappings.FirstOrDefault(m =>
-            string.Equals(
+            !string.IsNullOrWhiteSpace(m.LocalPath)
+            && string.Equals(
                 Path.GetFullPath(m.LocalPath),
                 Path.GetFullPath(localPath),
                 StringComparison.OrdinalIgnoreCase));
@@ -589,7 +630,11 @@ public sealed class CloudMappedSyncCoordinator
         catch { /* ignore */ }
     }
 
-    /// <summary>Android parity: heal before Sync/Force so twin maps converge on prefer-populated id.</summary>
+    /// <summary>
+    /// Android parity: heal before Sync/Force so twin maps converge on prefer-populated id.
+    /// Persist to store <em>before</em> dispatcher UI collection update — installed FAIL 1.0.84
+    /// class where runner remapped but cloud-sync-mappings.json stayed on the empty twin.
+    /// </summary>
     private async Task HealSameNamedMappingsAsync(CancellationToken ct)
     {
         if (_syncStore == null || _syncMappings.Count == 0) return;
@@ -601,19 +646,20 @@ public sealed class CloudMappedSyncCoordinator
             var snapshot = _syncMappings.ToList();
             var result = await _healRunner.TryHealAsync(snapshot, userId, ct).ConfigureAwait(false);
             if (result is null) return;
-            var healed = result.Value.Healed;
-            void Apply()
+            var healed = result.Value.Healed.ToList();
+            // Disk first — do not wait on dispatcher for the durable remap.
+            _syncStore.Save(healed);
+            void ApplyUi()
             {
                 _syncMappings.Clear();
                 foreach (var m in healed)
                     _syncMappings.Add(m);
-                _syncStore.Save(_syncMappings);
             }
 
             if (_dispatcher != null)
-                await _dispatcher.InvokeAsync(Apply);
+                await _dispatcher.InvokeAsync(ApplyUi);
             else
-                Apply();
+                ApplyUi();
         }
         catch (OperationCanceledException)
         {

@@ -7,7 +7,7 @@ namespace ProtoLink.Communicator.Windows.Services.Sync;
 /// <summary>
 /// Live API discover + remap for <see cref="SameNamedCloudFolderHeal"/> (Android MainViewModel parity).
 /// </summary>
-public sealed class SameNamedCloudFolderHealRunner
+public class SameNamedCloudFolderHealRunner
 {
     private readonly CloudApiService _api;
     private readonly JsonSyncMetadataStore _meta;
@@ -21,8 +21,9 @@ public sealed class SameNamedCloudFolderHealRunner
     /// <summary>
     /// Compute prefer-populated remaps. Returns null when nothing to change.
     /// Soft-fails per mapping on parent/list errors (does not abort). Caller persists + updates UI collection.
+    /// Virtual for coordinator persist/coalesce tests (fake remap without live API).
     /// </summary>
-    public async Task<(int RemapCount, IReadOnlyList<CloudSyncMapping> Healed)?> TryHealAsync(
+    public virtual async Task<(int RemapCount, IReadOnlyList<CloudSyncMapping> Healed)?> TryHealAsync(
         IReadOnlyList<CloudSyncMapping> snapshot,
         Guid userId,
         CancellationToken cancellationToken = default)
