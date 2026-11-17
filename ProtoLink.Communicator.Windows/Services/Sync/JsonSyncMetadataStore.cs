@@ -11,6 +11,8 @@ public sealed class JsonSyncMetadataStore
     private Dictionary<string, SyncItemMeta> _items = new(StringComparer.Ordinal);
     private Dictionary<string, DateTime> _lastSync = new(StringComparer.Ordinal);
     private bool _loaded;
+    private int _batchDepth;
+    private bool _dirty;
 
     private sealed class FileDto
     {
@@ -92,7 +94,8 @@ public sealed class JsonSyncMetadataStore
             Items = _items.Values.ToList(),
             LastSync = _lastSync
         };
-        var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
+        // Compact JSON: indented 27k-item MyNotesFolder meta is ~13MB and ~1s+ per rewrite.
+        var json = JsonSerializer.Serialize(dto);
         Exception? lastIo = null;
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -116,6 +119,84 @@ public sealed class JsonSyncMetadataStore
 
         if (lastIo != null)
             throw lastIo;
+    }
+
+    private void MarkDirtyOrSaveUnlocked()
+    {
+        if (_batchDepth > 0)
+        {
+            _dirty = true;
+            return;
+        }
+
+        SaveUnlocked();
+        _dirty = false;
+    }
+
+    /// <summary>
+    /// Coalesce many Upsert/Delete into one disk write. Nested batches are supported.
+    /// Required for mapped MyNotesFolder (~10k+ items): per-item full-file rewrite never
+    /// reaches <see cref="SetLastSyncUtc"/> within a daily-use window (sticky Syncing).
+    /// </summary>
+    public void BeginBatch()
+    {
+        EnsureLoaded();
+        lock (_gate)
+            _batchDepth++;
+    }
+
+    public void EndBatch()
+    {
+        lock (_gate)
+        {
+            if (_batchDepth <= 0)
+                throw new InvalidOperationException("EndBatch without BeginBatch");
+            _batchDepth--;
+            if (_batchDepth == 0 && _dirty)
+            {
+                SaveUnlocked();
+                _dirty = false;
+            }
+        }
+    }
+
+    /// <summary>Run <paramref name="work"/> inside a metadata batch (one save on success path).</summary>
+    public void RunInBatch(Action work)
+    {
+        BeginBatch();
+        try
+        {
+            work();
+        }
+        finally
+        {
+            EndBatch();
+        }
+    }
+
+    public async Task RunInBatchAsync(Func<Task> work)
+    {
+        BeginBatch();
+        try
+        {
+            await work().ConfigureAwait(false);
+        }
+        finally
+        {
+            EndBatch();
+        }
+    }
+
+    /// <summary>Test observation: deferred disk write pending inside an open batch.</summary>
+    internal bool IsDirtyForTests
+    {
+        get { lock (_gate) return _dirty; }
+    }
+
+    /// <summary>Test observation: nested batch depth.</summary>
+    internal int BatchDepthForTests
+    {
+        get { lock (_gate) return _batchDepth; }
     }
 
     public List<SyncItemMeta> GetAll(string mappingId)
@@ -164,7 +245,7 @@ public sealed class JsonSyncMetadataStore
         {
             item.RelativePath = SyncPathUtil.Normalize(item.RelativePath);
             _items[Key(item.MappingId, item.RelativePath)] = Clone(item);
-            SaveUnlocked();
+            MarkDirtyOrSaveUnlocked();
         }
     }
 
@@ -174,7 +255,7 @@ public sealed class JsonSyncMetadataStore
         lock (_gate)
         {
             _items.Remove(Key(mappingId, relativePath));
-            SaveUnlocked();
+            MarkDirtyOrSaveUnlocked();
         }
     }
 
@@ -184,7 +265,7 @@ public sealed class JsonSyncMetadataStore
         lock (_gate)
         {
             _lastSync[mappingId] = utc;
-            SaveUnlocked();
+            MarkDirtyOrSaveUnlocked();
         }
     }
 

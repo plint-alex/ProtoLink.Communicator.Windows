@@ -19,9 +19,14 @@ public sealed class SyncEngine
         _api = api;
     }
 
-    public async Task ReconcileAllAsync(
+    public Task ReconcileAllAsync(
         IReadOnlyList<SyncMappingInfo> mappings,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        _store.RunInBatchAsync(() => ReconcileAllCoreAsync(mappings, ct));
+
+    private async Task ReconcileAllCoreAsync(
+        IReadOnlyList<SyncMappingInfo> mappings,
+        CancellationToken ct)
     {
         var dirtyByMapping = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
@@ -70,9 +75,14 @@ public sealed class SyncEngine
     /// Mappings with empty metadata are fully reconciled first (never blind-create remote entities).
     /// Returns number of local structural/content ops applied from pure push passes.
     /// </summary>
-    public async Task<int> PushLocalChangesAsync(
+    public Task<int> PushLocalChangesAsync(
         IReadOnlyList<SyncMappingInfo> mappings,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        PushLocalChangesBatchedAsync(mappings, ct);
+
+    private async Task<int> PushLocalChangesBatchedAsync(
+        IReadOnlyList<SyncMappingInfo> mappings,
+        CancellationToken ct)
     {
         var applied = 0;
         var needFull = new List<SyncMappingInfo>();
@@ -89,14 +99,17 @@ public sealed class SyncEngine
         if (needFull.Count > 0)
             await ReconcileAllAsync(needFull, ct);
 
-        foreach (var mapping in ready)
+        await _store.RunInBatchAsync(async () =>
         {
-            ct.ThrowIfCancellationRequested();
-            var dirty = new HashSet<string>(StringComparer.Ordinal);
-            applied += await ApplyLocalPhaseAsync(
-                mapping, dirty, skipSizeUpdates: false, remoteInMapping: new List<RemoteLocated>(), ct);
-            _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
-        }
+            foreach (var mapping in ready)
+            {
+                ct.ThrowIfCancellationRequested();
+                var dirty = new HashSet<string>(StringComparer.Ordinal);
+                applied += await ApplyLocalPhaseAsync(
+                    mapping, dirty, skipSizeUpdates: false, remoteInMapping: new List<RemoteLocated>(), ct);
+                _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
+            }
+        });
         return applied;
     }
 
@@ -126,9 +139,8 @@ public sealed class SyncEngine
         HashSet<string> dirty,
         CancellationToken ct)
     {
-        var snap = SnapshotFs(mapping.LocalRootPath)
-            .GroupBy(e => SyncPathUtil.Normalize(e.RelativePath), StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        // Do not SnapshotFs here — compare hashes per meta row only. A full-tree snapshot
+        // (esp. legacy O(dirs×files) folder sizes) starved LastSync on ~10k MyNotesFolder.
         var remoteById = allRemote
             .GroupBy(r => r.Entry.Id)
             .ToDictionary(g => g.Key, g => g.First());
@@ -888,7 +900,10 @@ public sealed class SyncEngine
     }
 
     /// <summary>Overwrite server with all local files for a mapping; meta follows local.</summary>
-    public async Task ForcePushMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default)
+    public Task ForcePushMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default) =>
+        _store.RunInBatchAsync(() => ForcePushMappingCoreAsync(mapping, ct));
+
+    private async Task ForcePushMappingCoreAsync(SyncMappingInfo mapping, CancellationToken ct)
     {
         if (!Directory.Exists(mapping.LocalRootPath))
             throw new SyncException($"Local path does not exist: {mapping.LocalRootPath}");
@@ -972,7 +987,10 @@ public sealed class SyncEngine
     }
 
     /// <summary>Overwrite local FS with all remote files for a mapping; meta follows remote.</summary>
-    public async Task ForcePullMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default)
+    public Task ForcePullMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default) =>
+        _store.RunInBatchAsync(() => ForcePullMappingCoreAsync(mapping, ct));
+
+    private async Task ForcePullMappingCoreAsync(SyncMappingInfo mapping, CancellationToken ct)
     {
         Directory.CreateDirectory(mapping.LocalRootPath);
         var located = new List<RemoteLocated>();
@@ -1023,33 +1041,42 @@ public sealed class SyncEngine
         _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
     }
 
+    /// <summary>
+    /// Single-pass FS snapshot: one file enumeration + ancestor folder size rollup.
+    /// Legacy per-directory recursive GetFiles was O(dirs×files) and starved Sync on large trees.
+    /// </summary>
     public static List<FsEntry> SnapshotFs(string rootPath)
     {
         var result = new List<FsEntry>();
         if (!Directory.Exists(rootPath)) return result;
         var rootFull = Path.GetFullPath(rootPath);
 
-        foreach (var dir in Directory.GetDirectories(rootFull, "*", SearchOption.AllDirectories))
+        var folderSizes = new Dictionary<string, long>(StringComparer.Ordinal);
+        try
         {
-            var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, dir));
-            long size = 0;
-            try
+            foreach (var dir in Directory.GetDirectories(rootFull, "*", SearchOption.AllDirectories))
             {
-                foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                {
-                    try { size += new FileInfo(f).Length; }
-                    catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex)) { /* skip gone file */ }
-                }
+                var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, dir));
+                folderSizes[rel] = 0;
             }
-            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
-            {
-                SyncMissingLocalPath.Log("SnapshotFs", rel, dir, ex);
-                continue;
-            }
-            result.Add(new FsEntry { RelativePath = rel, IsFolder = true, SizeBytes = size });
+        }
+        catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+        {
+            SyncMissingLocalPath.Log("SnapshotFs", "", rootFull, ex);
         }
 
-        foreach (var file in Directory.GetFiles(rootFull, "*", SearchOption.AllDirectories))
+        string[] files;
+        try
+        {
+            files = Directory.GetFiles(rootFull, "*", SearchOption.AllDirectories);
+        }
+        catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+        {
+            SyncMissingLocalPath.Log("SnapshotFs", "", rootFull, ex);
+            files = Array.Empty<string>();
+        }
+
+        foreach (var file in files)
         {
             var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, file));
             try
@@ -1068,12 +1095,24 @@ public sealed class SyncEngine
                     SizeBytes = info.Length,
                     ContentHash = hash
                 });
+
+                // Roll size into every ancestor folder (single pass).
+                var parent = SyncPathUtil.ParentOf(rel);
+                while (!string.IsNullOrEmpty(parent))
+                {
+                    folderSizes[parent] = folderSizes.GetValueOrDefault(parent) + info.Length;
+                    parent = SyncPathUtil.ParentOf(parent);
+                }
             }
             catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
             {
                 SyncMissingLocalPath.Log("SnapshotFs", rel, file, ex);
             }
         }
+
+        foreach (var (rel, size) in folderSizes)
+            result.Add(new FsEntry { RelativePath = rel, IsFolder = true, SizeBytes = size });
+
         return result;
     }
 
