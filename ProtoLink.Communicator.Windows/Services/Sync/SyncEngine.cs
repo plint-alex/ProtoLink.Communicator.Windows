@@ -177,6 +177,16 @@ public sealed class SyncEngine
                 continue;
             }
 
+            // Size+baseline+listing fast path: avoid SHA-256 of every unchanged MyNotesFolder file
+            // before getFile skip (1.0.75 quiet-meta hang class after WalkRemote/DevTools).
+            if (ContentHashUtil.CanSkipCompareWithoutHash(
+                    localSize.Value,
+                    meta.SizeBytes,
+                    meta.ContentHash,
+                    located.Entry.UpdateTime,
+                    meta.RemoteUpdateTime))
+                continue;
+
             string localHash;
             try
             {
@@ -832,10 +842,16 @@ public sealed class SyncEngine
         // Parallel folder listings: MyNotesFolder has ~3.5k folders; concurrency 2 + DevTools
         // body buffering left WalkRemote outside the 15m LastSync budget (idle Syncing).
         // Keep aligned with GetEntitiesThrottlingHandler.SyncLaneConcurrency.
+        // Warm meta: list without Values and reuse RelativePath names — IncludeValues×3.5k
+        // still burned the 15m budget on 1.0.75 after DevTools omit + concurrency-8.
+        var metaByRemoteId = _store.GetAll(mappingId)
+            .GroupBy(m => m.RemoteId)
+            .ToDictionary(g => g.Key, g => g.First());
         var gate = new object();
         using var throttle = new SemaphoreSlim(GetEntitiesThrottlingHandler.SyncLaneConcurrency);
         await WalkRemoteParallelAsync(
-            folderId, mappingId, relativeParent, outList, ct, visitedIds, seenPaths, gate, throttle);
+            folderId, mappingId, relativeParent, outList, ct, visitedIds, seenPaths, gate, throttle,
+            metaByRemoteId);
     }
 
     private async Task WalkRemoteParallelAsync(
@@ -847,17 +863,49 @@ public sealed class SyncEngine
         HashSet<Guid> visitedIds,
         HashSet<string> seenPaths,
         object gate,
-        SemaphoreSlim throttle)
+        SemaphoreSlim throttle,
+        IReadOnlyDictionary<Guid, SyncItemMeta> metaByRemoteId)
     {
+        // Cold bootstrap (empty meta): IncludeValues listing per folder.
+        // Warm reconcile: structure-only first; if every CloudFile/Folder child is already in meta,
+        // reuse RelativePath names (MyNotesFolder ~3.5k folders stay cheap). Any unknown child →
+        // one IncludeValues re-list for that folder only (remote adds / heal paths).
+        var warm = metaByRemoteId.Count > 0;
         await throttle.WaitAsync(ct);
         List<GetEntitiesResult> children;
         try
         {
-            children = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
+            children = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: !warm);
         }
         finally
         {
             throttle.Release();
+        }
+
+        var useMetaNames = false;
+        if (warm)
+        {
+            var cloudKids = children
+                .Where(c => c.Code == CloudEntityCodes.CloudFolder || c.Code == CloudEntityCodes.CloudFile)
+                .ToList();
+            var allKnown = cloudKids.Count > 0 && cloudKids.All(c => metaByRemoteId.ContainsKey(c.Id));
+            // Empty folder listing is fine with meta-name mode (nothing to name).
+            if (cloudKids.Count == 0 || allKnown)
+            {
+                useMetaNames = true;
+            }
+            else
+            {
+                await throttle.WaitAsync(ct);
+                try
+                {
+                    children = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: true);
+                }
+                finally
+                {
+                    throttle.Release();
+                }
+            }
         }
 
         var subfolders = new List<(Guid Id, string Rel)>();
@@ -870,9 +918,20 @@ public sealed class SyncEngine
                 var isFile = child.Code == CloudEntityCodes.CloudFile;
                 if (!isFolder && !isFile) continue;
                 if (!visitedIds.Add(child.Id)) continue;
-                var name = CloudApiService.GetDisplayName(child);
-                if (string.IsNullOrEmpty(name) || CloudApiService.IsSyntheticCloudFileDisplayName(child, name))
-                    continue;
+
+                string? name;
+                if (useMetaNames && metaByRemoteId.TryGetValue(child.Id, out var known))
+                {
+                    name = SyncPathUtil.NameOf(known.RelativePath);
+                }
+                else
+                {
+                    name = CloudApiService.GetDisplayName(child);
+                    if (string.IsNullOrEmpty(name) || CloudApiService.IsSyntheticCloudFileDisplayName(child, name))
+                        continue;
+                }
+
+                if (string.IsNullOrEmpty(name)) continue;
                 var rel = SyncPathUtil.Join(relativeParent, name);
                 if (!seenPaths.Add(SyncPathUtil.Normalize(rel))) continue;
                 var entry = new RemoteEntryInfo
@@ -891,7 +950,7 @@ public sealed class SyncEngine
 
         if (subfolders.Count == 0) return;
         await Task.WhenAll(subfolders.Select(sf => WalkRemoteParallelAsync(
-            sf.Id, mappingId, sf.Rel, outList, ct, visitedIds, seenPaths, gate, throttle)));
+            sf.Id, mappingId, sf.Rel, outList, ct, visitedIds, seenPaths, gate, throttle, metaByRemoteId)));
     }
 
     private Guid? ResolveParentId(SyncMappingInfo mapping, string parentPath)

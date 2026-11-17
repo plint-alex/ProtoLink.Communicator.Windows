@@ -40,6 +40,27 @@ public class SyncCompareSkipUnchangedTests
             ContentHashUtil.CanSkipRemoteContentDownload(localHash, metaHash, remote, meta));
     }
 
+    [Theory]
+    [InlineData(100L, 100L, "abc", null, null, true)]
+    [InlineData(100L, 100L, "abc", "2026-11-16T12:00:00Z", "2026-11-16T12:00:00Z", true)]
+    [InlineData(100L, 100L, "abc", "2026-11-16T13:00:00Z", "2026-11-16T12:00:00Z", false)]
+    [InlineData(100L, 99L, "abc", "2026-11-16T12:00:00Z", "2026-11-16T12:00:00Z", false)]
+    [InlineData(100L, 100L, "", "2026-11-16T12:00:00Z", "2026-11-16T12:00:00Z", false)]
+    public void CanSkipCompareWithoutHash_MatchesContract(
+        long localSize,
+        long metaSize,
+        string metaHash,
+        string? remoteIso,
+        string? metaIso,
+        bool expected)
+    {
+        DateTime? remote = remoteIso == null ? null : DateTime.Parse(remoteIso, null, System.Globalization.DateTimeStyles.RoundtripKind);
+        DateTime? meta = metaIso == null ? null : DateTime.Parse(metaIso, null, System.Globalization.DateTimeStyles.RoundtripKind);
+        Assert.Equal(
+            expected,
+            ContentHashUtil.CanSkipCompareWithoutHash(localSize, metaSize, metaHash, remote, meta));
+    }
+
     [Fact]
     public async Task Reconcile_UnchangedFile_DoesNotCallGetFile_AndStampsLastSync()
     {
@@ -184,6 +205,59 @@ public class SyncCompareSkipUnchangedTests
         }
     }
 
+    /// <summary>
+    /// Warm meta WalkRemote must list ParentIds with IncludeValues=false (1.0.75 hang class).
+    /// </summary>
+    [Fact]
+    public async Task Reconcile_WarmMeta_WalkRemote_ListsWithoutValues()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-walk-light-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-walk-light-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        const string body = "warm-walk-note-body-xxxx";
+        File.WriteAllText(Path.Combine(root, "note.html"), body);
+        var hash = ContentHashUtil.Sha256Hex(Encoding.UTF8.GetBytes(body));
+        var stamped = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var fileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = fileId,
+            ParentRemoteId = cloudFolderId,
+            RelativePath = "note.html",
+            IsFolder = false,
+            SizeBytes = body.Length,
+            ContentHash = hash,
+            RemoteUpdateTime = stamped
+        });
+
+        var handler = new CountingGetFileHandler(cloudFolderId, fileId, "note.html", stamped);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://sync-test.local/") };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+
+        await engine.ReconcileAllAsync(new[]
+        {
+            new SyncMappingInfo
+            {
+                Id = mappingId,
+                CloudFolderId = cloudFolderId,
+                LocalRootPath = root
+            }
+        });
+
+        Assert.True(handler.ParentListCallsWithoutValues >= 1);
+        Assert.Equal(0, handler.ParentListCallsWithValues);
+        Assert.Equal(0, handler.GetFileCalls);
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
     private sealed class CountingGetFileHandler : HttpMessageHandler
     {
         private readonly Guid _folderId;
@@ -193,6 +267,8 @@ public class SyncCompareSkipUnchangedTests
         private readonly byte[] _remoteBytes;
 
         public int GetFileCalls { get; private set; }
+        public int ParentListCallsWithValues { get; private set; }
+        public int ParentListCallsWithoutValues { get; private set; }
 
         public CountingGetFileHandler(
             Guid folderId,
@@ -208,13 +284,42 @@ public class SyncCompareSkipUnchangedTests
             _remoteBytes = remoteBytes ?? Encoding.UTF8.GetBytes("should-not-download");
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
             if (path.Contains("GetEntities", StringComparison.OrdinalIgnoreCase))
             {
+                var body = request.Content == null
+                    ? "{}"
+                    : await request.Content.ReadAsStringAsync(cancellationToken);
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+                var root = doc.RootElement;
+                var includeValues = root.TryGetProperty("includeValues", out var iv) && iv.GetBoolean();
+                var hasParents = root.TryGetProperty("parentIds", out var parentsEl)
+                                 && parentsEl.ValueKind == JsonValueKind.Array
+                                 && parentsEl.GetArrayLength() > 0;
+
+                if (hasParents)
+                {
+                    if (includeValues) ParentListCallsWithValues++;
+                    else ParentListCallsWithoutValues++;
+                }
+
+                object[] valuesPayload = includeValues
+                    ? new object[]
+                    {
+                        new
+                        {
+                            id = Guid.NewGuid(),
+                            type = "String",
+                            value = _fileName,
+                            parents = new[] { NameTypeId }
+                        }
+                    }
+                    : Array.Empty<object>();
+
                 var payload = JsonSerializer.Serialize(new[]
                 {
                     new
@@ -224,37 +329,28 @@ public class SyncCompareSkipUnchangedTests
                         version = 1,
                         creationTime = _updateTime,
                         updateTime = _updateTime,
-                        values = new[]
-                        {
-                            new
-                            {
-                                id = Guid.NewGuid(),
-                                type = "String",
-                                value = _fileName,
-                                parents = new[] { NameTypeId }
-                            }
-                        }
+                        values = valuesPayload
                     }
                 });
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(payload, Encoding.UTF8, "application/json")
-                });
+                };
             }
 
             if (path.Contains("getFile", StringComparison.OrdinalIgnoreCase))
             {
                 GetFileCalls++;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(_remoteBytes)
-                });
+                };
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json")
-            });
+            };
         }
     }
 }

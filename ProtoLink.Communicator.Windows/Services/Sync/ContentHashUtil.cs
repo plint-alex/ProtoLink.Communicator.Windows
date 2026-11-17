@@ -58,10 +58,36 @@ public static class ContentHashUtil
             return false;
         if (!string.Equals(localHash, metaHash, StringComparison.OrdinalIgnoreCase))
             return false;
-        if (remoteUpdateTime is DateTime remote && metaUpdateTime is DateTime meta)
-            return !IsUtcNewer(remote, meta);
-        // Listing omitted UpdateTime — trust baseline; Force Download repairs divergence.
-        return remoteUpdateTime is null;
+        return !IsRemoteListingNewer(remoteUpdateTime, metaUpdateTime);
+    }
+
+    /// <summary>
+    /// ApplyCompare fast path: size still matches meta, baseline hash present, remote listing not
+    /// newer → skip SHA-256 of local bytes (and getFile). Same-size silent edits are caught by
+    /// interval Push (hashing SnapshotFs) or Force Upload; full reconcile must stay inside the
+    /// daily-use LastSync window on ~10k MyNotesFolder trees.
+    /// </summary>
+    public static bool CanSkipCompareWithoutHash(
+        long localSize,
+        long metaSize,
+        string? metaHash,
+        DateTime? remoteUpdateTime,
+        DateTime? metaUpdateTime)
+    {
+        if (localSize != metaSize) return false;
+        if (string.IsNullOrEmpty(metaHash)) return false;
+        return !IsRemoteListingNewer(remoteUpdateTime, metaUpdateTime);
+    }
+
+    /// <summary>
+    /// True when the remote listing UpdateTime is strictly newer than the meta baseline.
+    /// Null remote UpdateTime → not newer (trust baseline; Force Download repairs).
+    /// </summary>
+    public static bool IsRemoteListingNewer(DateTime? remoteUpdateTime, DateTime? metaUpdateTime)
+    {
+        if (remoteUpdateTime is not DateTime remote) return false;
+        if (metaUpdateTime is not DateTime meta) return true;
+        return IsUtcNewer(remote, meta);
     }
 
     public static bool IsUtcNewer(DateTime remote, DateTime meta)
