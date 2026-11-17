@@ -115,8 +115,10 @@ public class SyncCompareSkipUnchangedTests
     }
 
     [Fact]
-    public async Task Reconcile_RemoteNewer_DownloadsAndApplies()
+    public async Task Reconcile_RemoteNewer_ViaValuesRelist_DownloadsAndApplies()
     {
+        // Warm values-light ignores structure-only UpdateTime; force IncludeValues re-list with an
+        // unknown sibling so listing UpdateTime applies (cloud-wins path).
         var root = Path.Combine(Path.GetTempPath(), "pl-cmp-newer-" + Guid.NewGuid().ToString("N"));
         var metaDir = Path.Combine(Path.GetTempPath(), "pl-cmp-newer-meta-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -131,6 +133,7 @@ public class SyncCompareSkipUnchangedTests
         var mappingId = Guid.NewGuid().ToString("N");
         var cloudFolderId = Guid.NewGuid();
         var fileId = Guid.NewGuid();
+        var unknownRemoteId = Guid.NewGuid();
         var store = new JsonSyncMetadataStore(metaDir);
         store.Upsert(new SyncItemMeta
         {
@@ -145,7 +148,8 @@ public class SyncCompareSkipUnchangedTests
         });
 
         var handler = new CountingGetFileHandler(
-            cloudFolderId, fileId, "note.html", remoteTime, Encoding.UTF8.GetBytes(remoteBody));
+            cloudFolderId, fileId, "note.html", remoteTime, Encoding.UTF8.GetBytes(remoteBody),
+            unknownSiblingId: unknownRemoteId, unknownSiblingName: "extra-remote.html");
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://sync-test.local/") };
         var engine = new SyncEngine(store, new CloudApiService(http));
 
@@ -159,11 +163,138 @@ public class SyncCompareSkipUnchangedTests
             }
         });
 
+        Assert.True(handler.ParentListCallsWithValues >= 1);
         Assert.True(handler.GetFileCalls >= 1);
         Assert.Equal(remoteBody, File.ReadAllText(Path.Combine(root, "note.html")));
 
         try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
         try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    /// <summary>
+    /// 1.0.77 hang class: warm values-light listing UpdateTime newer than meta must NOT force
+    /// getFile for unchanged local+meta (otherwise ~10k downloads starve SetLastSyncUtc).
+    /// </summary>
+    [Fact]
+    public async Task Reconcile_WarmValuesLight_NewerListingTime_DoesNotGetFile_AndStampsLastSync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-cmp-light-newer-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-cmp-light-newer-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        const string body = "stable-note-body-xxxxxxxx";
+        File.WriteAllText(Path.Combine(root, "note.html"), body);
+        var hash = ContentHashUtil.Sha256Hex(Encoding.UTF8.GetBytes(body));
+        var metaTime = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+        var listingNewer = metaTime.AddHours(2);
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var fileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = fileId,
+            ParentRemoteId = cloudFolderId,
+            RelativePath = "note.html",
+            IsFolder = false,
+            SizeBytes = body.Length,
+            ContentHash = hash,
+            RemoteUpdateTime = metaTime
+        });
+
+        var handler = new CountingGetFileHandler(cloudFolderId, fileId, "note.html", listingNewer);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://sync-test.local/") };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+
+        await engine.ReconcileAllAsync(new[]
+        {
+            new SyncMappingInfo
+            {
+                Id = mappingId,
+                CloudFolderId = cloudFolderId,
+                LocalRootPath = root
+            }
+        });
+
+        Assert.True(handler.ParentListCallsWithoutValues >= 1);
+        Assert.Equal(0, handler.ParentListCallsWithValues);
+        Assert.Equal(0, handler.GetFileCalls);
+        var metaPath = Path.Combine(metaDir, "cloud-sync-metadata.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+        Assert.True(doc.RootElement.GetProperty("LastSync").TryGetProperty(mappingId, out var ls));
+        Assert.True(ls.GetDateTime() > metaTime);
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
+    public async Task DownloadBytes_Timeout_SoftFails_AndReconcileStampsLastSync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-cmp-dl-timeout-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-cmp-dl-timeout-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        // Divergent meta hash forces getFile after local hash (hangs until CancelAfter soft-fail).
+        const string body = "local-bytes-for-timeout-xx";
+        File.WriteAllText(Path.Combine(root, "note.html"), body);
+        var stamped = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var fileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = fileId,
+            ParentRemoteId = cloudFolderId,
+            RelativePath = "note.html",
+            IsFolder = false,
+            SizeBytes = body.Length,
+            // Empty baseline → cannot skip compare/getFile (forces DownloadBytes soft-fail path).
+            ContentHash = "",
+            RemoteUpdateTime = stamped
+        });
+
+        var handler = new CountingGetFileHandler(
+            cloudFolderId, fileId, "note.html", stamped, hangGetFile: true);
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://sync-test.local/"),
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        var priorBudget = SyncEngine.RemoteDownloadBudget;
+        SyncEngine.RemoteDownloadBudget = TimeSpan.FromSeconds(2);
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await engine.ReconcileAllAsync(new[]
+            {
+                new SyncMappingInfo
+                {
+                    Id = mappingId,
+                    CloudFolderId = cloudFolderId,
+                    LocalRootPath = root
+                }
+            });
+            sw.Stop();
+
+            Assert.True(handler.GetFileCalls >= 1);
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(30), $"elapsed {sw.Elapsed} — budget soft-fail should win");
+            var metaPath = Path.Combine(metaDir, "cloud-sync-metadata.json");
+            using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+            Assert.True(doc.RootElement.GetProperty("LastSync").TryGetProperty(mappingId, out _));
+        }
+        finally
+        {
+            SyncEngine.RemoteDownloadBudget = priorBudget;
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+            try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+        }
     }
 
     [Fact]
@@ -265,6 +396,9 @@ public class SyncCompareSkipUnchangedTests
         private readonly string _fileName;
         private readonly DateTime _updateTime;
         private readonly byte[] _remoteBytes;
+        private readonly Guid? _unknownSiblingId;
+        private readonly string? _unknownSiblingName;
+        private readonly bool _hangGetFile;
 
         public int GetFileCalls { get; private set; }
         public int ParentListCallsWithValues { get; private set; }
@@ -275,13 +409,19 @@ public class SyncCompareSkipUnchangedTests
             Guid fileId,
             string fileName,
             DateTime updateTime,
-            byte[]? remoteBytes = null)
+            byte[]? remoteBytes = null,
+            Guid? unknownSiblingId = null,
+            string? unknownSiblingName = null,
+            bool hangGetFile = false)
         {
             _folderId = folderId;
             _fileId = fileId;
             _fileName = fileName;
             _updateTime = updateTime;
             _remoteBytes = remoteBytes ?? Encoding.UTF8.GetBytes("should-not-download");
+            _unknownSiblingId = unknownSiblingId;
+            _unknownSiblingName = unknownSiblingName;
+            _hangGetFile = hangGetFile;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -307,20 +447,7 @@ public class SyncCompareSkipUnchangedTests
                     else ParentListCallsWithoutValues++;
                 }
 
-                object[] valuesPayload = includeValues
-                    ? new object[]
-                    {
-                        new
-                        {
-                            id = Guid.NewGuid(),
-                            type = "String",
-                            value = _fileName,
-                            parents = new[] { NameTypeId }
-                        }
-                    }
-                    : Array.Empty<object>();
-
-                var payload = JsonSerializer.Serialize(new[]
+                var entities = new List<object>
                 {
                     new
                     {
@@ -329,9 +456,46 @@ public class SyncCompareSkipUnchangedTests
                         version = 1,
                         creationTime = _updateTime,
                         updateTime = _updateTime,
-                        values = valuesPayload
+                        values = includeValues
+                            ? new object[]
+                            {
+                                new
+                                {
+                                    id = Guid.NewGuid(),
+                                    type = "String",
+                                    value = _fileName,
+                                    parents = new[] { NameTypeId }
+                                }
+                            }
+                            : Array.Empty<object>()
                     }
-                });
+                };
+
+                if (_unknownSiblingId is Guid extraId)
+                {
+                    entities.Add(new
+                    {
+                        id = extraId,
+                        code = CloudEntityCodes.CloudFile,
+                        version = 1,
+                        creationTime = _updateTime,
+                        updateTime = _updateTime,
+                        values = includeValues
+                            ? new object[]
+                            {
+                                new
+                                {
+                                    id = Guid.NewGuid(),
+                                    type = "String",
+                                    value = _unknownSiblingName ?? "extra.html",
+                                    parents = new[] { NameTypeId }
+                                }
+                            }
+                            : Array.Empty<object>()
+                    });
+                }
+
+                var payload = JsonSerializer.Serialize(entities);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(payload, Encoding.UTF8, "application/json")
@@ -341,6 +505,11 @@ public class SyncCompareSkipUnchangedTests
             if (path.Contains("getFile", StringComparison.OrdinalIgnoreCase))
             {
                 GetFileCalls++;
+                if (_hangGetFile)
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(_remoteBytes)

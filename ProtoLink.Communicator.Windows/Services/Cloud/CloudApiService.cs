@@ -284,14 +284,22 @@ public class CloudApiService
         return CloudFileBytesResult.Ok(bytes, contentType);
     }
 
-    /// <summary>404 Not Found returns null; any other failure throws.</summary>
+    /// <summary>
+    /// 404 Not Found returns null; any other failure throws.
+    /// Headers-read + dispose so per-item CancelAfter can abort the body read (1.0.77 live
+    /// getFile stayed in SendAsync past HttpClient.Timeout under ResponseContentRead).
+    /// </summary>
     public async Task<Stream?> GetFileStreamOrNotFoundAsync(Guid entityId, CancellationToken cancellationToken = default)
     {
-        var response = await _http.GetAsync($"api/Files/getFile/{entityId}", cancellationToken);
+        using var response = await _http.GetAsync(
+            $"api/Files/getFile/{entityId}",
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
-        await EnsureSuccessAsync(response);
-        return await response.Content.ReadAsStreamAsync(cancellationToken);
+        await EnsureSuccessAsync(response).ConfigureAwait(false);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        return new MemoryStream(bytes, writable: false);
     }
 
     /// <summary>

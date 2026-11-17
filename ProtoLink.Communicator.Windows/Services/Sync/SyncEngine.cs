@@ -106,14 +106,34 @@ public sealed class SyncEngine
         return applied;
     }
 
+    /// <summary>
+    /// Per-item getFile budget. HttpClient.Timeout alone did not abort a live blackholed getFile
+    /// (1.0.77 dump: ApplyCompare stuck &gt;35m with Timeout=100s) — link CancelAfter so one hung
+    /// download cannot keep the meta batch open past the daily-use LastSync window.
+    /// </summary>
+    /// <summary>Test hook may shorten; production default 45s.</summary>
+    internal static TimeSpan RemoteDownloadBudget { get; set; } = TimeSpan.FromSeconds(45);
+
     /// <summary>Buffer a remote file in memory so the disk write stays short and ungated during transfer.</summary>
     private async Task<byte[]?> DownloadBytesOrNullAsync(Guid remoteId, CancellationToken ct)
     {
-        await using var stream = await _api.GetFileStreamOrNotFoundAsync(remoteId, ct);
-        if (stream == null) return null;
-        using var ms = new MemoryStream();
-        await stream.CopyToAsync(ms, ct);
-        return ms.ToArray();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(RemoteDownloadBudget);
+        try
+        {
+            await using var stream = await _api.GetFileStreamOrNotFoundAsync(remoteId, timeoutCts.Token);
+            if (stream == null) return null;
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms, timeoutCts.Token);
+            return ms.ToArray();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Per-item timeout / transport cancel — soft-fail like null download (NFR-SYNC-1 adjacent).
+            // Do not let HttpClient TaskCanceledException abort the whole reconcile before LastSync.
+            SyncRemoteDownload.LogFailed("DownloadBytesOrNullAsync.Timeout", remoteId.ToString("D"), remoteId);
+            return null;
+        }
     }
 
     private Task EnrichRemoteSizesAsync(List<RemoteLocated> located, CancellationToken ct)
@@ -927,13 +947,21 @@ public sealed class SyncEngine
                 if (string.IsNullOrEmpty(name)) continue;
                 var rel = SyncPathUtil.Join(relativeParent, name);
                 if (!seenPaths.Add(SyncPathUtil.Normalize(rel))) continue;
+                // Warm values-light (useMetaNames): structure-only GetEntities UpdateTime must not
+                // drive ApplyCompare getFile. Live 1.0.77: listing times newer than meta for the
+                // warm MyNotesFolder tree → getFile×~10k inside an open batch → LastSync never
+                // stamped (quiet-meta sticky Syncing; dump hung in DownloadBytesOrNullAsync).
+                // Trust meta baseline; IncludeValues re-list (unknown children) keeps UpdateTime.
+                DateTime? listingUpdate = null;
+                if (!useMetaNames && child.UpdateTime != default)
+                    listingUpdate = child.UpdateTime;
                 var entry = new RemoteEntryInfo
                 {
                     Id = child.Id,
                     ParentId = folderId,
                     Name = name,
                     IsFolder = isFolder,
-                    UpdateTime = child.UpdateTime == default ? null : child.UpdateTime
+                    UpdateTime = listingUpdate
                 };
                 outList.Add(new RemoteLocated { Entry = entry, MappingId = mappingId, RelativePath = rel });
                 if (isFolder)
