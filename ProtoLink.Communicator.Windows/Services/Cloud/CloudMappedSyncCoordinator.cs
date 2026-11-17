@@ -10,6 +10,8 @@ namespace ProtoLink.Communicator.Windows.Services;
 /// Full reconcile on startup / SignalR <c>data_changed</c>; local-only push on interval and note save.
 /// One sync at a time; deferred full sync when an event arrives while busy.
 /// Interval push is time-budgeted and cancelled when a full sync is requested so LastSync is not starved.
+/// Manual per-folder Sync while busy defers that folder (not SynchronizeAll) and may cancel the lane holder.
+/// SignalR full while an unlimited reconcile runs coalesces without cancel+restart.
 /// </summary>
 public sealed class CloudMappedSyncCoordinator
 {
@@ -29,6 +31,11 @@ public sealed class CloudMappedSyncCoordinator
     private readonly SemaphoreSlim _syncMutex = new(1, 1);
     private int _syncActive;
     private int _deferredFullSync;
+    private int _deferredFolderSync;
+    private int _budgetedExclusive;
+    private readonly object _deferredFolderGate = new();
+    private Guid _deferredFolderId;
+    private string _deferredFolderPath = "";
     private static readonly TimeSpan AutoSyncInterval = TimeSpan.FromSeconds(15);
     /// <summary>Max exclusive-lane hold for interval/local push so deferred full sync can run.</summary>
     internal static readonly TimeSpan AutoPushBudget = TimeSpan.FromSeconds(60);
@@ -113,6 +120,8 @@ public sealed class CloudMappedSyncCoordinator
                         continue;
                     if (Volatile.Read(ref _deferredFullSync) != 0)
                         continue;
+                    if (Volatile.Read(ref _deferredFolderSync) != 0)
+                        continue;
                     await PushLocalChangesAllAsync(notifyIfUploaded: true, budget: AutoPushBudget);
                 }
                 catch (OperationCanceledException)
@@ -142,8 +151,10 @@ public sealed class CloudMappedSyncCoordinator
     {
         if (Volatile.Read(ref _syncActive) != 0)
         {
-            // Per-mapping Sync must not queue forever behind interval push — escalate to deferred full.
-            RequestDeferredFullAndCancelExclusiveWork();
+            // User asked for THIS mapping. Do not escalate to SynchronizeAll — on 1.0.76
+            // cancel+all-maps WalkRemote across ~15 roots never stamped LastSync within 15m
+            // (EndBatch meta churn without SetLastSyncUtc).
+            RequestDeferredFolderAndCancelExclusiveWork(folderId, localPath);
             return Task.CompletedTask;
         }
         return RunExclusiveAsync(
@@ -197,7 +208,10 @@ public sealed class CloudMappedSyncCoordinator
     {
         if (Volatile.Read(ref _syncActive) != 0)
         {
-            RequestDeferredFullAndCancelExclusiveWork();
+            // Coalesce: cancel budgeted push only. Never abort an in-flight unlimited
+            // reconcile just to restart SynchronizeAll from zero (1.0.76 LastSync hang class).
+            Interlocked.Exchange(ref _deferredFullSync, 1);
+            CancelBudgetedExclusiveOnly();
             return Task.CompletedTask;
         }
         return RunExclusiveAsync(ct => SynchronizeAllBodyAsync(ct), budget: null);
@@ -210,12 +224,27 @@ public sealed class CloudMappedSyncCoordinator
             return Task.CompletedTask;
         if (Volatile.Read(ref _deferredFullSync) != 0)
             return Task.CompletedTask;
+        if (Volatile.Read(ref _deferredFolderSync) != 0)
+            return Task.CompletedTask;
         return PushLocalChangesAllAsync(notifyIfUploaded: true, budget: AutoPushBudget);
     }
 
-    private void RequestDeferredFullAndCancelExclusiveWork()
+    private void RequestDeferredFolderAndCancelExclusiveWork(Guid folderId, string localPath)
     {
-        Interlocked.Exchange(ref _deferredFullSync, 1);
+        lock (_deferredFolderGate)
+        {
+            _deferredFolderId = folderId;
+            _deferredFolderPath = localPath;
+        }
+        Interlocked.Exchange(ref _deferredFolderSync, 1);
+        // Cancel push OR slow all-maps so the requested folder can run and stamp LastSync.
+        try { _exclusiveWorkCts?.Cancel(); }
+        catch { /* ignore */ }
+    }
+
+    private void CancelBudgetedExclusiveOnly()
+    {
+        if (Volatile.Read(ref _budgetedExclusive) == 0) return;
         try { _exclusiveWorkCts?.Cancel(); }
         catch { /* ignore */ }
     }
@@ -249,13 +278,16 @@ public sealed class CloudMappedSyncCoordinator
         var workCts = new CancellationTokenSource();
         Volatile.Write(ref _exclusiveWorkCts, workCts);
         CancellationTokenSource? linked = null;
+        var budgeted = budget is { } b0 && b0 > TimeSpan.Zero;
+        if (budgeted)
+            Interlocked.Exchange(ref _budgetedExclusive, 1);
         try
         {
             var ct = workCts.Token;
-            if (budget is { } b && b > TimeSpan.Zero)
+            if (budgeted)
             {
                 linked = CancellationTokenSource.CreateLinkedTokenSource(workCts.Token);
-                linked.CancelAfter(b);
+                linked.CancelAfter(budget!.Value);
                 ct = linked.Token;
             }
 
@@ -265,7 +297,36 @@ public sealed class CloudMappedSyncCoordinator
             }
             catch (OperationCanceledException)
             {
-                // Preempted by full sync request or auto-push budget — drain deferred full below.
+                // Preempted by folder/full request or auto-push budget — drain deferred work below.
+            }
+
+            // Prefer user-requested folder Sync (LastSync for that map) before coalesced all-maps.
+            while (Interlocked.Exchange(ref _deferredFolderSync, 0) == 1)
+            {
+                Guid folderId;
+                string localPath;
+                lock (_deferredFolderGate)
+                {
+                    folderId = _deferredFolderId;
+                    localPath = _deferredFolderPath;
+                }
+
+                var folderCts = new CancellationTokenSource();
+                Volatile.Write(ref _exclusiveWorkCts, folderCts);
+                try
+                {
+                    await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Newer folder/full request may re-queue below.
+                }
+                finally
+                {
+                    Interlocked.CompareExchange(ref _exclusiveWorkCts, null, folderCts);
+                    folderCts.Dispose();
+                }
             }
 
             while (Interlocked.Exchange(ref _deferredFullSync, 0) == 1)
@@ -280,18 +341,49 @@ public sealed class CloudMappedSyncCoordinator
                 }
                 catch (OperationCanceledException)
                 {
-                    // Coalesced cancel from a newer full-sync request — loop may run again.
+                    // Coalesced cancel from a newer folder Sync — loop may run folder drain again.
                 }
                 finally
                 {
                     Interlocked.CompareExchange(ref _exclusiveWorkCts, null, fullCts);
                     fullCts.Dispose();
                 }
+
+                // Folder Sync requested while draining full — run it before exiting the lane.
+                while (Interlocked.Exchange(ref _deferredFolderSync, 0) == 1)
+                {
+                    Guid folderId;
+                    string localPath;
+                    lock (_deferredFolderGate)
+                    {
+                        folderId = _deferredFolderId;
+                        localPath = _deferredFolderPath;
+                    }
+
+                    var folderCts = new CancellationTokenSource();
+                    Volatile.Write(ref _exclusiveWorkCts, folderCts);
+                    try
+                    {
+                        await SynchronizeFolderBodyAsync(folderId, localPath, folderCts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // ignore
+                    }
+                    finally
+                    {
+                        Interlocked.CompareExchange(ref _exclusiveWorkCts, null, folderCts);
+                        folderCts.Dispose();
+                    }
+                }
             }
         }
         finally
         {
             linked?.Dispose();
+            if (budgeted)
+                Interlocked.Exchange(ref _budgetedExclusive, 0);
             Interlocked.CompareExchange(ref _exclusiveWorkCts, null, workCts);
             workCts.Dispose();
             Interlocked.Exchange(ref _syncActive, 0);
@@ -382,4 +474,7 @@ public sealed class CloudMappedSyncCoordinator
 
     /// <summary>Test observation: deferred full sync coalesced.</summary>
     internal bool HasDeferredFullSyncForTests => Volatile.Read(ref _deferredFullSync) != 0;
+
+    /// <summary>Test observation: deferred per-folder Sync coalesced.</summary>
+    internal bool HasDeferredFolderSyncForTests => Volatile.Read(ref _deferredFolderSync) != 0;
 }

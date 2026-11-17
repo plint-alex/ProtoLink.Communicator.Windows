@@ -117,7 +117,7 @@ public class MappedSyncAutopushStarveTests
     }
 
     [Fact]
-    public async Task ManualSync_WhilePushActive_EscalatesToDeferredFull()
+    public async Task ManualSync_WhilePushActive_DefersFolderNotAllMaps()
     {
         var root = Path.Combine(Path.GetTempPath(), "pl-autopush-manual-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -156,8 +156,61 @@ public class MappedSyncAutopushStarveTests
             await pushTask.WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.True(fake.PushWasCancelled);
-            Assert.Equal(1, fake.SynchronizeAllCount);
-            Assert.Equal(0, fake.SynchronizeOneCount);
+            // 1.0.76 hang class: Sync-while-Syncing must NOT escalate to SynchronizeAll.
+            Assert.Equal(0, fake.SynchronizeAllCount);
+            Assert.Equal(1, fake.SynchronizeOneCount);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
+    public async Task RequestFullSync_WhileUnlimitedFullActive_CoalescesWithoutCancel()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-full-coalesce-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new HangThenFullFake { HangSynchronizeAll = true };
+            var mappings = new ObservableCollection<CloudSyncMapping>
+            {
+                new()
+                {
+                    CloudFolderId = Guid.NewGuid(),
+                    LocalPath = root,
+                    CloudFolderName = "test-map"
+                }
+            };
+
+            var coordinator = new CloudMappedSyncCoordinator(
+                fake,
+                new CloudApiService(new HttpClient()),
+                mappings,
+                reloadCurrentFolderAsync: () => Task.CompletedTask,
+                setStatus: _ => { },
+                syncFullErrorReporter: null,
+                dispatcher: null,
+                isAuthenticated: () => true,
+                getUserId: () => null,
+                onAuthRequired: null,
+                onSyncCompleted: null,
+                startInterval: false);
+
+            var fullTask = coordinator.RequestFullSyncAsync();
+            await fake.FullStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(coordinator.IsSyncActiveForTests);
+
+            var second = coordinator.RequestFullSyncAsync();
+            Assert.True(second.IsCompleted);
+            Assert.True(coordinator.HasDeferredFullSyncForTests);
+            Assert.False(fake.FullWasCancelled);
+
+            fake.ReleaseFull.TrySetResult();
+            await fullTask.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(2, fake.SynchronizeAllCount);
+            Assert.False(coordinator.IsSyncActiveForTests);
         }
         finally
         {
@@ -170,11 +223,15 @@ public class MappedSyncAutopushStarveTests
         public HangThenFullFake() : base(new CloudApiService(new HttpClient())) { }
 
         public TaskCompletionSource PushStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FullStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFull { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool PushWasCancelled { get; private set; }
+        public bool FullWasCancelled { get; private set; }
         public int SynchronizeAllCount { get; private set; }
         public int SynchronizeOneCount { get; private set; }
         public int PushCompletedCount { get; private set; }
         public bool AllowPushToCompleteImmediately { get; set; }
+        public bool HangSynchronizeAll { get; set; }
 
         public override async Task<int> PushLocalChangesAllAsync(
             IEnumerable<CloudSyncMapping> mappings,
@@ -206,7 +263,7 @@ public class MappedSyncAutopushStarveTests
             return 0;
         }
 
-        public override Task<bool> SynchronizeAllAsync(
+        public override async Task<bool> SynchronizeAllAsync(
             IEnumerable<CloudSyncMapping> mappings,
             Action<string> reportStatus,
             Action<Exception>? reportFullError,
@@ -215,8 +272,22 @@ public class MappedSyncAutopushStarveTests
         {
             reportStatus("Syncing…");
             SynchronizeAllCount++;
+            FullStarted.TrySetResult();
+            if (HangSynchronizeAll)
+            {
+                try
+                {
+                    await ReleaseFull.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    FullWasCancelled = true;
+                    throw;
+                }
+            }
+
             reportStatus("Sync complete.");
-            return Task.FromResult(true);
+            return true;
         }
 
         public override Task<bool> SynchronizeAsync(

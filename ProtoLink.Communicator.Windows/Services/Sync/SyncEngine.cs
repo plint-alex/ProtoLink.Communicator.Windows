@@ -28,8 +28,6 @@ public sealed class SyncEngine
         IReadOnlyList<SyncMappingInfo> mappings,
         CancellationToken ct)
     {
-        var dirtyByMapping = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-
         foreach (var mapping in mappings)
         {
             ct.ThrowIfCancellationRequested();
@@ -40,6 +38,7 @@ public sealed class SyncEngine
         }
 
         var remoteLocated = new List<RemoteLocated>();
+        // Walk all mappings first so ApplyRemote can see cross-mapping renames.
         foreach (var mapping in mappings)
             await WalkRemoteAsync(mapping.CloudFolderId, mapping.Id, "", remoteLocated, ct);
 
@@ -47,25 +46,19 @@ public sealed class SyncEngine
 
         // Always hash-compare every mapped file so all devices converge to the same bytes.
         await EnrichRemoteSizesAsync(remoteLocated, ct);
+        // Per-mapping Compare→Remote→Local→LastSync: do not wait for sibling maps' Apply*
+        // before stamping (SynchronizeAll across ~15 roots left MyNotesFolder LastSync idle
+        // past 15m on 1.0.76 after values-light WalkRemote).
         foreach (var mapping in mappings)
         {
             ct.ThrowIfCancellationRequested();
             var dirty = new HashSet<string>(StringComparer.Ordinal);
             await ApplyComparePhaseAsync(mapping, remoteLocated, dirty, ct);
-            dirtyByMapping[mapping.Id] = dirty;
-        }
-        // Cloud materialize before local upload so polluted Notes trees (local junk) cannot
-        // starve / timeout the pass before missing remote children are filled (cloud-wins).
-        foreach (var mapping in mappings)
-        {
-            ct.ThrowIfCancellationRequested();
-            await ApplyRemotePhaseAsync(mapping, byId, remoteLocated, dirtyByMapping[mapping.Id], ct);
-        }
-        foreach (var mapping in mappings)
-        {
-            ct.ThrowIfCancellationRequested();
+            // Cloud materialize before local upload so polluted Notes trees (local junk) cannot
+            // starve / timeout the pass before missing remote children are filled (cloud-wins).
+            await ApplyRemotePhaseAsync(mapping, byId, remoteLocated, dirty, ct);
             var remoteForMapping = remoteLocated.Where(x => x.MappingId == mapping.Id).ToList();
-            await ApplyLocalPhaseAsync(mapping, dirtyByMapping[mapping.Id], skipSizeUpdates: true, remoteForMapping, ct);
+            await ApplyLocalPhaseAsync(mapping, dirty, skipSizeUpdates: true, remoteForMapping, ct);
             _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
         }
     }
