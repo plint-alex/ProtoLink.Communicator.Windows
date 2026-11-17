@@ -68,7 +68,13 @@ public partial class MainWindow : Window
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        _cloudHttpClient = new HttpClient(cloudSyncHandler) { BaseAddress = new Uri(settings.ApiBaseAddress) };
+        // Explicit timeout (default 100s) so a blackholed GetEntities/getFile cannot hang
+        // exclusive sync forever; coordinator still distinguishes preempt cancel via CTS.
+        _cloudHttpClient = new HttpClient(cloudSyncHandler)
+        {
+            BaseAddress = new Uri(settings.ApiBaseAddress),
+            Timeout = TimeSpan.FromSeconds(100)
+        };
         var noteRemoteIdResolver = new ProtoLink.Communicator.Windows.Services.Notes.NoteRemoteIdResolver(_syncStore);
         var notesShareApi = new CloudApiService(_cloudHttpClient);
         _notesViewModel = new NotesViewModel(

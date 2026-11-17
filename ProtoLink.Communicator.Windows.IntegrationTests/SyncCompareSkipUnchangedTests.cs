@@ -146,14 +146,42 @@ public class SyncCompareSkipUnchangedTests
     }
 
     [Fact]
-    public void DevTools_SkipsBinaryFileTransferPaths()
+    public void DevTools_OmitsBodiesForFileTransferAndGetEntities()
     {
         using var get = new HttpRequestMessage(HttpMethod.Get, "https://protolink.ru/api/Files/getFile/" + Guid.NewGuid());
         using var add = new HttpRequestMessage(HttpMethod.Post, "https://protolink.ru/api/Files/addFile");
         using var entities = new HttpRequestMessage(HttpMethod.Post, "https://protolink.ru/api/Entities/GetEntities");
-        Assert.True(DevToolsLoggingHandler.IsBinaryFileTransfer(get));
-        Assert.True(DevToolsLoggingHandler.IsBinaryFileTransfer(add));
-        Assert.False(DevToolsLoggingHandler.IsBinaryFileTransfer(entities));
+        using var version = new HttpRequestMessage(HttpMethod.Get, "https://protolink.ru/api/Version");
+        Assert.True(DevToolsLoggingHandler.ShouldOmitBodyForLogging(get));
+        Assert.True(DevToolsLoggingHandler.ShouldOmitBodyForLogging(add));
+        // WalkRemote floods GetEntities — must omit like getFile (1.0.74 quiet-meta hang class).
+        Assert.True(DevToolsLoggingHandler.ShouldOmitBodyForLogging(entities));
+        Assert.True(DevToolsLoggingHandler.IsBinaryFileTransfer(entities));
+        Assert.False(DevToolsLoggingHandler.ShouldOmitBodyForLogging(version));
+    }
+
+    [Fact]
+    public void SnapshotFs_ReconcilePath_SkipsContentHashes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-snap-skip-hash-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "note.html");
+        File.WriteAllText(path, "snapshot-size-only-body");
+        try
+        {
+            var withHash = SyncEngine.SnapshotFs(root, computeContentHashes: true);
+            var fileWith = Assert.Single(withHash, e => !e.IsFolder);
+            Assert.False(string.IsNullOrEmpty(fileWith.ContentHash));
+
+            var sizeOnly = SyncEngine.SnapshotFs(root, computeContentHashes: false);
+            var fileOnly = Assert.Single(sizeOnly, e => !e.IsFolder);
+            Assert.Equal(fileWith.SizeBytes, fileOnly.SizeBytes);
+            Assert.Equal("", fileOnly.ContentHash);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
     }
 
     private sealed class CountingGetFileHandler : HttpMessageHandler

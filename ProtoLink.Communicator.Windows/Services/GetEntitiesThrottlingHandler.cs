@@ -21,7 +21,13 @@ public sealed class GetEntitiesThrottlingHandler : DelegatingHandler
         Sync
     }
 
-    private static readonly SemaphoreSlim SyncGate = new(2, 2);
+    /// <summary>
+    /// Sync-lane GetEntities concurrency. Keep aligned with <c>SyncEngine</c> WalkRemote throttle.
+    /// Cap 2 left MyNotesFolder (~3.5k folders) WalkRemote outside the 15m LastSync budget.
+    /// </summary>
+    internal const int SyncLaneConcurrency = 8;
+
+    private static readonly SemaphoreSlim SyncGate = new(SyncLaneConcurrency, SyncLaneConcurrency);
 
     private readonly Lane _lane;
 

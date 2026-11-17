@@ -24,9 +24,10 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
         var url = request.RequestUri?.ToString() ?? "";
         var sw = Stopwatch.StartNew();
 
-        // File upload/download bodies are large/binary — buffering them UTF-8-decodes every
-        // getFile during ApplyComparePhase and stalls mapped Sync (idle Syncing, no LastSync).
-        var skipBodies = IsBinaryFileTransfer(request);
+        // Large sync payloads: buffering UTF-8-decodes every getFile/addFile AND every
+        // GetEntities folder listing. MyNotesFolder WalkRemote (~3.5k folders) was stalling
+        // LastSync (≥15m idle Syncing, quiet meta, shrinking WS) while DevTools copied bodies.
+        var skipBodies = ShouldOmitBodyForLogging(request);
 
         string? requestPreview = null;
         if (skipBodies)
@@ -98,12 +99,21 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
         }
     }
 
-    internal static bool IsBinaryFileTransfer(HttpRequestMessage request)
+    /// <summary>True when request/response bodies must not be buffered into DevTools.</summary>
+    internal static bool ShouldOmitBodyForLogging(HttpRequestMessage request)
     {
         var path = request.RequestUri?.AbsolutePath ?? "";
-        return path.Contains("/Files/getFile", StringComparison.OrdinalIgnoreCase)
-               || path.Contains("/Files/addFile", StringComparison.OrdinalIgnoreCase);
+        if (path.Contains("/Files/getFile", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("/Files/addFile", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Same omit class as getFile: WalkRemote floods GetEntities; full-body log copies
+        // starve mapped Sync before SetLastSyncUtc (1.0.74 quiet-meta sticky Syncing).
+        return path.EndsWith("/Entities/GetEntities", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Backward-compatible alias for file-transfer omit detection.</summary>
+    internal static bool IsBinaryFileTransfer(HttpRequestMessage request) =>
+        ShouldOmitBodyForLogging(request);
 
     private static string FormatRequestHeaders(HttpRequestMessage request)
     {

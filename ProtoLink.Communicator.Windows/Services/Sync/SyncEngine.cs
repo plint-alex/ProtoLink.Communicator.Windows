@@ -384,7 +384,9 @@ public sealed class SyncEngine
         CancellationToken ct)
     {
         var applied = 0;
-        var snap = SnapshotFs(mapping.LocalRootPath);
+        // Reconcile: ApplyCompare already hash-verified content — size/structure snapshot only.
+        // Push: need ContentHash so same-size local edits still classify as Updated.
+        var snap = SnapshotFs(mapping.LocalRootPath, computeContentHashes: !skipSizeUpdates);
         var meta = _store.GetAll(mapping.Id);
         var changes = _localClassifier.Classify(snap, meta);
         // Cloud can list the same display name twice (or multi-parent graphs); keep newest.
@@ -827,10 +829,11 @@ public sealed class SyncEngine
     {
         visitedIds ??= new HashSet<Guid>();
         seenPaths ??= new HashSet<string>(StringComparer.Ordinal);
-        // Parallel folder listings: MyNotesFolder has many children and sequential
-        // GetEntities(includeValues) was taking minutes (70–95 entities per notes folder).
+        // Parallel folder listings: MyNotesFolder has ~3.5k folders; concurrency 2 + DevTools
+        // body buffering left WalkRemote outside the 15m LastSync budget (idle Syncing).
+        // Keep aligned with GetEntitiesThrottlingHandler.SyncLaneConcurrency.
         var gate = new object();
-        using var throttle = new SemaphoreSlim(2);
+        using var throttle = new SemaphoreSlim(GetEntitiesThrottlingHandler.SyncLaneConcurrency);
         await WalkRemoteParallelAsync(
             folderId, mappingId, relativeParent, outList, ct, visitedIds, seenPaths, gate, throttle);
     }
@@ -1044,8 +1047,10 @@ public sealed class SyncEngine
     /// <summary>
     /// Single-pass FS snapshot: one file enumeration + ancestor folder size rollup.
     /// Legacy per-directory recursive GetFiles was O(dirs×files) and starved Sync on large trees.
+    /// When <paramref name="computeContentHashes"/> is false (reconcile local phase), skip SHA-256 —
+    /// content convergence already ran in ApplyCompare; hashing ~675MB MyNotesFolder again starved LastSync.
     /// </summary>
-    public static List<FsEntry> SnapshotFs(string rootPath)
+    public static List<FsEntry> SnapshotFs(string rootPath, bool computeContentHashes = true)
     {
         var result = new List<FsEntry>();
         if (!Directory.Exists(rootPath)) return result;
@@ -1082,12 +1087,23 @@ public sealed class SyncEngine
             try
             {
                 var info = new FileInfo(file);
-                var hash = ContentHashUtil.TrySha256HexFile(file);
-                if (hash == null)
+                string hash = "";
+                if (computeContentHashes)
+                {
+                    var hashed = ContentHashUtil.TrySha256HexFile(file);
+                    if (hashed == null)
+                    {
+                        SyncMissingLocalPath.Log("SnapshotFs", rel, file);
+                        continue;
+                    }
+                    hash = hashed;
+                }
+                else if (!File.Exists(file))
                 {
                     SyncMissingLocalPath.Log("SnapshotFs", rel, file);
                     continue;
                 }
+
                 result.Add(new FsEntry
                 {
                     RelativePath = rel,
