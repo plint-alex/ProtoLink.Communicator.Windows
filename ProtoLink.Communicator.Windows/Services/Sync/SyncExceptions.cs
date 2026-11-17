@@ -37,16 +37,3 @@ public class SyncException : Exception
         return string.Join(" | ", parts);
     }
 }
-
-public sealed class SyncConflictException : SyncException
-{
-    public SyncConflictException(
-        string relativePath,
-        string localHash,
-        string remoteHash,
-        string? metaHash,
-        string reason)
-        : base(reason, relativePath, localHash, remoteHash, metaHash)
-    {
-    }
-}

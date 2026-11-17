@@ -6,7 +6,7 @@ namespace ProtoLink.Communicator.Windows.Services.Sync;
 /// </summary>
 public static class SyncDirectionDecide
 {
-    public enum Action { Write, Read, Skip, Conflict }
+    public enum Action { Write, Read, Skip }
 
     public static Action Decide(
         long? localSize,

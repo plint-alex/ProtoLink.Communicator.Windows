@@ -6,7 +6,7 @@ using ProtoLink.Communicator.Windows.Services;
 namespace ProtoLink.Communicator.Windows.Services.Sync;
 
 /// <summary>3-way reconcile: FS ↔ metadata store ↔ remote. Cloud-first materialize; mirrors Android SyncEngine.</summary>
-public sealed class SyncEngine
+public sealed partial class SyncEngine
 {
     private readonly JsonSyncMetadataStore _store;
     private readonly CloudApiService _api;
@@ -83,7 +83,9 @@ public sealed class SyncEngine
         foreach (var mapping in mappings)
         {
             if (!Directory.Exists(mapping.LocalRootPath)) continue;
-            if (_store.GetAll(mapping.Id).Count == 0)
+            var meta = _store.GetAll(mapping.Id);
+            // Empty OR folders-only (partial mkdir bootstrap) → full reconcile before push.
+            if (meta.Count == 0 || meta.All(m => m.IsFolder))
                 needFull.Add(mapping);
             else
                 ready.Add(mapping);
@@ -275,17 +277,6 @@ public sealed class SyncEngine
                         if (located.Entry.UpdateTime is DateTime listed)
                             meta.RemoteUpdateTime = listed;
                         _store.Upsert(meta);
-                        break;
-                    }
-                    case SyncDirectionDecide.Action.Conflict:
-                    {
-                        // DecideByHash no longer returns Conflict (cloud-wins Read); keep as Read.
-                        await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                        meta.SizeBytes = remoteBytes.Length;
-                        meta.ContentHash = remoteHash;
-                        meta.RemoteUpdateTime = located.Entry.UpdateTime ?? DateTime.UtcNow;
-                        _store.Upsert(meta);
-                        dirty.Add(path);
                         break;
                     }
                 }
@@ -574,7 +565,7 @@ public sealed class SyncEngine
                         }
                         else
                         {
-                            // Read / Skip / Conflict(legacy) → adopt cloud bytes when hashes differ.
+                            // Read / Skip → adopt cloud bytes when hashes differ (cloud-wins).
                             if (action != SyncDirectionDecide.Action.Skip)
                                 await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
                             _store.Upsert(new SyncItemMeta
@@ -1228,57 +1219,6 @@ public sealed class SyncEngine
     /// <summary>Overwrite local FS with all remote files for a mapping; meta follows remote.</summary>
     public Task ForcePullMappingAsync(SyncMappingInfo mapping, CancellationToken ct = default) =>
         _store.RunInBatchAsync(() => ForcePullMappingCoreAsync(mapping, ct));
-
-    private async Task ForcePullMappingCoreAsync(SyncMappingInfo mapping, CancellationToken ct)
-    {
-        Directory.CreateDirectory(mapping.LocalRootPath);
-        var located = new List<RemoteLocated>();
-        await WalkRemoteAsync(mapping.CloudFolderId, mapping.Id, "", located, ct);
-
-        foreach (var loc in located.OrderBy(l => l.RelativePath.Count(c => c == '/')))
-        {
-            ct.ThrowIfCancellationRequested();
-            var path = SyncPathUtil.Normalize(loc.RelativePath);
-            var full = ToFull(mapping.LocalRootPath, path);
-            if (loc.Entry.IsFolder)
-            {
-                Directory.CreateDirectory(full);
-                _store.Upsert(new SyncItemMeta
-                {
-                    MappingId = mapping.Id,
-                    RemoteId = loc.Entry.Id,
-                    ParentRemoteId = loc.Entry.ParentId,
-                    RelativePath = path,
-                    IsFolder = true,
-                    SizeBytes = 0,
-                    ContentHash = "",
-                    RemoteUpdateTime = loc.Entry.UpdateTime ?? DateTime.UtcNow
-                });
-                continue;
-            }
-
-            var bytes = await DownloadBytesOrNullAsync(loc.Entry.Id, ct);
-            if (bytes == null)
-                throw new SyncException("Force download failed: remote file missing.", relativePath: path);
-            if (bytes.Length == 0)
-                throw new SyncException("Force download returned empty file.", relativePath: path);
-
-            await MappedFolderIoGate.WriteAllBytesAsync(full, bytes, ct);
-            _store.Upsert(new SyncItemMeta
-            {
-                MappingId = mapping.Id,
-                RemoteId = loc.Entry.Id,
-                ParentRemoteId = loc.Entry.ParentId,
-                RelativePath = path,
-                IsFolder = false,
-                SizeBytes = bytes.Length,
-                ContentHash = ContentHashUtil.Sha256Hex(bytes),
-                RemoteUpdateTime = loc.Entry.UpdateTime ?? DateTime.UtcNow
-            });
-        }
-
-        _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
-    }
 
     /// <summary>
     /// Single-pass FS snapshot: one file enumeration + ancestor folder size rollup.

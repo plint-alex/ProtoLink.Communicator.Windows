@@ -70,10 +70,14 @@ Local-only push does **not** download or Conflict-check remote; it uploads when 
 ## Force repair
 
 - **Upload all** — overwrite server from local; meta follows local; notifies other devices.
-- **Download all** — overwrite local from server; meta follows remote.
+- **Download all** — overwrite local from server; meta follows remote; prune local paths absent on remote.
 
 **Windows:** Cloud tab → Synced folders (expanded) → Upload all / Download all.  
 **Android:** Settings → Mapped folders → Upload all / Download all (confirm dialog + status line).
+
+**Parity note (2026-11-18 FE `P1-20261118-win-android-cloud-sync-fix-tests`):** Win+Android Force Download share progressive semantics (structure+name waves → mkdir → early ghost prune → AC-priority deepen → deferred root getFile; null getFile soft-fail per item / NFR-SYNC-1). PushLocal upgrades empty **or folders-only** meta to full reconcile. Legacy `Action.Conflict` / `SyncConflictException` removed (cloud-wins Read). Win heal twin map (`D-HEAL-WIN`) remains a Remaining child. Daily Sync cloud-first is Win-ACCEPTED (1.0.78+); Force Win ships in **1.0.82**.
+
+**Agents architecture:** `docs/architecture/sync-mechanisms` (map → hash reconcile → Force; NFR-SYNC-1; defect audit).
 
 ## Disk access while syncing
 
