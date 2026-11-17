@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Services.Sync;
 
 namespace ProtoLink.Communicator.Windows.Services;
 
@@ -12,12 +13,15 @@ namespace ProtoLink.Communicator.Windows.Services;
 /// Interval push is time-budgeted and cancelled when a full sync is requested so LastSync is not starved.
 /// Manual per-folder Sync while busy defers that folder (not SynchronizeAll) and may cancel the lane holder.
 /// SignalR full while an unlimited reconcile runs coalesces without cancel+restart.
+/// Same-named CloudFolder heal (prefer-populated + cross-CloudRoot) runs before Sync/Force start.
 /// </summary>
 public sealed class CloudMappedSyncCoordinator
 {
     private readonly CloudFolderSynchronizer _folderSynchronizer;
     private readonly CloudApiService _api;
     private readonly ObservableCollection<CloudSyncMapping> _syncMappings;
+    private readonly ISyncMappingStore? _syncStore;
+    private readonly SameNamedCloudFolderHealRunner _healRunner;
     private readonly Func<Task> _reloadCurrentFolderAsync;
     private readonly Action<string> _setStatus;
     private readonly Action<Exception>? _syncFullErrorReporter;
@@ -51,7 +55,9 @@ public sealed class CloudMappedSyncCoordinator
         Func<bool>? isAuthenticated = null,
         Func<string?>? getUserId = null,
         Action? onAuthRequired = null,
-        Action? onSyncCompleted = null)
+        Action? onSyncCompleted = null,
+        ISyncMappingStore? syncStore = null,
+        SameNamedCloudFolderHealRunner? healRunner = null)
         : this(
             folderSynchronizer,
             api,
@@ -64,7 +70,9 @@ public sealed class CloudMappedSyncCoordinator
             getUserId,
             onAuthRequired,
             onSyncCompleted,
-            startInterval: true)
+            startInterval: true,
+            syncStore,
+            healRunner)
     {
     }
 
@@ -81,11 +89,15 @@ public sealed class CloudMappedSyncCoordinator
         Func<string?>? getUserId,
         Action? onAuthRequired,
         Action? onSyncCompleted,
-        bool startInterval = true)
+        bool startInterval = true,
+        ISyncMappingStore? syncStore = null,
+        SameNamedCloudFolderHealRunner? healRunner = null)
     {
         _folderSynchronizer = folderSynchronizer;
         _api = api;
         _syncMappings = syncMappings;
+        _syncStore = syncStore;
+        _healRunner = healRunner ?? new SameNamedCloudFolderHealRunner(api);
         _reloadCurrentFolderAsync = reloadCurrentFolderAsync;
         _setStatus = setStatus;
         _syncFullErrorReporter = syncFullErrorReporter;
@@ -172,8 +184,11 @@ public sealed class CloudMappedSyncCoordinator
         _ = Task.Run(() => RunExclusiveAsync(async ct =>
         {
             if (!EnsureAuthenticatedForSync()) return;
+            await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
+            var current = ResolveMappingAfterHeal(mapping);
+            if (current == null) return;
             var ok = await _folderSynchronizer.ForcePushAsync(
-                mapping,
+                current,
                 s => _ = MarshalFireAndForget(() => _setStatus(s)),
                 _syncFullErrorReporter,
                 _onAuthRequired,
@@ -190,8 +205,11 @@ public sealed class CloudMappedSyncCoordinator
         _ = Task.Run(() => RunExclusiveAsync(async ct =>
         {
             if (!EnsureAuthenticatedForSync()) return;
+            await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
+            var current = ResolveMappingAfterHeal(mapping);
+            if (current == null) return;
             await _folderSynchronizer.ForcePullAsync(
-                mapping,
+                current,
                 s => _ = MarshalFireAndForget(() => _setStatus(s)),
                 _syncFullErrorReporter,
                 _onAuthRequired,
@@ -394,6 +412,7 @@ public sealed class CloudMappedSyncCoordinator
     private async Task SynchronizeAllBodyAsync(CancellationToken ct)
     {
         if (!EnsureAuthenticatedForSync()) return;
+        await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
 
         await _folderSynchronizer.SynchronizeAllAsync(
             _syncMappings.ToList(),
@@ -411,20 +430,84 @@ public sealed class CloudMappedSyncCoordinator
     private async Task SynchronizeFolderBodyAsync(Guid folderId, string localPath, CancellationToken ct)
     {
         if (!EnsureAuthenticatedForSync()) return;
+        await HealSameNamedMappingsAsync(ct).ConfigureAwait(false);
+        var healedId = folderId;
+        var healedPath = localPath;
+        var byLocal = _syncMappings.FirstOrDefault(m =>
+            string.Equals(
+                Path.GetFullPath(m.LocalPath),
+                Path.GetFullPath(localPath),
+                StringComparison.OrdinalIgnoreCase));
+        if (byLocal != null)
+        {
+            healedId = byLocal.CloudFolderId;
+            healedPath = byLocal.LocalPath;
+        }
 
         await _folderSynchronizer.SynchronizeAsync(
-            folderId,
-            localPath,
+            healedId,
+            healedPath,
             msg => { _ = MarshalFireAndForget(() => _setStatus(msg)); },
             _syncFullErrorReporter,
             () => _ = MarshalFireAndForget(() => _onAuthRequired?.Invoke()),
-            mappedLocalRootPath: localPath,
+            mappedLocalRootPath: healedPath,
             cancellationToken: ct);
 
         await MarshalAsync(_reloadCurrentFolderAsync);
 
         try { _onSyncCompleted?.Invoke(); }
         catch { /* ignore */ }
+    }
+
+    /// <summary>Android parity: heal before Sync/Force so twin maps converge on prefer-populated id.</summary>
+    private async Task HealSameNamedMappingsAsync(CancellationToken ct)
+    {
+        if (_syncStore == null || _syncMappings.Count == 0) return;
+        var userRaw = _getUserId();
+        if (string.IsNullOrWhiteSpace(userRaw) || !Guid.TryParse(userRaw, out var userId) || userId == Guid.Empty)
+            return;
+        try
+        {
+            var snapshot = _syncMappings.ToList();
+            var result = await _healRunner.TryHealAsync(snapshot, userId, ct).ConfigureAwait(false);
+            if (result is null) return;
+            var healed = result.Value.Healed;
+            void Apply()
+            {
+                _syncMappings.Clear();
+                foreach (var m in healed)
+                    _syncMappings.Add(m);
+                _syncStore.Save(_syncMappings);
+            }
+
+            if (_dispatcher != null)
+                await _dispatcher.InvokeAsync(Apply);
+            else
+                Apply();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"same-named heal soft-fail: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private CloudSyncMapping? ResolveMappingAfterHeal(CloudSyncMapping requested)
+    {
+        var byLocal = _syncMappings.FirstOrDefault(m =>
+            !string.IsNullOrWhiteSpace(m.LocalPath)
+            && !string.IsNullOrWhiteSpace(requested.LocalPath)
+            && string.Equals(
+                Path.GetFullPath(m.LocalPath),
+                Path.GetFullPath(requested.LocalPath),
+                StringComparison.OrdinalIgnoreCase));
+        if (byLocal != null) return byLocal;
+        return _syncMappings.FirstOrDefault(m => m.CloudFolderId == requested.CloudFolderId)
+               ?? requested;
     }
 
     private async Task NotifyDataChangedAsync()

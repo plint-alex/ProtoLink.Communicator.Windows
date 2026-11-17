@@ -110,7 +110,9 @@ public partial class CloudViewModel : ViewModelBase
             onSyncCompleted: () =>
             {
                 try { onAfterMappedSync?.Invoke(); } catch { /* ignore */ }
-            });
+            },
+            syncStore: _syncStore,
+            healRunner: new Services.Sync.SameNamedCloudFolderHealRunner(syncApi));
         ShareSheet = new ShareSheetViewModel(
             _api,
             () => _settingsService.LoadSettings().UiLanguage,

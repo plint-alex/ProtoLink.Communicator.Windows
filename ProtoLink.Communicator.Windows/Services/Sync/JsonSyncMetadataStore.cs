@@ -259,6 +259,32 @@ public sealed class JsonSyncMetadataStore
         }
     }
 
+    /// <summary>
+    /// Drop all meta + LastSync for a mapping id (e.g. after same-named heal remaps CloudFolderId).
+    /// </summary>
+    public void ClearMapping(string mappingId)
+    {
+        if (string.IsNullOrWhiteSpace(mappingId)) return;
+        EnsureLoaded();
+        lock (_gate)
+        {
+            var keys = _items
+                .Where(kv => string.Equals(kv.Value.MappingId, mappingId, StringComparison.OrdinalIgnoreCase))
+                .Select(kv => kv.Key)
+                .ToList();
+            foreach (var k in keys)
+                _items.Remove(k);
+            _lastSync.Remove(mappingId);
+            // Case-insensitive LastSync key variant
+            var lastKeys = _lastSync.Keys
+                .Where(k => string.Equals(k, mappingId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var k in lastKeys)
+                _lastSync.Remove(k);
+            MarkDirtyOrSaveUnlocked();
+        }
+    }
+
     public void SetLastSyncUtc(string mappingId, DateTime utc)
     {
         EnsureLoaded();

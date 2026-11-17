@@ -6,6 +6,7 @@ using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Services.Sync;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -169,9 +170,32 @@ public partial class CloudViewModel
             if (choice.CreateNew)
             {
                 var name = choice.NewFolderName!.Trim();
-                folderId = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, name)
-                    .ConfigureAwait(true);
-                folderName = name;
+                // Never mint a second same-named CloudFolder (dual MyNotesFolder FAIL class).
+                // Cross-CloudRoot: another client may already have the name under Drive.
+                var userId = _authService.CurrentToken?.UserId ?? Guid.Empty;
+                var heal = new SameNamedCloudFolderHealRunner(_api);
+                var existing = SameNamedCloudFolderHeal.PreferExistingSameName(
+                    name,
+                    await heal.LoadChildFolderSiblingsForDiscoveryAsync(
+                            parentId,
+                            userId,
+                            mustIncludeRootIds: null,
+                            onlyNamesLower: new HashSet<string>(StringComparer.Ordinal)
+                            {
+                                name.ToLowerInvariant()
+                            })
+                        .ConfigureAwait(true));
+                if (existing is { } hit)
+                {
+                    folderId = hit.Id;
+                    folderName = string.IsNullOrWhiteSpace(hit.Name) ? name : hit.Name;
+                }
+                else
+                {
+                    folderId = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, name)
+                        .ConfigureAwait(true);
+                    folderName = name;
+                }
             }
             else
             {
@@ -258,28 +282,31 @@ public partial class CloudViewModel
     }
 
     /// <summary>
-    /// First page only + soft-fail: bloated CloudRoot must not block the create-new path (AT-MAP-2).
+    /// Soft-fail discover (parent + cross-CloudRoot same-name merge): bloated CloudRoot must not
+    /// block create-then-map (AT-MAP-2). Duplicate names get short-id labels.
     /// </summary>
     private async Task<IReadOnlyList<MapLocalFolderCandidate>> LoadUnmappedChildFoldersAsync(Guid parentId)
     {
         try
         {
-            var list = await _api.GetEntitiesAsync(
-                    new[] { parentId },
-                    includeValues: true,
-                    maxPages: CloudApiService.InteractiveListingMaxPages)
+            var userId = _authService.CurrentToken?.UserId ?? Guid.Empty;
+            var heal = new SameNamedCloudFolderHealRunner(_api);
+            var siblings = await heal.LoadChildFolderSiblingsForDiscoveryAsync(parentId, userId)
                 .ConfigureAwait(true);
             var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            var names = siblings.Select(s => s.Name).ToList();
             var result = new List<MapLocalFolderCandidate>();
-            foreach (var e in list ?? Enumerable.Empty<GetEntitiesResult>())
+            foreach (var s in siblings
+                         .OrderByDescending(x => x.ImmediateChildCount)
+                         .ThenBy(x => x.CreationTime ?? "")
+                         .ThenBy(x => x.Id))
             {
-                if (e.Code != CloudEntityCodes.CloudFolder) continue;
-                if (mapped.Contains(e.Id)) continue;
-                if (IsFolderSynced(e.Id)) continue;
+                if (mapped.Contains(s.Id)) continue;
+                if (IsFolderSynced(s.Id)) continue;
                 result.Add(new MapLocalFolderCandidate
                 {
-                    Id = e.Id,
-                    Name = CloudApiService.GetDisplayName(e)
+                    Id = s.Id,
+                    Name = SameNamedCloudFolderHeal.DisplayLabel(s.Name, s.Id, names)
                 });
             }
 
