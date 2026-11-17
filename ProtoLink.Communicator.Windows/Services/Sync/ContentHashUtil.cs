@@ -43,6 +43,27 @@ public static class ContentHashUtil
         && !string.IsNullOrEmpty(localHash)
         && !string.Equals(metaHash, localHash, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Skip getFile probe when local bytes still match the last-sync baseline and the remote
+    /// listing is not newer. Avoids re-downloading every file on large mapped trees (MyNotesFolder
+    /// ~10k) so deferred full Sync after autopush preempt can stamp LastSync in-bounds.
+    /// </summary>
+    public static bool CanSkipRemoteContentDownload(
+        string localHash,
+        string? metaHash,
+        DateTime? remoteUpdateTime,
+        DateTime? metaUpdateTime)
+    {
+        if (string.IsNullOrEmpty(localHash) || string.IsNullOrEmpty(metaHash))
+            return false;
+        if (!string.Equals(localHash, metaHash, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (remoteUpdateTime is DateTime remote && metaUpdateTime is DateTime meta)
+            return !IsUtcNewer(remote, meta);
+        // Listing omitted UpdateTime — trust baseline; Force Download repairs divergence.
+        return remoteUpdateTime is null;
+    }
+
     public static bool IsUtcNewer(DateTime remote, DateTime meta)
     {
         static long Ticks(DateTime dt) =>

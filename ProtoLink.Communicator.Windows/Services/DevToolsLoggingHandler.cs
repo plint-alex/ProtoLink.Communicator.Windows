@@ -24,14 +24,23 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
         var url = request.RequestUri?.ToString() ?? "";
         var sw = Stopwatch.StartNew();
 
+        // File upload/download bodies are large/binary — buffering them UTF-8-decodes every
+        // getFile during ApplyComparePhase and stalls mapped Sync (idle Syncing, no LastSync).
+        var skipBodies = IsBinaryFileTransfer(request);
+
         string? requestPreview = null;
-        try
+        if (skipBodies)
+            requestPreview = "[binary body omitted]";
+        else
         {
-            requestPreview = await BufferRequestContentForLoggingAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            requestPreview = $"[could not read request: {ex.Message}]";
+            try
+            {
+                requestPreview = await BufferRequestContentForLoggingAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                requestPreview = $"[could not read request: {ex.Message}]";
+            }
         }
 
         var requestHeadersText = FormatRequestHeaders(request);
@@ -43,15 +52,20 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
             var code = (int)response.StatusCode;
 
             string? responsePreview = null;
-            try
+            if (skipBodies)
+                responsePreview = "[binary body omitted]";
+            else
             {
-                responsePreview = await BufferResponseContentForLoggingAsync(response, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                // HttpContentBuffering already replaced drained content on failure; do not rethrow —
-                // logging must not turn a readable response into HttpClient LoadIntoBufferAsync IOE.
-                responsePreview = $"[could not read response: {ex.Message}]";
+                try
+                {
+                    responsePreview = await BufferResponseContentForLoggingAsync(response, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // HttpContentBuffering already replaced drained content on failure; do not rethrow —
+                    // logging must not turn a readable response into HttpClient LoadIntoBufferAsync IOE.
+                    responsePreview = $"[could not read response: {ex.Message}]";
+                }
             }
 
             var responseHeadersText = FormatResponseHeaders(response);
@@ -82,6 +96,13 @@ public sealed class DevToolsLoggingHandler : DelegatingHandler
                 ex.Message);
             throw;
         }
+    }
+
+    internal static bool IsBinaryFileTransfer(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.AbsolutePath ?? "";
+        return path.Contains("/Files/getFile", StringComparison.OrdinalIgnoreCase)
+               || path.Contains("/Files/addFile", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FormatRequestHeaders(HttpRequestMessage request)

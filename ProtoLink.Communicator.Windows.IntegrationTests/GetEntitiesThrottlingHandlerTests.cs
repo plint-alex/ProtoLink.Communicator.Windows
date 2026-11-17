@@ -95,6 +95,32 @@ public class GetEntitiesThrottlingHandlerTests
         await Task.WhenAll(sync1, sync2);
     }
 
+    [Fact]
+    public async Task SyncLane_CancelDuringSend_ReleasesGateForNextCaller()
+    {
+        var syncInner = new BlockingHandler();
+        using var syncClient = new HttpClient(new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)
+        {
+            InnerHandler = syncInner
+        });
+
+        using var cts = new CancellationTokenSource();
+        var first = syncClient.PostAsync(
+            "https://example.test/api/Entities/GetEntities",
+            new StringContent("{}"),
+            cts.Token);
+        await syncInner.WaitUntilInFlightAsync(1);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
+
+        // Gate must be free — second call completes without waiting on a leaked slot.
+        syncInner.ReleaseAll();
+        using var second = await syncClient.PostAsync(
+            "https://example.test/api/Entities/GetEntities",
+            new StringContent("{}")).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+    }
+
     private sealed class ImmediateOkHandler : HttpMessageHandler
     {
         public int Calls;
@@ -123,7 +149,8 @@ public class GetEntitiesThrottlingHandlerTests
                 await Task.Delay(10, cts.Token);
             }
 
-            await _reachedTwo.Task.WaitAsync(cts.Token);
+            if (count >= 2)
+                await _reachedTwo.Task.WaitAsync(cts.Token);
         }
 
         public void ReleaseAll() => _released.TrySetResult();

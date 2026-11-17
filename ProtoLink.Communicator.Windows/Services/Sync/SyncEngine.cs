@@ -182,9 +182,16 @@ public sealed class SyncEngine
                 continue;
             }
 
-            // Always download remote bytes and compare hashes. Never forge remoteHash from
-            // meta or upload when remote content is unknown — that left devices on Test4
-            // while cloud had Test5 (and the reverse overwrite).
+            // Unchanged local + remote listing not newer → skip getFile (bounded reconcile on
+            // large MyNotesFolder trees after autopush preempt). Still download when local
+            // diverged from meta or remote UpdateTime is newer — never forge remoteHash.
+            if (ContentHashUtil.CanSkipRemoteContentDownload(
+                    localHash,
+                    meta.ContentHash,
+                    located.Entry.UpdateTime,
+                    meta.RemoteUpdateTime))
+                continue;
+
             // null = failed/not-found → soft-fail this item; Length==0 is legitimate empty content.
             var remoteBytes = await DownloadBytesOrNullAsync(meta.RemoteId, ct);
             if (remoteBytes == null)

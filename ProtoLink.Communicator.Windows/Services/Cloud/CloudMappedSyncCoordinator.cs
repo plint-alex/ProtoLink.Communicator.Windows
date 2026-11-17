@@ -270,13 +270,22 @@ public sealed class CloudMappedSyncCoordinator
 
             while (Interlocked.Exchange(ref _deferredFullSync, 0) == 1)
             {
+                // Fresh CTS — push workCts is already cancelled; do not run reconcile on a
+                // cancelled token (would sticky-fail before LastSync) or leave exclusive CTS stale.
+                var fullCts = new CancellationTokenSource();
+                Volatile.Write(ref _exclusiveWorkCts, fullCts);
                 try
                 {
-                    await SynchronizeAllBodyAsync(CancellationToken.None).ConfigureAwait(false);
+                    await SynchronizeAllBodyAsync(fullCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
-                    // Full sync itself should not be cancelled by push CTS; ignore stray cancel.
+                    // Coalesced cancel from a newer full-sync request — loop may run again.
+                }
+                finally
+                {
+                    Interlocked.CompareExchange(ref _exclusiveWorkCts, null, fullCts);
+                    fullCts.Dispose();
                 }
             }
         }

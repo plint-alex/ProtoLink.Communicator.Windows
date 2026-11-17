@@ -34,14 +34,20 @@ public sealed class GetEntitiesThrottlingHandler : DelegatingHandler
     {
         if (_lane == Lane.Sync && IsGetEntities(request))
         {
-            await SyncGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // lockTaken pattern: if WaitAsync throws (cancel), we never acquired; if SendAsync
+            // throws/cancels after acquire, finally still releases so deferred WalkRemote after
+            // autopush preempt cannot hang forever on a drained SyncGate (sticky Syncing…).
+            var lockTaken = false;
             try
             {
+                await SyncGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                lockTaken = true;
                 return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                SyncGate.Release();
+                if (lockTaken)
+                    SyncGate.Release();
             }
         }
 
