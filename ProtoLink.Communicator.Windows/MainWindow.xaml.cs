@@ -298,48 +298,12 @@ public partial class MainWindow : Window
 
     private void UpdateTabToolbar(System.Windows.Controls.Panel toolbarPanel)
     {
+        // Chrome-minimal CM-TT1…TT4: Notes/Cloud permanent create/Download/Open strip removed.
+        // Create → FAB/empty/context; Download/Open → entity ⋮ / Info; Refresh → list search / tree context / F5.
+        // Policy: ShellTabToolbarChrome.PermanentActionIds (empty for all current shell tabs).
         toolbarPanel.Children.Clear();
-        var h = 22;
-        var pad = new Thickness(6, 0, 6, 0);
-        var margin = new Thickness(0, 0, 6, 0);
-        if (MainTabControl.SelectedIndex == 1) // Notes
-        {
-            var newFolderBtn = new System.Windows.Controls.Button { Content = "New folder", Height = h, Padding = pad, Margin = margin };
-            newFolderBtn.Click += (s, e) => _notesViewModel.RaiseRequestNewFolder();
-            var refreshBtn = new System.Windows.Controls.Button { Content = "Refresh", Height = h, Padding = pad };
-            refreshBtn.Click += (s, e) => _notesViewModel.RefreshCommand.Execute(null);
-            toolbarPanel.Children.Add(newFolderBtn);
-            toolbarPanel.Children.Add(refreshBtn);
-            return;
-        }
-        if (MainTabControl.SelectedIndex == 2) // Cloud
-        {
-            var refreshBtn = new System.Windows.Controls.Button { Content = "Refresh", Height = h, Padding = pad, Margin = margin };
-            refreshBtn.Click += (s, e) => _cloudViewModel.RefreshCommand.Execute(null);
-            var newFolderBtn = new System.Windows.Controls.Button { Content = "New folder", Height = h, Padding = pad, Margin = margin };
-            newFolderBtn.Click += (s, e) => _cloudViewModel.NewFolderCommand.Execute(null);
-            var uploadBtn = new System.Windows.Controls.Button { Content = "Upload", Height = h, Padding = pad, Margin = margin };
-            uploadBtn.Click += (s, e) => _cloudViewModel.UploadCommand.Execute(null);
-            var downloadBtn = new System.Windows.Controls.Button { Content = "Download", Height = h, Padding = pad, Command = _cloudViewModel.DownloadCommand };
-            var openWebBtn = new System.Windows.Controls.Button { Content = "Open in browser", Height = h, Padding = pad, Margin = margin, Command = _cloudViewModel.OpenInBrowserCommand };
-            toolbarPanel.Children.Add(refreshBtn);
-            toolbarPanel.Children.Add(newFolderBtn);
-            toolbarPanel.Children.Add(uploadBtn);
-            toolbarPanel.Children.Add(downloadBtn);
-            toolbarPanel.Children.Add(openWebBtn);
-            if (_cloudViewModel.ShowAddLocalFolderCta)
-            {
-                var addLocalBtn = new System.Windows.Controls.Button
-                {
-                    Content = _cloudViewModel.AddLocalFolderCtaLabel,
-                    Height = h,
-                    Padding = pad,
-                    Margin = margin,
-                    Command = _cloudViewModel.AddLocalFolderCommand
-                };
-                toolbarPanel.Children.Add(addLocalBtn);
-            }
-        }
+        if (ShellTabToolbarChrome.PermanentActionIds(MainTabControl.SelectedIndex).Count > 0)
+            throw new InvalidOperationException("Shell TabToolbar permanent actions are not wired; extend UpdateTabToolbar when policy adds ids.");
     }
 
     private void CloseSettingsPanel()

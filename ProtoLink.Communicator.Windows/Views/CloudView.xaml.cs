@@ -564,6 +564,11 @@ public partial class CloudView : System.Windows.Controls.UserControl
             ListSearchBox.SelectAll();
             e.Handled = true;
         }
+        else if (key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            ExecuteIfCan(_vm.RefreshCommand);
+            e.Handled = true;
+        }
         else if (key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             ExecuteIfCan(_vm.CopyLinkCommand);

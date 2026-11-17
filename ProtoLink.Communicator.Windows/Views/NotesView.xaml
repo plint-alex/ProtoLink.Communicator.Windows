@@ -82,6 +82,9 @@
                     <TreeView.ContextMenu>
                         <ContextMenu x:Name="NotesTreeContextMenu">
                             <MenuItem Header="New Page" Click="OnNewPageClick"/>
+                            <MenuItem Header="Refresh" Click="OnNotesTreeRefreshClick"
+                                      InputGestureText="F5"
+                                      AutomationProperties.Name="Refresh Notes tree"/>
                             <Separator/>
                             <MenuItem x:Name="NotesTreeOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnOpenInExplorerClick"/>
                             <MenuItem x:Name="NotesTreeCopyLinkMenuItem" Header="Copy link" Click="OnCopyLinkClick"/>

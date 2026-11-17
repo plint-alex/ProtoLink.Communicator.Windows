@@ -459,6 +459,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 _vm.CopyLinkCommand.Execute(null);
             e.Handled = true;
         }
+        else if (key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            if (_vm.RefreshCommand.CanExecute(null))
+                _vm.RefreshCommand.Execute(null);
+            e.Handled = true;
+        }
         else if (NotesDeleteKey.ShouldHandlePageDeleteKey(
                      key,
                      NotesTreeView.IsKeyboardFocusWithin,
@@ -1836,6 +1842,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
             element = VisualTreeHelper.GetParent(element) as DependencyObject;
         }
         return null;
+    }
+
+    private void OnNotesTreeRefreshClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm?.RefreshCommand.CanExecute(null) == true)
+            _vm.RefreshCommand.Execute(null);
     }
 
     private void OnNewPageClick(object sender, RoutedEventArgs e)
