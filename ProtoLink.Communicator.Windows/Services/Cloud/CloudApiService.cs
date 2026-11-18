@@ -20,6 +20,8 @@ public class CloudApiService
     /// <summary>
     /// Interactive Cloud folder listing: paint the first page(s) instead of walking every page of a
     /// bloated CloudRoot (Drive-style duplicates) before the UI can recover.
+    /// Pair with values-light (<c>includeValues: false</c>) on the first request — IncludeValues
+    /// Take=200 on MyNotesFolder can exceed the Cloud UI HttpClient timeout under contention.
     /// </summary>
     public const int InteractiveListingMaxPages = 1;
 

@@ -10,6 +10,7 @@ using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Models.Share;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Services.Sync;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels.Share;
 
@@ -27,8 +28,10 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Action? _onAfterMappedSync;
     private readonly Action<string>? _onSendShareLinkInMessenger;
     private readonly ICloudRecentStore _recentStore;
+    private readonly JsonSyncMetadataStore _listingMetaStore = new();
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
+    private int _listingHydrateGeneration;
     private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
@@ -702,16 +705,17 @@ public partial class CloudViewModel : ViewModelBase
             }
             else
             {
-                // First-page paint: do not walk every page of a bloated CloudRoot before showing rows.
+                // Values-light first page (API-cached): IncludeValues Take=200 on MyNotesFolder
+                // ~15s alone / ~57s under cold-start vs Cloud UI Timeout=45s → empty Waiting.
                 var list = await _api.GetEntitiesAsync(
                     new[] { folderId },
-                    includeValues: true,
+                    includeValues: false,
                     maxPages: CloudApiService.InteractiveListingMaxPages);
                 if (ListedFolderId != folderId) return;
 
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
                 fresh = (list ?? new List<GetEntitiesResult>())
-                    .Select(e => ToListItem(e, syncedIds))
+                    .Select(e => ToListItem(e, syncedIds, ResolveListingMetaName))
                     .OrderByDescending(x => x.IsFolder)
                     .ThenByDescending(x => x.UpdateTime)
                     .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
@@ -729,6 +733,8 @@ public partial class CloudViewModel : ViewModelBase
             // Never clobber Force lock-wait / Force download… (tester FAIL 1.0.87).
             if (!IsForceProgressStatus(_statusText))
                 StatusText = "Ready";
+            if (!CloudVirtualNodes.IsVirtual(folderId))
+                ScheduleListingValuesHydrate(folderId, selectedId);
             _ = RefreshFolderTreeAsync();
             ScheduleFolderSizeRefresh();
         }
@@ -1045,13 +1051,60 @@ public partial class CloudViewModel : ViewModelBase
         return fresh;
     }
 
-    private static CloudItemViewModel ToListItem(GetEntitiesResult e, HashSet<Guid> syncedIds)
+    private string? ResolveListingMetaName(Guid remoteId)
+    {
+        var meta = _listingMetaStore.FindByRemoteId(remoteId);
+        return meta == null ? null : CloudInteractiveListing.LeafName(meta.RelativePath);
+    }
+
+    private void ScheduleListingValuesHydrate(Guid folderId, Guid? selectedId)
+    {
+        var gen = ++_listingHydrateGeneration;
+        _ = HydrateListingValuesAsync(folderId, selectedId, gen);
+    }
+
+    /// <summary>
+    /// Best-effort IncludeValues re-list after values-light paint. Soft-fails on timeout so Ready
+    /// listing is never blanked; updates names/mime when the values page arrives in time.
+    /// </summary>
+    private async Task HydrateListingValuesAsync(Guid folderId, Guid? selectedId, int generation)
+    {
+        try
+        {
+            var list = await _api.GetEntitiesAsync(
+                new[] { folderId },
+                includeValues: true,
+                maxPages: CloudApiService.InteractiveListingMaxPages);
+            if (generation != _listingHydrateGeneration || ListedFolderId != folderId)
+                return;
+
+            var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            var fresh = (list ?? new List<GetEntitiesResult>())
+                .Select(e => ToListItem(e, syncedIds))
+                .OrderByDescending(x => x.IsFolder)
+                .ThenByDescending(x => x.UpdateTime)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            ApplyCheapItemSizes(fresh);
+            MergeListing(fresh, selectedId, reset: false);
+            FilteredItems.Refresh();
+        }
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+        {
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+    }
+
+    private static CloudItemViewModel ToListItem(
+        GetEntitiesResult e,
+        HashSet<Guid> syncedIds,
+        Func<Guid, string?>? syncMetaLeafNameByRemoteId = null)
     {
         var isFolder = e.Code == CloudEntityCodes.CloudFolder;
         return new CloudItemViewModel
         {
             Id = e.Id,
-            Name = CloudApiService.GetDisplayName(e),
+            Name = CloudInteractiveListing.ResolveRowName(e, syncMetaLeafNameByRemoteId),
             IsFolder = isFolder,
             IsSynced = isFolder && syncedIds.Contains(e.Id),
             MimeType = isFolder ? null : CloudApiService.GetMimeType(e),
