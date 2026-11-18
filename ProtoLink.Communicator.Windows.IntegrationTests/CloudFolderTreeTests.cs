@@ -254,4 +254,78 @@ public class CloudFolderTreeTests
         Assert.True(rows[0].CanExpand);
         Assert.True(rows[0].IsExpanded);
     }
+
+    [Fact]
+    public void ResolveListingSoftFailStubRootId_PrefersBreadcrumbCloudRoot()
+    {
+        var hub = CloudVirtualNodes.HubId;
+        var root = Guid.NewGuid();
+        var listed = Guid.NewGuid();
+        var crumbs = new (Guid, string?)[]
+        {
+            (hub, null),
+            (root, CloudEntityCodes.CloudRoot),
+            (listed, CloudEntityCodes.CloudFolder)
+        };
+        var resolved = CloudFolderTree.ResolveListingSoftFailStubRootId(
+            crumbs,
+            photosLibraryId: null,
+            listed,
+            myCloudRootId: root,
+            CloudVirtualNodes.IsVirtual);
+        Assert.Equal(root, resolved);
+    }
+
+    [Fact]
+    public void ResolveListingSoftFailStubRootId_FallsBackToMyCloudWhenCrumbsVirtualOnly()
+    {
+        var hub = CloudVirtualNodes.HubId;
+        var myCloud = Guid.NewGuid();
+        var listed = Guid.NewGuid();
+        var crumbs = new (Guid, string?)[] { (hub, null) };
+        var resolved = CloudFolderTree.ResolveListingSoftFailStubRootId(
+            crumbs,
+            photosLibraryId: null,
+            listed,
+            myCloudRootId: myCloud,
+            CloudVirtualNodes.IsVirtual);
+        Assert.Equal(myCloud, resolved);
+    }
+
+    [Fact]
+    public void ProjectVisible_ListingCatchFirstPaintStub_ShowsExpandableRoot()
+    {
+        // Listing catch: GetEntities soft-fail before RefreshFolderTreeAsync → paint root stub.
+        var hub = CloudVirtualNodes.HubId;
+        var root = Guid.NewGuid();
+        var listed = Guid.NewGuid();
+        var crumbs = new (Guid, string?)[]
+        {
+            (hub, null),
+            (root, CloudEntityCodes.CloudRoot),
+            (listed, CloudEntityCodes.CloudFolder)
+        };
+        var stubRoot = CloudFolderTree.ResolveListingSoftFailStubRootId(
+            crumbs,
+            photosLibraryId: null,
+            listed,
+            myCloudRootId: root,
+            CloudVirtualNodes.IsVirtual);
+        Assert.NotNull(stubRoot);
+
+        var expanded = CloudFolderTree.ExpandSetForRefresh(previousRootId: null, stubRoot!.Value, previousExpanded: null);
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(stubRoot.Value, "Cloud"),
+            new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>(),
+            expanded,
+            loadedParentIds: new HashSet<Guid>(),
+            selectedId: listed);
+
+        Assert.Single(rows);
+        Assert.Equal(stubRoot, rows[0].Id);
+        Assert.True(rows[0].CanExpand);
+        Assert.True(rows[0].IsExpanded);
+        // ShowFolderTree ≡ rows.Count > 0 — listing catch must leave non-empty chrome.
+        Assert.True(rows.Count > 0);
+    }
 }

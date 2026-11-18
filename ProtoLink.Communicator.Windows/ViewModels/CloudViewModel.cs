@@ -738,6 +738,9 @@ public partial class CloudViewModel : ViewModelBase
             // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
             // Keep last-good Folders tree chrome on listing soft-fail — ClearFolderTree here
             // stranded ShowFolderTree=false while contents later recovered (1.0.90 Session-1).
+            // First paint: RefreshFolderTreeAsync only runs on success — paint stub when empty
+            // so Waiting for network still shows Folders column (1.0.91 Session-1 FAIL).
+            EnsureFolderTreeChromeOnListingSoftFail();
             ReportCaughtException(ex, asNetworkFailure: true);
             // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
             if (!_recoveringFromRootListingFailure

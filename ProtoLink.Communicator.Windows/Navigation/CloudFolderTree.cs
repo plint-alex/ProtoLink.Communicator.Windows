@@ -57,6 +57,31 @@ public static class CloudFolderTree
         return null;
     }
 
+    /// <summary>
+    /// Listing-catch first paint: prefer breadcrumb tree root; else My Cloud root; else listed folder.
+    /// Used when GetEntities soft-fails before <c>RefreshFolderTreeAsync</c> can run.
+    /// </summary>
+    public static Guid? ResolveListingSoftFailStubRootId(
+        IReadOnlyList<(Guid Id, string? Code)> crumbs,
+        Guid? photosLibraryId,
+        Guid? listedFolderId,
+        Guid myCloudRootId,
+        Func<Guid, bool> isVirtual)
+    {
+        var fromCrumbs = PickTreeRootId(crumbs, photosLibraryId, isVirtual);
+        if (fromCrumbs is { } crumbRoot && crumbRoot != Guid.Empty)
+            return crumbRoot;
+
+        if (myCloudRootId != Guid.Empty
+            && (listedFolderId is null || !isVirtual(listedFolderId.Value)))
+            return myCloudRootId;
+
+        if (listedFolderId is { } listed && listed != Guid.Empty && !isVirtual(listed))
+            return listed;
+
+        return null;
+    }
+
     /// <summary>Highlight id: file mode uses containing folder; folder uses open entity.</summary>
     public static Guid? SelectedFolderId(bool isFileOpen, Guid? openEntityId, Guid? parentFolderId) =>
         isFileOpen ? parentFolderId : openEntityId;

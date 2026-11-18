@@ -236,6 +236,48 @@ public partial class CloudViewModel
         RebuildFolderTreeRows();
     }
 
+    /// <summary>
+    /// Listing catch: success-path RefreshFolderTreeAsync never runs when GetEntities fails first.
+    /// Keep last-good rows; when empty, paint a root stub so ShowFolderTree is true under the banner.
+    /// </summary>
+    private void EnsureFolderTreeChromeOnListingSoftFail()
+    {
+        if (FolderTreeRows.Count > 0)
+            return; // last-good chrome retained (no ClearFolderTree on catch)
+
+        if (ListedFolderId is not { } listed || CloudVirtualNodes.IsVirtual(listed))
+            return;
+
+        var crumbMeta = BreadcrumbPath
+            .Select(b =>
+            {
+                _folderTreeCodes.TryGetValue(b.Id, out var code);
+                if (b.Id == _myCloudRootId) code = CloudEntityCodes.CloudRoot;
+                return (b.Id, code);
+            })
+            .ToList();
+
+        var treeRoot = CloudFolderTree.ResolveListingSoftFailStubRootId(
+            crumbMeta,
+            _photosLibraryId,
+            listed,
+            _myCloudRootId,
+            CloudVirtualNodes.IsVirtual);
+        if (treeRoot is not { } root || root == Guid.Empty)
+            return;
+
+        var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == root)?.Name
+                       ?? (_photosLibraryId == root
+                           ? ShareSheetStrings.Photos(_settingsService.LoadSettings().UiLanguage)
+                           : "Cloud");
+        ApplyFolderTreeSoftFailChrome(
+            root,
+            rootName,
+            priorHadChrome: false,
+            priorRootId: null,
+            cacheSnap: SnapshotFolderTreeCache());
+    }
+
     private FolderTreeCacheSnapshot SnapshotFolderTreeCache() =>
         new(
             _folderTreeChildren.ToDictionary(kv => kv.Key, kv => kv.Value),
