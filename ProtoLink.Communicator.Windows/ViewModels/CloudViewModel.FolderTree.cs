@@ -153,6 +153,11 @@ public partial class CloudViewModel
             return;
         }
 
+        // Snapshot before Reset so soft-fail can restore last-good chrome (not empty first paint).
+        var priorHadChrome = FolderTreeRows.Count > 0;
+        var cacheSnap = SnapshotFolderTreeCache();
+        var priorRootId = _folderTreeRootId;
+
         try
         {
             // Same root → keep user expands across listing refresh; new root → E9b first paint.
@@ -171,7 +176,11 @@ public partial class CloudViewModel
             _folderTreeNames[treeRoot] = rootName;
 
             if (!await TryEnsureFolderTreeChildrenLoadedAsync(treeRoot))
-                return; // keep prior FolderTreeRows chrome; cache may already be reset
+            {
+                ApplyFolderTreeSoftFailChrome(treeRoot, rootName, priorHadChrome, priorRootId, cacheSnap);
+                return;
+            }
+
             if (ListedFolderId is not { } still || CloudVirtualNodes.IsVirtual(still))
             {
                 ClearFolderTree();
@@ -191,10 +200,78 @@ public partial class CloudViewModel
         }
         catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
         {
-            // Keep prior tree on transient failure (ResetFolderTreeCache already ran).
             System.Diagnostics.Debug.WriteLine(ex);
+            var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == treeRoot)?.Name
+                           ?? (_photosLibraryId == treeRoot
+                               ? ShareSheetStrings.Photos(_settingsService.LoadSettings().UiLanguage)
+                               : "Cloud");
+            ApplyFolderTreeSoftFailChrome(treeRoot, rootName, priorHadChrome, priorRootId, cacheSnap);
         }
     }
+
+    /// <summary>
+    /// After ResetFolderTreeCache + soft-fail: restore last-good cache/rows, or paint a root stub
+    /// so ShowFolderTree stays true until the next successful listing refresh rebuilds.
+    /// </summary>
+    private void ApplyFolderTreeSoftFailChrome(
+        Guid treeRoot,
+        string rootName,
+        bool priorHadChrome,
+        Guid? priorRootId,
+        FolderTreeCacheSnapshot cacheSnap)
+    {
+        if (priorHadChrome)
+        {
+            RestoreFolderTreeCache(cacheSnap);
+            _folderTreeRootId = priorRootId;
+            // FolderTreeRows still hold prior paint; do not Clear.
+            return;
+        }
+
+        // First paint / empty after listing Clear: root-only chrome (unloaded → CanExpand).
+        ResetFolderTreeCache();
+        _folderTreeNames[treeRoot] = rootName;
+        _folderTreeExpanded.Add(treeRoot);
+        _folderTreeRootId = treeRoot;
+        RebuildFolderTreeRows();
+    }
+
+    private FolderTreeCacheSnapshot SnapshotFolderTreeCache() =>
+        new(
+            _folderTreeChildren.ToDictionary(kv => kv.Key, kv => kv.Value),
+            _folderTreeNames.ToDictionary(kv => kv.Key, kv => kv.Value),
+            new HashSet<Guid>(_folderTreeExpanded),
+            new HashSet<Guid>(_folderTreeLoaded),
+            new HashSet<Guid>(_folderTreeLoading),
+            _folderTreeFolderCount);
+
+    private void RestoreFolderTreeCache(FolderTreeCacheSnapshot snap)
+    {
+        _folderTreeChildren.Clear();
+        foreach (var kv in snap.Children)
+            _folderTreeChildren[kv.Key] = kv.Value;
+        _folderTreeNames.Clear();
+        foreach (var kv in snap.Names)
+            _folderTreeNames[kv.Key] = kv.Value;
+        _folderTreeExpanded.Clear();
+        foreach (var id in snap.Expanded)
+            _folderTreeExpanded.Add(id);
+        _folderTreeLoaded.Clear();
+        foreach (var id in snap.Loaded)
+            _folderTreeLoaded.Add(id);
+        _folderTreeLoading.Clear();
+        foreach (var id in snap.Loading)
+            _folderTreeLoading.Add(id);
+        _folderTreeFolderCount = snap.FolderCount;
+    }
+
+    private sealed record FolderTreeCacheSnapshot(
+        Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>> Children,
+        Dictionary<Guid, string> Names,
+        HashSet<Guid> Expanded,
+        HashSet<Guid> Loaded,
+        HashSet<Guid> Loading,
+        int FolderCount);
 
     /// <summary>
     /// Loads children for <paramref name="parentId"/>. Returns false on expected connectivity

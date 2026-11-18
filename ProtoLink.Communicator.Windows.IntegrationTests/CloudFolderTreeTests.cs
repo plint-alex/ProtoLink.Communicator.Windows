@@ -235,4 +235,23 @@ public class CloudFolderTreeTests
         Assert.Contains(rows, r => r.Id == a1);
         Assert.True(rows.First(r => r.Id == a).IsExpanded);
     }
+
+    [Fact]
+    public void ProjectVisible_FirstPaintSoftFailStub_ShowsExpandableRoot()
+    {
+        // RefreshFolderTreeAsync: Reset + TryEnsure soft-fail with empty prior → root stub chrome.
+        var root = Guid.NewGuid();
+        var expanded = CloudFolderTree.ExpandSetForRefresh(previousRootId: null, root, previousExpanded: null);
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, "Cloud"),
+            new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>(),
+            expanded,
+            loadedParentIds: new HashSet<Guid>(),
+            selectedId: null);
+
+        Assert.Single(rows);
+        Assert.Equal(root, rows[0].Id);
+        Assert.True(rows[0].CanExpand);
+        Assert.True(rows[0].IsExpanded);
+    }
 }

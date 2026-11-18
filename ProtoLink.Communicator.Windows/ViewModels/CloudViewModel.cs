@@ -736,8 +736,9 @@ public partial class CloudViewModel : ViewModelBase
         {
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
             // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
+            // Keep last-good Folders tree chrome on listing soft-fail — ClearFolderTree here
+            // stranded ShowFolderTree=false while contents later recovered (1.0.90 Session-1).
             ReportCaughtException(ex, asNetworkFailure: true);
-            ClearFolderTree();
             // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
             if (!_recoveringFromRootListingFailure
                 && CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds))
