@@ -25,6 +25,13 @@ public class CloudApiService
     /// </summary>
     public const int InteractiveListingMaxPages = 1;
 
+    /// <summary>
+    /// First-page Take for interactive Cloud browse / soft values hydrate. Smaller than
+    /// <see cref="GetEntitiesPageSize"/> so MyNotesFolder (~380 kids) stays under the UI timeout
+    /// when cold-start + tree + Refresh would otherwise stack contended GetEntities.
+    /// </summary>
+    public const int InteractiveListingPageSize = 80;
+
     private readonly HttpClient _http;
 
     public CloudApiService(HttpClient http)
@@ -53,13 +60,14 @@ public class CloudApiService
     public async Task<List<GetEntitiesResult>> GetEntitiesAsync(
         Guid[]? parentIds,
         bool includeValues = true,
-        int maxPages = int.MaxValue)
+        int maxPages = int.MaxValue,
+        int? pageSize = null)
     {
         return await GetEntitiesPagedAsync(new GetEntitiesContract
         {
             ParentIds = parentIds,
             IncludeValues = includeValues
-        }, maxPages);
+        }, maxPages, pageSize);
     }
 
     /// <summary>S6 Shared with me: caller's direct share roots (AT-S17).</summary>
@@ -95,9 +103,10 @@ public class CloudApiService
 
     private async Task<List<GetEntitiesResult>> GetEntitiesPagedAsync(
         GetEntitiesContract template,
-        int maxPages = int.MaxValue)
+        int maxPages = int.MaxValue,
+        int? pageSize = null)
     {
-        var pageSize = GetEntitiesPageSize;
+        var take = pageSize is > 0 and <= GetEntitiesPageSize ? pageSize.Value : GetEntitiesPageSize;
         var all = new List<GetEntitiesResult>();
         var skip = 0;
         var pages = 0;
@@ -113,15 +122,15 @@ public class CloudApiService
                 SharedWithMe = template.SharedWithMe,
                 ConversationUserIds = template.ConversationUserIds,
                 Skip = skip,
-                Take = pageSize
+                Take = take
             });
             await EnsureSuccessAsync(response);
             var list = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>()
                        ?? new List<GetEntitiesResult>();
             all.AddRange(list);
             pages++;
-            if (list.Count < pageSize) break;
-            skip += pageSize;
+            if (list.Count < take) break;
+            skip += take;
         }
         return all;
     }

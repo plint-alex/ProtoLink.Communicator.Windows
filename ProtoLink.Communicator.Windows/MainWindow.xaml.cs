@@ -57,11 +57,12 @@ public partial class MainWindow : Window
         {
             InnerHandler = WrapWithDevToolsLogging(new HttpClientHandler())
         };
-        // Shorter than default 100s so a bloated CloudRoot listing soft-fails to the network banner / hub recover path.
+        // Interactive listing uses values-light + InteractiveListingPageSize; 90s gives cold-start
+        // headroom without waiting forever on a blackholed GetEntities (default HttpClient is 100s).
         _cloudUiHttpClient = new HttpClient(cloudUiHandler)
         {
             BaseAddress = new Uri(settings.ApiBaseAddress),
-            Timeout = TimeSpan.FromSeconds(45)
+            Timeout = TimeSpan.FromSeconds(90)
         };
         var cloudSyncHandler = CreateAuthHandler();
         cloudSyncHandler.InnerHandler = new GetEntitiesThrottlingHandler(GetEntitiesThrottlingHandler.Lane.Sync)

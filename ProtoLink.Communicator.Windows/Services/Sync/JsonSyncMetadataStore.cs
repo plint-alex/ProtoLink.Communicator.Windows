@@ -238,6 +238,20 @@ public sealed class JsonSyncMetadataStore
             return _items.Values.FirstOrDefault(i => i.RemoteId == remoteId) is { } m ? Clone(m) : null;
     }
 
+    /// <summary>Direct children of <paramref name="parentRemoteId"/> (any mapping) for Soft Ready listing.</summary>
+    public List<SyncItemMeta> FindChildrenByParentRemoteId(Guid parentRemoteId)
+    {
+        if (parentRemoteId == Guid.Empty) return new List<SyncItemMeta>();
+        EnsureLoaded();
+        lock (_gate)
+        {
+            return _items.Values
+                .Where(i => i.ParentRemoteId == parentRemoteId && i.RemoteId != Guid.Empty)
+                .Select(Clone)
+                .ToList();
+        }
+    }
+
     public void Upsert(SyncItemMeta item)
     {
         EnsureLoaded();

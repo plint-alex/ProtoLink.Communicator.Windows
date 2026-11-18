@@ -32,6 +32,7 @@ public partial class CloudViewModel : ViewModelBase
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
     private int _listingHydrateGeneration;
+    private int _listingLoadGeneration;
     private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
@@ -680,6 +681,9 @@ public partial class CloudViewModel : ViewModelBase
         if (folderChanged)
             SelectedItem = null;
         var selectedId = restoreSelectionId ?? SelectedItem?.Id;
+        var loadGen = ++_listingLoadGeneration;
+        // Supersede any in-flight values hydrate so Refresh cannot stack IncludeValues Take with listing.
+        _listingHydrateGeneration++;
 
         if (!quiet && !IsForceProgressStatus(_statusText))
             StatusText = "Loading...";
@@ -705,13 +709,15 @@ public partial class CloudViewModel : ViewModelBase
             }
             else
             {
-                // Values-light first page (API-cached): IncludeValues Take=200 on MyNotesFolder
-                // ~15s alone / ~57s under cold-start vs Cloud UI Timeout=45s → empty Waiting.
+                // Values-light + smaller Take (API-cached): IncludeValues Take=200 on MyNotesFolder
+                // ~15s alone / ~57s under cold-start; values-light alone still timed out on 1.0.93
+                // when tree hydrate + Refresh stacked Interactive GetEntities past UI timeout.
                 var list = await _api.GetEntitiesAsync(
                     new[] { folderId },
                     includeValues: false,
-                    maxPages: CloudApiService.InteractiveListingMaxPages);
-                if (ListedFolderId != folderId) return;
+                    maxPages: CloudApiService.InteractiveListingMaxPages,
+                    pageSize: CloudApiService.InteractiveListingPageSize);
+                if (loadGen != _listingLoadGeneration || ListedFolderId != folderId) return;
 
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
                 fresh = (list ?? new List<GetEntitiesResult>())
@@ -722,8 +728,8 @@ public partial class CloudViewModel : ViewModelBase
                     .ToList();
             }
 
-            // User may have navigated away while the request was in flight.
-            if (ListedFolderId != folderId) return;
+            // User may have navigated away / newer Refresh superseded this load.
+            if (loadGen != _listingLoadGeneration || ListedFolderId != folderId) return;
 
             ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: folderChanged);
@@ -733,13 +739,29 @@ public partial class CloudViewModel : ViewModelBase
             // Never clobber Force lock-wait / Force download… (tester FAIL 1.0.87).
             if (!IsForceProgressStatus(_statusText))
                 StatusText = "Ready";
+            // Serialize post-paint work: tree first (values-light), then soft values hydrate.
             if (!CloudVirtualNodes.IsVirtual(folderId))
-                ScheduleListingValuesHydrate(folderId, selectedId);
-            _ = RefreshFolderTreeAsync();
-            ScheduleFolderSizeRefresh();
+                _ = ContinueAfterListingReadyAsync(folderId, selectedId, loadGen);
+            else
+                ScheduleFolderSizeRefresh();
         }
         catch (Exception ex)
         {
+            if (loadGen != _listingLoadGeneration)
+                return; // superseded Refresh — do not paint Waiting over a newer in-flight load
+
+            // Soft Ready from sync-meta when mapped Notes exist — sticks past GetEntities timeout.
+            if (!CloudVirtualNodes.IsVirtual(folderId)
+                && TryApplySyncMetaSoftReady(folderId, selectedId, folderChanged))
+            {
+                _listedFolderId = folderId;
+                ClearNetworkBanner();
+                if (!IsForceProgressStatus(_statusText))
+                    StatusText = "Ready";
+                _ = ContinueAfterListingReadyAsync(folderId, selectedId, loadGen);
+                return;
+            }
+
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
             // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
             // Keep last-good Folders tree chrome on listing soft-fail — ClearFolderTree here
@@ -1057,15 +1079,56 @@ public partial class CloudViewModel : ViewModelBase
         return meta == null ? null : CloudInteractiveListing.LeafName(meta.RelativePath);
     }
 
-    private void ScheduleListingValuesHydrate(Guid folderId, Guid? selectedId)
+    /// <summary>
+    /// After Ready paint: Folders tree (values-light) then soft values hydrate — never parallel with
+    /// each other or with a superseded listing load (1.0.93 MyNotesFolder STUCK_LISTING).
+    /// </summary>
+    private async Task ContinueAfterListingReadyAsync(Guid folderId, Guid? selectedId, int loadGen)
     {
-        var gen = ++_listingHydrateGeneration;
-        _ = HydrateListingValuesAsync(folderId, selectedId, gen);
+        try
+        {
+            await RefreshFolderTreeAsync().ConfigureAwait(true);
+            if (loadGen != _listingLoadGeneration || ListedFolderId != folderId)
+                return;
+            ScheduleFolderSizeRefresh();
+            await HydrateListingValuesAsync(folderId, selectedId, ++_listingHydrateGeneration)
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+    }
+
+    private bool TryApplySyncMetaSoftReady(Guid folderId, Guid? selectedId, bool reset)
+    {
+        var rows = CloudInteractiveListing.BuildSoftReadyRows(
+            folderId,
+            _listingMetaStore.FindChildrenByParentRemoteId(folderId),
+            CloudApiService.InteractiveListingPageSize);
+        if (rows.Count == 0)
+            return false;
+
+        var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var fresh = rows
+            .Select(r => new CloudItemViewModel
+            {
+                Id = r.Id,
+                Name = r.Name,
+                IsFolder = r.IsFolder,
+                IsSynced = r.IsFolder && syncedIds.Contains(r.Id),
+                UpdateTime = r.UpdateTime
+            })
+            .ToList();
+        ApplyCheapItemSizes(fresh);
+        MergeListing(fresh, selectedId, reset: reset);
+        return true;
     }
 
     /// <summary>
     /// Best-effort IncludeValues re-list after values-light paint. Soft-fails on timeout so Ready
     /// listing is never blanked; updates names/mime when the values page arrives in time.
+    /// Uses the same smaller Take as interactive listing so hydrate cannot re-contend past UI timeout.
     /// </summary>
     private async Task HydrateListingValuesAsync(Guid folderId, Guid? selectedId, int generation)
     {
@@ -1074,7 +1137,8 @@ public partial class CloudViewModel : ViewModelBase
             var list = await _api.GetEntitiesAsync(
                 new[] { folderId },
                 includeValues: true,
-                maxPages: CloudApiService.InteractiveListingMaxPages);
+                maxPages: CloudApiService.InteractiveListingMaxPages,
+                pageSize: CloudApiService.InteractiveListingPageSize);
             if (generation != _listingHydrateGeneration || ListedFolderId != folderId)
                 return;
 

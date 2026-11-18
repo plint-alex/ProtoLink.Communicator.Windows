@@ -85,7 +85,9 @@ public partial class CloudViewModel
     private async Task<(CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb)?> TryResolveEntityPathAsync(
         Guid entityId)
     {
-        var found = await _api.GetEntitiesByIdsAsync(new[] { entityId }, includeValues: true);
+        // Values-light resolve: IncludeValues ancestry walks contended Interactive GetEntities before
+        // LastOpen listing (1.0.93 MyNotesFolder STUCK). Names from sync-meta / synthetic until hydrate.
+        var found = await _api.GetEntitiesByIdsAsync(new[] { entityId }, includeValues: false);
         var entity = found.FirstOrDefault();
         if (entity == null)
             return null;
@@ -119,13 +121,13 @@ public partial class CloudViewModel
         {
             var display = current.Code == CloudEntityCodes.CloudRoot
                 ? "Cloud"
-                : CloudApiService.GetDisplayName(current);
+                : CloudInteractiveListing.ResolveRowName(current, ResolveListingMetaName);
             chain.Insert(0, new CloudEntityRestore.AncestorNode(current.Id, current.Code ?? "", display));
             _folderTreeCodes[current.Id] = current.Code ?? "";
             if (current.Code == CloudEntityCodes.CloudRoot)
                 break;
 
-            var parents = await _api.GetParentEntitiesAsync(current.Id, includeValues: true);
+            var parents = await _api.GetParentEntitiesAsync(current.Id, includeValues: false);
             var parent = CloudMainParent.PickParent(currentMainParentId, parents);
             if (parent == null || !CloudEntityRestore.IsCloudFolderOrRoot(parent.Code))
                 return null;

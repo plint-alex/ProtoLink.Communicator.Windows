@@ -47,6 +47,7 @@ public partial class CloudViewModel
         try
         {
             var userId = _authService.CurrentToken.UserId;
+            // Values required: Photos host embeds library Guid in StringValues (not code alone).
             var kids = await _api.GetEntitiesAsync(new[] { userId }, includeValues: true);
             _photosLibraryId = PhotosLibrary.ResolveLibraryIdFromUserChildren(kids);
         }
@@ -344,17 +345,23 @@ public partial class CloudViewModel
             return;
         }
 
-        // Values required so GetDisplayName resolves folder name slots (not folder-{id}).
-        var list = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true);
+        // Values-light: do not stack IncludeValues with interactive listing / hydrate (1.0.93 FAIL).
+        // ResolveRowName fills sync-meta leaf names; synthetic folder-{id} is OK until hydrate.
+        var list = await _api.GetEntitiesAsync(
+            new[] { parentId },
+            includeValues: false,
+            maxPages: CloudApiService.InteractiveListingMaxPages,
+            pageSize: CloudApiService.InteractiveListingPageSize);
         var folderKids = new List<CloudFolderTree.Node>();
         foreach (var e in (list ?? new List<GetEntitiesResult>())
                  .Where(x => CloudFolderTree.IsFolderTreeCode(x.Code))
-                 .OrderBy(x => CloudApiService.GetDisplayName(x), StringComparer.OrdinalIgnoreCase))
+                 .OrderBy(x => CloudInteractiveListing.ResolveRowName(x, ResolveListingMetaName),
+                     StringComparer.OrdinalIgnoreCase))
         {
             if (_folderTreeFolderCount >= CloudFolderTree.DefaultMaxFolders)
                 break;
             _folderTreeCodes[e.Id] = e.Code ?? CloudEntityCodes.CloudFolder;
-            var name = CloudApiService.GetDisplayName(e);
+            var name = CloudInteractiveListing.ResolveRowName(e, ResolveListingMetaName);
             _folderTreeNames[e.Id] = name;
             folderKids.Add(new CloudFolderTree.Node(e.Id, name));
             _folderTreeFolderCount++;
