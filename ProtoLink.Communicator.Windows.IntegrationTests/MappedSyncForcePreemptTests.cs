@@ -248,6 +248,73 @@ public class MappedSyncForcePreemptTests
     }
 
     /// <summary>
+    /// Live FAIL 1.0.87 FORCE_NO_PROGRESS: post-push folder reload held the exclusive lane
+    /// (MyNotesFolder GetEntities paint). Force waited on lock, then listing Ready unmasked
+    /// Waiting for network…. Reload must run after release so Force acquires during paint.
+    /// </summary>
+    [Fact]
+    public async Task StartForcePull_DuringPostPushReload_AcquiresWithoutWaitingOnReload()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-reload-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new ForcePreemptFake();
+            var mapping = new CloudSyncMapping
+            {
+                CloudFolderId = Guid.NewGuid(),
+                LocalPath = root,
+                CloudFolderName = "test-map"
+            };
+            var mappings = new ObservableCollection<CloudSyncMapping> { mapping };
+            var reloadEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseReload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var statuses = new List<string>();
+
+            var coordinator = new CloudMappedSyncCoordinator(
+                fake,
+                new CloudApiService(new HttpClient()),
+                mappings,
+                reloadCurrentFolderAsync: async () =>
+                {
+                    reloadEntered.TrySetResult();
+                    await releaseReload.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                },
+                setStatus: s => { lock (statuses) statuses.Add(s); },
+                syncFullErrorReporter: null,
+                dispatcher: null,
+                isAuthenticated: () => true,
+                getUserId: () => null,
+                onAuthRequired: null,
+                onSyncCompleted: null,
+                startInterval: false);
+
+            var pushTask = coordinator.RequestLocalPushAsync();
+            await reloadEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Lane must already be free while listing paint is still blocked.
+            Assert.False(coordinator.IsSyncActiveForTests);
+
+            coordinator.StartForcePull(mapping);
+            await fake.ForcePullStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, fake.ForcePullCount);
+
+            lock (statuses)
+            {
+                Assert.Contains(statuses, s => s.Contains("Force download", StringComparison.OrdinalIgnoreCase));
+            }
+
+            releaseReload.TrySetResult();
+            await pushTask.WaitAsync(TimeSpan.FromSeconds(10));
+            await WaitUntilAsync(() => !coordinator.IsSyncActiveForTests, TimeSpan.FromSeconds(10));
+            Assert.False(coordinator.IsForcePreferredForTests);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
     /// After preempt releases Uploading…, a racing RequestLocalPush must not re-steal the
     /// mutex while Force is preferred (interval/push race behind ForceAcquireTimeout).
     /// </summary>

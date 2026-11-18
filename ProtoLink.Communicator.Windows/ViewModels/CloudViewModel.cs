@@ -588,7 +588,9 @@ public partial class CloudViewModel : ViewModelBase
         SelectedItem = null;
         if (Items.Count > 0)
             Items.Clear();
-        StatusText = "Loading...";
+        // Do not mask Force lock-wait / download (live FAIL 1.0.87 FORCE_NO_PROGRESS).
+        if (!IsForceProgressStatus(_statusText))
+            StatusText = "Loading...";
     }
 
     private static async Task YieldForChromePaintAsync()
@@ -676,7 +678,7 @@ public partial class CloudViewModel : ViewModelBase
             SelectedItem = null;
         var selectedId = restoreSelectionId ?? SelectedItem?.Id;
 
-        if (!quiet)
+        if (!quiet && !IsForceProgressStatus(_statusText))
             StatusText = "Loading...";
         try
         {
@@ -724,13 +726,16 @@ public partial class CloudViewModel : ViewModelBase
             _listedFolderId = folderId;
             ClearNetworkBanner();
             // Navigate sets Loading even when quiet — clear so ShowStatusBanner hides.
-            StatusText = "Ready";
+            // Never clobber Force lock-wait / Force download… (tester FAIL 1.0.87).
+            if (!IsForceProgressStatus(_statusText))
+                StatusText = "Ready";
             _ = RefreshFolderTreeAsync();
             ScheduleFolderSizeRefresh();
         }
         catch (Exception ex)
         {
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
+            // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
             ReportCaughtException(ex, asNetworkFailure: true);
             ClearFolderTree();
             // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).

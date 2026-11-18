@@ -230,7 +230,7 @@ public sealed class CloudMappedSyncCoordinator
                 _syncFullErrorReporter,
                 _onAuthRequired,
                 ct);
-            await MarshalAsync(_reloadCurrentFolderAsync);
+            // Reload after exclusive release (RunForceExclusiveAsync).
             if (ok)
                 await NotifyDataChangedAsync();
             _onSyncCompleted?.Invoke();
@@ -251,7 +251,7 @@ public sealed class CloudMappedSyncCoordinator
                 _syncFullErrorReporter,
                 _onAuthRequired,
                 ct);
-            await MarshalAsync(_reloadCurrentFolderAsync);
+            // Reload after exclusive release (RunForceExclusiveAsync).
             _onSyncCompleted?.Invoke();
         }));
     }
@@ -352,7 +352,9 @@ public sealed class CloudMappedSyncCoordinator
                 () => _ = MarshalFireAndForget(() => _onAuthRequired?.Invoke()),
                 ct);
 
-            await MarshalAsync(_reloadCurrentFolderAsync);
+            // Reload after exclusive release (RunExclusiveAsync) — live FAIL 1.0.87
+            // FORCE_NO_PROGRESS: MyNotesFolder GetEntities paint held the mutex after Uploading
+            // finished, so Force stayed on Waiting for sync lock… then listing Ready wiped it.
 
             if (notifyIfUploaded && applied > 0)
                 await NotifyDataChangedAsync();
@@ -379,6 +381,7 @@ public sealed class CloudMappedSyncCoordinator
         Interlocked.Exchange(ref _syncActive, 1);
         var workCts = new CancellationTokenSource();
         Volatile.Write(ref _exclusiveWorkCts, workCts);
+        var reloadAfterRelease = false;
         try
         {
             try
@@ -393,6 +396,8 @@ public sealed class CloudMappedSyncCoordinator
             // Force finished — allow deferred Sync drains on this hold (Android clearForcePreferred then deferredFull).
             Interlocked.Exchange(ref _forcePreferred, 0);
             await DrainDeferredWhileHoldingExclusiveAsync().ConfigureAwait(false);
+            // Folder paint after Force+drain release (bodies no longer reload while holding).
+            reloadAfterRelease = true;
         }
         finally
         {
@@ -402,6 +407,9 @@ public sealed class CloudMappedSyncCoordinator
             Interlocked.Exchange(ref _syncActive, 0);
             _syncMutex.Release();
         }
+
+        if (reloadAfterRelease)
+            await ReloadCurrentFolderIfForceIdleAsync().ConfigureAwait(false);
     }
 
     private async Task<bool> TryAcquireMutexForForceAsync()
@@ -438,6 +446,7 @@ public sealed class CloudMappedSyncCoordinator
         var budgeted = budget is { } b0 && b0 > TimeSpan.Zero;
         if (budgeted)
             Interlocked.Exchange(ref _budgetedExclusive, 1);
+        var reloadAfterRelease = false;
         try
         {
             var ct = workCts.Token;
@@ -462,6 +471,8 @@ public sealed class CloudMappedSyncCoordinator
                 return;
 
             await DrainDeferredWhileHoldingExclusiveAsync().ConfigureAwait(false);
+            // Folder listing after the lane is free — never hold exclusive across GetEntities paint.
+            reloadAfterRelease = Volatile.Read(ref _forcePreferred) == 0;
         }
         finally
         {
@@ -473,6 +484,20 @@ public sealed class CloudMappedSyncCoordinator
             Interlocked.Exchange(ref _syncActive, 0);
             _syncMutex.Release();
         }
+
+        if (reloadAfterRelease)
+            await ReloadCurrentFolderIfForceIdleAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// UI folder paint after exclusive work. Skipped while Force owns the lane so listing
+    /// Ready/Loading cannot mask Waiting for sync lock… / Force download… (1.0.87).
+    /// </summary>
+    private Task ReloadCurrentFolderIfForceIdleAsync()
+    {
+        if (Volatile.Read(ref _forcePreferred) != 0)
+            return Task.CompletedTask;
+        return MarshalAsync(_reloadCurrentFolderAsync);
     }
 
     private async Task DrainDeferredWhileHoldingExclusiveAsync()
@@ -598,7 +623,7 @@ public sealed class CloudMappedSyncCoordinator
             () => _ = MarshalFireAndForget(() => _onAuthRequired?.Invoke()),
             ct);
 
-        await MarshalAsync(_reloadCurrentFolderAsync);
+        // Reload after exclusive release — see RunExclusiveAsync / FORCE_NO_PROGRESS 1.0.87.
 
         try { _onSyncCompleted?.Invoke(); }
         catch { /* ignore notifier errors */ }
@@ -636,7 +661,7 @@ public sealed class CloudMappedSyncCoordinator
             mappedLocalRootPath: healedPath,
             cancellationToken: ct);
 
-        await MarshalAsync(_reloadCurrentFolderAsync);
+        // Reload after exclusive release — see RunExclusiveAsync / FORCE_NO_PROGRESS 1.0.87.
 
         try { _onSyncCompleted?.Invoke(); }
         catch { /* ignore */ }
