@@ -184,6 +184,120 @@ public class MappedSyncForcePreemptTests
         }
     }
 
+    /// <summary>
+    /// Live FAIL 1.0.85 FORCE_LOCK_WAIT_NO_ACQUIRE: Uploading local changes… held the
+    /// exclusive lane; Force stayed on Waiting for sync lock… (hang-SynchronizeAll units
+    /// alone did not cover this class).
+    /// </summary>
+    [Fact]
+    public async Task StartForcePull_WhileUploadingPushActive_CancelsPushAndRunsForce()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-upload-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new ForcePreemptFake { HangPushLocal = true };
+            var mapping = new CloudSyncMapping
+            {
+                CloudFolderId = Guid.NewGuid(),
+                LocalPath = root,
+                CloudFolderName = "test-map"
+            };
+            var mappings = new ObservableCollection<CloudSyncMapping> { mapping };
+            var statuses = new List<string>();
+
+            var coordinator = new CloudMappedSyncCoordinator(
+                fake,
+                new CloudApiService(new HttpClient()),
+                mappings,
+                reloadCurrentFolderAsync: () => Task.CompletedTask,
+                setStatus: s => { lock (statuses) statuses.Add(s); },
+                syncFullErrorReporter: null,
+                dispatcher: null,
+                isAuthenticated: () => true,
+                getUserId: () => null,
+                onAuthRequired: null,
+                onSyncCompleted: null,
+                startInterval: false);
+
+            var pushTask = coordinator.RequestLocalPushAsync();
+            await fake.PushStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(coordinator.IsSyncActiveForTests);
+
+            coordinator.StartForcePull(mapping);
+            await fake.ForcePullStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(fake.PushWasCancelled);
+            Assert.Equal(1, fake.ForcePullCount);
+            Assert.Equal(1, fake.PushLocalCount);
+
+            fake.ReleaseForce.TrySetResult();
+            await pushTask.WaitAsync(TimeSpan.FromSeconds(10));
+            await WaitUntilAsync(() => !coordinator.IsSyncActiveForTests, TimeSpan.FromSeconds(10));
+            Assert.False(coordinator.IsForcePreferredForTests);
+
+            lock (statuses)
+            {
+                Assert.Contains(statuses, s => s.Contains("Uploading local changes", StringComparison.OrdinalIgnoreCase));
+                Assert.Contains(statuses, s => s.Contains("Force download", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
+    /// After preempt releases Uploading…, a racing RequestLocalPush must not re-steal the
+    /// mutex while Force is preferred (interval/push race behind ForceAcquireTimeout).
+    /// </summary>
+    [Fact]
+    public async Task RequestLocalPush_WhileForcePreferred_DoesNotStart()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-skip-push-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new ForcePreemptFake { HangForcePull = true };
+            var mapping = new CloudSyncMapping
+            {
+                CloudFolderId = Guid.NewGuid(),
+                LocalPath = root,
+                CloudFolderName = "test-map"
+            };
+            var mappings = new ObservableCollection<CloudSyncMapping> { mapping };
+
+            var coordinator = new CloudMappedSyncCoordinator(
+                fake,
+                new CloudApiService(new HttpClient()),
+                mappings,
+                reloadCurrentFolderAsync: () => Task.CompletedTask,
+                setStatus: _ => { },
+                syncFullErrorReporter: null,
+                dispatcher: null,
+                isAuthenticated: () => true,
+                getUserId: () => null,
+                onAuthRequired: null,
+                onSyncCompleted: null,
+                startInterval: false);
+
+            coordinator.StartForcePull(mapping);
+            await fake.ForcePullStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(coordinator.IsForcePreferredForTests);
+
+            await coordinator.RequestLocalPushAsync();
+            Assert.Equal(0, fake.PushLocalCount);
+
+            fake.ReleaseForce.TrySetResult();
+            await WaitUntilAsync(() => !coordinator.IsSyncActiveForTests, TimeSpan.FromSeconds(10));
+            Assert.False(coordinator.IsForcePreferredForTests);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -201,12 +315,16 @@ public class MappedSyncForcePreemptTests
         public ForcePreemptFake() : base(new CloudApiService(new HttpClient())) { }
 
         public TaskCompletionSource FullStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PushStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ForcePullStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseForce { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool FullWasCancelled { get; private set; }
+        public bool PushWasCancelled { get; private set; }
         public int SynchronizeAllCount { get; private set; }
+        public int PushLocalCount { get; private set; }
         public int ForcePullCount { get; private set; }
         public bool HangSynchronizeAll { get; set; }
+        public bool HangPushLocal { get; set; }
         public bool HangForcePull { get; set; }
 
         public override async Task<bool> SynchronizeAllAsync(
@@ -236,6 +354,34 @@ public class MappedSyncForcePreemptTests
             return true;
         }
 
+        public override async Task<int> PushLocalChangesAllAsync(
+            IEnumerable<CloudSyncMapping> mappings,
+            Action<string> reportStatus,
+            Action<Exception>? reportFullError,
+            Action? onAuthRequired = null,
+            CancellationToken cancellationToken = default)
+        {
+            reportStatus("Uploading local changes…");
+            PushLocalCount++;
+            PushStarted.TrySetResult();
+            if (HangPushLocal)
+            {
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    PushWasCancelled = true;
+                    reportStatus("Upload paused.");
+                    throw;
+                }
+            }
+
+            reportStatus("No local changes to upload.");
+            return 0;
+        }
+
         public override async Task<bool> ForcePullAsync(
             CloudSyncMapping mapping,
             Action<string> reportStatus,
@@ -246,7 +392,7 @@ public class MappedSyncForcePreemptTests
             reportStatus("Force download…");
             ForcePullCount++;
             ForcePullStarted.TrySetResult();
-            if (HangForcePull || HangSynchronizeAll)
+            if (HangForcePull || HangSynchronizeAll || HangPushLocal)
             {
                 await ReleaseForce.Task.WaitAsync(cancellationToken);
             }

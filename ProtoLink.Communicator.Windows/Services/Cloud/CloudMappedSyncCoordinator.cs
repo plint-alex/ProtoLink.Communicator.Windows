@@ -134,6 +134,10 @@ public sealed class CloudMappedSyncCoordinator
                     await Task.Delay(period, token);
                     if (!_isAuthenticated()) continue;
                     if (_syncMappings.Count == 0) continue;
+                    // Force owns the lane — do not start Uploading… and steal the mutex
+                    // while RunForceExclusiveAsync is bound-waiting (live FAIL 1.0.85).
+                    if (Volatile.Read(ref _forcePreferred) != 0)
+                        continue;
                     if (Volatile.Read(ref _syncActive) != 0)
                         continue;
                     if (Volatile.Read(ref _deferredFullSync) != 0)
@@ -419,6 +423,14 @@ public sealed class CloudMappedSyncCoordinator
         // Only one sync at a time. Disk access is serialized per file by MappedFolderIoGate inside
         // SyncEngine — holding that gate here blocked note loads for the whole sync (network included).
         await _syncMutex.WaitAsync().ConfigureAwait(false);
+        // Race with Force: interval/push may Win the mutex right after a preempted holder
+        // releases — yield immediately so TryAcquireMutexForForceAsync can proceed.
+        if (Volatile.Read(ref _forcePreferred) != 0)
+        {
+            _syncMutex.Release();
+            return;
+        }
+
         Interlocked.Exchange(ref _syncActive, 1);
         var workCts = new CancellationTokenSource();
         Volatile.Write(ref _exclusiveWorkCts, workCts);

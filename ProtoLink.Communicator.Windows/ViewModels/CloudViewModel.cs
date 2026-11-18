@@ -300,17 +300,23 @@ public partial class CloudViewModel : ViewModelBase
             _statusText = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShowStatusBanner));
+            // Force progress hides the network banner via ShowNetworkBanner getter.
+            OnPropertyChanged(nameof(ShowNetworkBanner));
         }
     }
 
     /// <summary>AT-C6: shown when a folder listing fails; cleared on successful load / SignalR reconnect refresh.</summary>
-    public bool ShowNetworkBanner => _showNetworkBanner;
+    /// <remarks>
+    /// Hidden while a Force lock-wait / download status is active so UIA and the user still see
+    /// Force progress (tester FAIL 1.0.85 — network banner masked Waiting for sync lock…).
+    /// </remarks>
+    public bool ShowNetworkBanner => _showNetworkBanner && !IsForceProgressStatus(_statusText);
 
     /// <summary>Transient sync/copy/error line (replaces the permanent status bar).</summary>
     public bool ShowStatusBanner =>
-        !_showNetworkBanner
-        && !string.IsNullOrWhiteSpace(_statusText)
-        && !string.Equals(_statusText, "Ready", StringComparison.Ordinal);
+        !string.IsNullOrWhiteSpace(_statusText)
+        && !string.Equals(_statusText, "Ready", StringComparison.Ordinal)
+        && (!_showNetworkBanner || IsForceProgressStatus(_statusText));
 
     public bool HasErrorDetails => _lastError != null;
 
@@ -1151,5 +1157,18 @@ public partial class CloudViewModel : ViewModelBase
             ? "You don't have permission. See details."
             : "Something went wrong. See details.";
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>
+    /// Force acquire / progressive download statuses must win over the network banner
+    /// so lock-wait and Force download… stay visible to UIA and the user.
+    /// </summary>
+    internal static bool IsForceProgressStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        return status.StartsWith("Waiting for sync lock", StringComparison.OrdinalIgnoreCase)
+               || status.StartsWith("Timed out waiting for sync lock", StringComparison.OrdinalIgnoreCase)
+               || status.StartsWith("Force download", StringComparison.OrdinalIgnoreCase)
+               || status.StartsWith("Force upload", StringComparison.OrdinalIgnoreCase);
     }
 }
