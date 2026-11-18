@@ -155,7 +155,15 @@ public partial class CloudViewModel
 
         try
         {
+            // Same root → keep user expands across listing refresh; new root → E9b first paint.
+            var nextExpanded = CloudFolderTree.ExpandSetForRefresh(
+                _folderTreeRootId,
+                treeRoot,
+                _folderTreeExpanded);
             ResetFolderTreeCache();
+            foreach (var id in nextExpanded)
+                _folderTreeExpanded.Add(id);
+
             var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == treeRoot)?.Name
                            ?? (_photosLibraryId == treeRoot
                                ? ShareSheetStrings.Photos(_settingsService.LoadSettings().UiLanguage)
@@ -170,8 +178,14 @@ public partial class CloudViewModel
                 return;
             }
 
-            // Root expanded so direct children show; children start collapsed (AT-CE9).
-            _folderTreeExpanded.Add(treeRoot);
+            // Reload children for preserved expands so ProjectVisible can keep descendants visible.
+            foreach (var id in _folderTreeExpanded.ToList())
+            {
+                if (id == treeRoot) continue;
+                if (!await TryEnsureFolderTreeChildrenLoadedAsync(id))
+                    continue; // soft-fail: leave unloaded; expand set stays for retry
+            }
+
             _folderTreeRootId = treeRoot;
             RebuildFolderTreeRows();
         }

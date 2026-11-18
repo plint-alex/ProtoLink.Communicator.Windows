@@ -184,4 +184,55 @@ public class CloudFolderTreeTests
         Assert.DoesNotContain(a, expanded);
         Assert.DoesNotContain(a1, expanded);
     }
+
+    [Fact]
+    public void ExpandSetForRefresh_SameRoot_KeepsNestedExpands()
+    {
+        var root = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var prior = new HashSet<Guid> { root, a, a1 };
+        var next = CloudFolderTree.ExpandSetForRefresh(root, root, prior);
+        Assert.Contains(root, next);
+        Assert.Contains(a, next);
+        Assert.Contains(a1, next);
+    }
+
+    [Fact]
+    public void ExpandSetForRefresh_NewRoot_StartsCollapsedAtRootOnly()
+    {
+        var oldRoot = Guid.NewGuid();
+        var newRoot = Guid.NewGuid();
+        var prior = new HashSet<Guid> { oldRoot, Guid.NewGuid() };
+        var next = CloudFolderTree.ExpandSetForRefresh(oldRoot, newRoot, prior);
+        Assert.Equal(new HashSet<Guid> { newRoot }, next);
+    }
+
+    [Fact]
+    public void ProjectVisible_AfterRefreshRebuild_PreservedExpandsKeepDescendantsVisible()
+    {
+        // Simulates ResetFolderTreeCache + reload children while expand set was preserved.
+        var root = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var map = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [root] = new[] { new CloudFolderTree.Node(a, "A") },
+            [a] = new[] { new CloudFolderTree.Node(a1, "A1") },
+            [a1] = Array.Empty<CloudFolderTree.Node>()
+        };
+        var priorExpanded = new HashSet<Guid> { root, a };
+        var afterRefresh = CloudFolderTree.ExpandSetForRefresh(root, root, priorExpanded);
+        var loaded = new HashSet<Guid> { root, a, a1 };
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, "Root"),
+            map,
+            afterRefresh,
+            loaded,
+            selectedId: a1);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Contains(rows, r => r.Id == a1);
+        Assert.True(rows.First(r => r.Id == a).IsExpanded);
+    }
 }

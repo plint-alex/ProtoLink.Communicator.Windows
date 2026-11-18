@@ -147,4 +147,26 @@ public static class CloudFolderTree
         foreach (var k in kids)
             CollapseBranch(k.Id, childrenByParent, expandedIds);
     }
+
+    /// <summary>
+    /// Mid-session listing refresh: keep prior expands when the tree root is unchanged.
+    /// First paint / new root → only the new root (E9b collapse-from-start).
+    /// </summary>
+    public static HashSet<Guid> ExpandSetForRefresh(
+        Guid? previousRootId,
+        Guid newRootId,
+        IReadOnlyCollection<Guid>? previousExpanded)
+    {
+        if (newRootId == Guid.Empty)
+            return new HashSet<Guid>();
+
+        if (previousRootId == newRootId && previousExpanded is { Count: > 0 })
+        {
+            var kept = new HashSet<Guid>(previousExpanded);
+            kept.Add(newRootId);
+            return kept;
+        }
+
+        return new HashSet<Guid> { newRootId };
+    }
 }
