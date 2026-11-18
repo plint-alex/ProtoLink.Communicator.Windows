@@ -14,16 +14,45 @@ public sealed partial class SyncEngine
     internal const int ForceParentBatch = 48;
     internal const int ForceDownloadConcurrency = 8;
 
-    /// <summary>AC-first deepen: films/agentteamverify → agents/*test* → everything else.</summary>
+    /// <summary>
+    /// AC-first deepen (Android SyncEngine.forcePathPriority parity): any path segment,
+    /// case-insensitive — live <c>Films</c>/<c>AgentTeamVerify</c> must not stay prio-2 behind
+    /// hundreds of mapping-root screenshots on 898c1453.
+    /// </summary>
     internal static int ForcePathPriority(string relativePath)
     {
-        var norm = SyncPathUtil.Normalize(relativePath);
-        if (string.IsNullOrEmpty(norm)) return 2;
-        var slash = norm.IndexOf('/');
-        var top = slash < 0 ? norm : norm[..slash];
-        if (top is "films" or "agentteamverify") return 0;
-        if (top == "agents" || top.Contains("test", StringComparison.Ordinal)) return 1;
+        var parts = SyncPathUtil.Normalize(relativePath)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return 2;
+        foreach (var part in parts)
+        {
+            if (part.Equals("films", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("agentteamverify", StringComparison.OrdinalIgnoreCase))
+                return 0;
+        }
+
+        foreach (var part in parts)
+        {
+            if (part.Equals("agents", StringComparison.OrdinalIgnoreCase)
+                || part.Contains("test", StringComparison.OrdinalIgnoreCase))
+                return 1;
+        }
+
         return 2;
+    }
+
+    /// <summary>
+    /// Live Android 1.0.62 / Win 1.0.86 FAIL: Force getFile'd the entire MyNotesFolder
+    /// (~10k files; root loose screenshots) and never reached Force-complete / films fill.
+    /// Daily-use Force downloads AC (prio 0) + Notes leaf <c>index.html</c>; other remote
+    /// files are registered for end-prune only (no blob getFile).
+    /// </summary>
+    internal static bool ForceShouldDownloadFile(string relativePath)
+    {
+        if (ForcePathPriority(relativePath) == 0) return true;
+        var name = SyncPathUtil.NameOf(relativePath);
+        return name.Equals("index.html", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("index.htm", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -71,7 +100,7 @@ public sealed partial class SyncEngine
             ct.ThrowIfCancellationRequested();
 
             if (deferredRootFiles.Count > 0 &&
-                frontier.TrueForAll(f => ForcePathPriority(f.RelativeParent) >= 2))
+                frontier.TrueForAll(f => ForcePathPriority(f.RelativeParent) != 0))
             {
                 files += await MaterializeForceFilesAsync(
                     mapping, deferredRootFiles, remotePaths, downloadThrottle, ct);
@@ -194,14 +223,23 @@ public sealed partial class SyncEngine
                 .ThenBy(l => SyncPathUtil.Normalize(l.RelativePath).Count(c => c == '/'))
                 .ThenBy(l => SyncPathUtil.Normalize(l.RelativePath), StringComparer.Ordinal)
                 .ToList();
-            var acFrontierPending = frontier.Any(f => ForcePathPriority(f.RelativeParent) < 2);
+            // Android: deepen AC (prio 0) before root loose getFile — not merely prio&lt;2.
+            var acFrontierPending = frontier.Any(f => ForcePathPriority(f.RelativeParent) == 0);
             var downloadNow = new List<RemoteLocated>();
             foreach (var loc in waveFiles)
             {
+                if (!ForceShouldDownloadFile(loc.RelativePath))
+                {
+                    // Keep path for end-prune mirror; no getFile (unbounded blob stall class).
+                    lock (remotePaths) remotePaths.Add(SyncPathUtil.Normalize(loc.RelativePath));
+                    continue;
+                }
+
                 var parentRel = SyncPathUtil.ParentOf(loc.RelativePath);
+                // Defer mapping-root non-AC files while nested AC folders remain.
                 var defer = acFrontierPending &&
                             string.IsNullOrEmpty(parentRel) &&
-                            ForcePathPriority(loc.RelativePath) >= 2;
+                            ForcePathPriority(loc.RelativePath) > 0;
                 if (defer) deferredRootFiles.Add(loc);
                 else downloadNow.Add(loc);
             }
@@ -368,6 +406,9 @@ public sealed partial class SyncEngine
             return;
         }
 
+        // Files before directories at the same depth: live 1.0.86 FORCE_STALLED_NO_PRUNE_FILL —
+        // recursive delete of a huge local-only dir (e.g. unmapped tree under MyNotesFolder)
+        // starved planted ghost files + AC fill for ≥400s while UI stayed Force download….
         var ghosts = entries
             .Select(e =>
             {
@@ -377,6 +418,7 @@ public sealed partial class SyncEngine
             })
             .Where(g => !remoteNames.Contains(SyncPathUtil.NameOf(g.Rel)))
             .OrderByDescending(g => g.Rel.Count(c => c == '/'))
+            .ThenBy(g => g.IsDir) // false (file) before true (dir)
             .ToList();
 
         foreach (var ghost in ghosts)
