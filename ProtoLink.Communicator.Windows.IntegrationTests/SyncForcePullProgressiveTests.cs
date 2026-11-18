@@ -19,6 +19,127 @@ public class SyncForcePullProgressiveTests
     private static readonly Guid NameTypeId = CloudEntityCodes.NameTypeId;
 
     [Fact]
+    public void AgentsRoleQueuePaths_ProtectsOpenQueues_NotDone()
+    {
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/roles/frontend-developer/todo/P1-task/index.html"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/roles/frontend-developer/progress"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/roles/frontend-developer/hold/P1-x"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/roles/frontend-developer"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor("Protolink.ru/Agents"));
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/roles/frontend-developer/done/P1-old/index.html"));
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/docs/ops/index.html"));
+        Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/roles/fe/todo/ghost-shell"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/roles/fe/todo"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize("films"));
+    }
+
+    [Fact]
+    public async Task ForcePull_DoesNotPruneAgentsRoleOpenQueueTaskPage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-agents-q-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-force-agents-q-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        var taskIndex = Path.Combine(
+            root,
+            "Protolink.ru", "Agents", "roles", "frontend-developer", "todo",
+            "P1-20261118-planted", "index.html");
+        Directory.CreateDirectory(Path.GetDirectoryName(taskIndex)!);
+        File.WriteAllText(taskIndex, "planted-agents-queue");
+        File.WriteAllText(Path.Combine(root, "ghost-root.txt"), "local-only-ghost");
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var filmsFolderId = Guid.NewGuid();
+        var filmsFileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+
+        const string cloudBody = "films-ok";
+        using var http = new HttpClient(new ForceHttpHandler(
+            cloudFolderId,
+            filmsFolderId,
+            filmsFileId,
+            Encoding.UTF8.GetBytes(cloudBody),
+            nullFailFileId: null))
+        {
+            BaseAddress = new Uri("http://sync-test.local/")
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        await engine.ForcePullMappingAsync(new SyncMappingInfo
+        {
+            Id = mappingId,
+            CloudFolderId = cloudFolderId,
+            LocalRootPath = root
+        });
+
+        Assert.True(File.Exists(taskIndex), "Agents open-queue task page must survive Force prune");
+        Assert.Equal("planted-agents-queue", File.ReadAllText(taskIndex));
+        Assert.False(File.Exists(Path.Combine(root, "ghost-root.txt")), "other ghosts still prune");
+        Assert.Equal(cloudBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
+    public async Task ForcePull_SkipsAgentsOpenQueueFolderOnlyMaterialize()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-agents-mkdir-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-force-agents-mkdir-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var filmsFolderId = Guid.NewGuid();
+        var filmsFileId = Guid.NewGuid();
+        var agentsFolderId = Guid.NewGuid();
+        var rolesFolderId = Guid.NewGuid();
+        var roleFolderId = Guid.NewGuid();
+        var todoFolderId = Guid.NewGuid();
+        var shellFolderId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+
+        const string cloudBody = "films-with-agents-shell";
+        using var http = new HttpClient(new AgentsQueueShellHttpHandler(
+            cloudFolderId,
+            filmsFolderId,
+            filmsFileId,
+            Encoding.UTF8.GetBytes(cloudBody),
+            agentsFolderId,
+            rolesFolderId,
+            roleFolderId,
+            todoFolderId,
+            shellFolderId))
+        {
+            BaseAddress = new Uri("http://sync-test.local/")
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        await engine.ForcePullMappingAsync(new SyncMappingInfo
+        {
+            Id = mappingId,
+            CloudFolderId = cloudFolderId,
+            LocalRootPath = root
+        });
+
+        var shellPath = Path.Combine(
+            root, "Protolink.ru", "Agents", "roles", "frontend-developer", "todo", "ghost-shell");
+        Assert.False(Directory.Exists(shellPath), "folder-only remote under open queue must not mkdir empty shell");
+        Assert.Equal(cloudBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
     public void ForcePathPriority_AcFoldersFirst()
     {
         Assert.Equal(0, SyncEngine.ForcePathPriority("films/a.mkv"));
@@ -406,6 +527,125 @@ public class SyncForcePullProgressiveTests
             }
             else if (parentId == _filmsFolderId)
                 list.Add(EntityJson(_filmsFileId, CloudEntityCodes.CloudFile, "index.html"));
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(list), Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static object EntityJson(Guid id, string code, string name) => new
+        {
+            id,
+            code,
+            version = 1,
+            creationTime = DateTime.UtcNow,
+            updateTime = DateTime.UtcNow,
+            values = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    type = "String",
+                    value = name,
+                    parents = new[] { NameTypeId }
+                }
+            }
+        };
+    }
+
+    /// <summary>Remote: films file + folder-only Agents open-queue task shell.</summary>
+    private sealed class AgentsQueueShellHttpHandler : HttpMessageHandler
+    {
+        private readonly Guid _rootFolderId;
+        private readonly Guid _filmsFolderId;
+        private readonly Guid _filmsFileId;
+        private readonly byte[] _fileBytes;
+        private readonly Guid _protolinkRuId;
+        private readonly Guid _agentsId;
+        private readonly Guid _rolesId;
+        private readonly Guid _roleId;
+        private readonly Guid _todoId;
+        private readonly Guid _shellId;
+
+        public AgentsQueueShellHttpHandler(
+            Guid rootFolderId,
+            Guid filmsFolderId,
+            Guid filmsFileId,
+            byte[] fileBytes,
+            Guid agentsId,
+            Guid rolesId,
+            Guid roleId,
+            Guid todoId,
+            Guid shellId)
+        {
+            _rootFolderId = rootFolderId;
+            _filmsFolderId = filmsFolderId;
+            _filmsFileId = filmsFileId;
+            _fileBytes = fileBytes;
+            _protolinkRuId = Guid.NewGuid();
+            _agentsId = agentsId;
+            _rolesId = rolesId;
+            _roleId = roleId;
+            _todoId = todoId;
+            _shellId = shellId;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Contains("GetEntities", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(GetEntities(request));
+            if (path.Contains("getFile", StringComparison.OrdinalIgnoreCase))
+            {
+                var idText = path.Split('/').LastOrDefault() ?? "";
+                if (Guid.TryParse(idText, out var id) && id == _filmsFileId)
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(_fileBytes)
+                    });
+                }
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+        }
+
+        private HttpResponseMessage GetEntities(HttpRequestMessage request)
+        {
+            var body = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "{}";
+            using var doc = JsonDocument.Parse(string.IsNullOrEmpty(body) ? "{}" : body);
+            Guid? parentId = null;
+            if (doc.RootElement.TryGetProperty("parentIds", out var parents)
+                && parents.ValueKind == JsonValueKind.Array
+                && parents.GetArrayLength() > 0)
+                parentId = parents[0].GetGuid();
+
+            var list = new List<object>();
+            if (parentId == _rootFolderId)
+            {
+                list.Add(EntityJson(_filmsFolderId, CloudEntityCodes.CloudFolder, "films"));
+                list.Add(EntityJson(_protolinkRuId, CloudEntityCodes.CloudFolder, "Protolink.ru"));
+            }
+            else if (parentId == _filmsFolderId)
+                list.Add(EntityJson(_filmsFileId, CloudEntityCodes.CloudFile, "index.html"));
+            else if (parentId == _protolinkRuId)
+                list.Add(EntityJson(_agentsId, CloudEntityCodes.CloudFolder, "Agents"));
+            else if (parentId == _agentsId)
+                list.Add(EntityJson(_rolesId, CloudEntityCodes.CloudFolder, "roles"));
+            else if (parentId == _rolesId)
+                list.Add(EntityJson(_roleId, CloudEntityCodes.CloudFolder, "frontend-developer"));
+            else if (parentId == _roleId)
+                list.Add(EntityJson(_todoId, CloudEntityCodes.CloudFolder, "todo"));
+            else if (parentId == _todoId)
+                list.Add(EntityJson(_shellId, CloudEntityCodes.CloudFolder, "ghost-shell"));
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {

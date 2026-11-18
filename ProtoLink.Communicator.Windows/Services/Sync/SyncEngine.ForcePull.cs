@@ -308,6 +308,16 @@ public sealed partial class SyncEngine
 
         if (loc.Entry.IsFolder)
         {
+            if (AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(path))
+            {
+                SyncRemoteDownload.LogMaterializeFailed(
+                    "ForcePullMapping.AgentsQueueSkipMkdir",
+                    path,
+                    loc.Entry.Id.ToString(),
+                    "skip folder materialize under Agents role open queue");
+                return 0;
+            }
+
             try
             {
                 Directory.CreateDirectory(full);
@@ -423,6 +433,16 @@ public sealed partial class SyncEngine
 
         foreach (var ghost in ghosts)
         {
+            if (AgentsRoleQueuePaths.IsForcePruneProtected(ghost.Rel, mapping.LocalRootPath))
+            {
+                SyncRemoteDownload.LogMaterializeFailed(
+                    "ForcePullMapping.EarlyPrune.AgentsQueueSkip",
+                    ghost.Rel,
+                    "-",
+                    "skip prune of Agents role open queue path");
+                continue;
+            }
+
             try
             {
                 if (ghost.IsDir)
@@ -464,6 +484,16 @@ public sealed partial class SyncEngine
         {
             var path = SyncPathUtil.Normalize(entry.RelativePath);
             if (remotePaths.Contains(path)) continue;
+            if (AgentsRoleQueuePaths.IsForcePruneProtected(path, mapping.LocalRootPath))
+            {
+                SyncRemoteDownload.LogMaterializeFailed(
+                    "ForcePullMapping.Prune.AgentsQueueSkip",
+                    path,
+                    "-",
+                    "skip prune of Agents role open queue path");
+                continue;
+            }
+
             var full = ToFull(mapping.LocalRootPath, path);
             try
             {
@@ -490,6 +520,8 @@ public sealed partial class SyncEngine
         {
             var path = SyncPathUtil.Normalize(meta.RelativePath);
             if (remotePaths.Contains(path)) continue;
+            if (AgentsRoleQueuePaths.IsForcePruneProtected(path, mapping.LocalRootPath))
+                continue;
             _store.Delete(mapping.Id, path);
         }
     }
