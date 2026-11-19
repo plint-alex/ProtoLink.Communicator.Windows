@@ -73,6 +73,66 @@ public sealed class SameNamedCloudFolderHealTests
             SameNamedCloudFolderHeal.CanonicalIdIfMappedIsDuplicate(WinId, "MyNotesFolder", SiblingsLiveEmptyOlder));
     }
 
+    /// <summary>
+    /// Demotion FAIL class (Win 1.0.94): raw GetEntities Count preferred ghost-file twin over
+    /// folder-rich 898. After FolderChildCount enrich, ImmediateChildCount is folders-only —
+    /// twin junk files must not demote a mapped content-bearing 898.
+    /// </summary>
+    [Fact]
+    public void PreferExisting_FolderRichCanonicalBeatsJunkFileTwin()
+    {
+        var siblings = new[]
+        {
+            new SameNamedCloudFolderHeal.Sibling(DupId, "MyNotesFolder", "2026-10-28T09:46:55", 0),
+            new SameNamedCloudFolderHeal.Sibling(WinId, "MyNotesFolder", "2026-10-29T18:49:32", 24)
+        };
+        var pick = SameNamedCloudFolderHeal.PreferExistingSameName("MyNotesFolder", siblings);
+        Assert.NotNull(pick);
+        Assert.Equal(WinId, pick!.Value.Id);
+        Assert.Null(
+            SameNamedCloudFolderHeal.CanonicalIdIfMappedIsDuplicate(WinId, "MyNotesFolder", siblings));
+    }
+
+    [Fact]
+    public void Remaps_MappedCanonical_NotDemotedWhenTwinHasZeroFolders()
+    {
+        var parent = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var siblings = new[]
+        {
+            new SameNamedCloudFolderHeal.Sibling(DupId, "MyNotesFolder", "2026-10-28T09:46:55", 0),
+            new SameNamedCloudFolderHeal.Sibling(WinId, "MyNotesFolder", "2026-10-29T18:49:32", 24)
+        };
+        var remaps = SameNamedCloudFolderHeal.RemapsForDuplicateNames(
+            new[] { new SameNamedCloudFolderHeal.MappingRow(WinId, Local, "MyNotesFolder") },
+            new Dictionary<Guid, IReadOnlyList<SameNamedCloudFolderHeal.Sibling>>
+            {
+                [parent] = siblings
+            },
+            new Dictionary<Guid, Guid> { [WinId] = parent });
+        Assert.Empty(remaps);
+    }
+
+    [Fact]
+    public void Remaps_TwinJunk_HealsToFolderRichCanonical()
+    {
+        var parent = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var siblings = new[]
+        {
+            new SameNamedCloudFolderHeal.Sibling(DupId, "MyNotesFolder", "2026-10-28T09:46:55", 0),
+            new SameNamedCloudFolderHeal.Sibling(WinId, "MyNotesFolder", "2026-10-29T18:49:32", 24)
+        };
+        var remaps = SameNamedCloudFolderHeal.RemapsForDuplicateNames(
+            new[] { new SameNamedCloudFolderHeal.MappingRow(DupId, Local, "MyNotesFolder") },
+            new Dictionary<Guid, IReadOnlyList<SameNamedCloudFolderHeal.Sibling>>
+            {
+                [parent] = siblings
+            },
+            new Dictionary<Guid, Guid> { [DupId] = parent });
+        Assert.Single(remaps);
+        Assert.Equal(DupId, remaps[0].FromId);
+        Assert.Equal(WinId, remaps[0].ToId);
+    }
+
     [Fact]
     public void RemapsAndApply_HealsDupMappingWhenEmptyIsOlder()
     {

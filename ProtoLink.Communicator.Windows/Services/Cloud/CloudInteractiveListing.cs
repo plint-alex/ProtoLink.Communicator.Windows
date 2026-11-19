@@ -39,6 +39,14 @@ public static class CloudInteractiveListing
                && string.Equals(displayName, $"folder-{entity.Id:N}", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Count only CloudFolder/CloudRoot — junk CloudFiles must not win SameNamed heal.
+    /// Live FAIL: twin 0bc549dd ~132 files beat folder-rich 898c1453 when raw .Count was used.
+    /// </summary>
+    public static int FolderChildCount(IEnumerable<GetEntitiesResult> children) =>
+        children.Count(e =>
+            e.Code == CloudEntityCodes.CloudFolder || e.Code == CloudEntityCodes.CloudRoot);
+
     /// <summary>Leaf segment of a sync RelativePath without lowercasing (UI label).</summary>
     public static string LeafName(string relativePath)
     {

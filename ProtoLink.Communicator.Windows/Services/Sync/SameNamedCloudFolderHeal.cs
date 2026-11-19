@@ -3,7 +3,8 @@ namespace ProtoLink.Communicator.Windows.Services.Sync;
 /// <summary>
 /// Dual same-named CloudFolders (e.g. two "MyNotesFolder") break cross-device sync when
 /// Create-new in the map wizard adds a second id while another client already maps the populated one.
-/// Canonical pick among case-insensitive name matches: higher ImmediateChildCount, then earliest
+/// Canonical pick among case-insensitive name matches: higher ImmediateChildCount
+/// (folder children only — see <c>CloudInteractiveListing.FolderChildCount</c>), then earliest
 /// CreationTime, then Id — mirrors Android <c>SameNamedCloudFolderHeal</c>.
 /// </summary>
 public static class SameNamedCloudFolderHeal

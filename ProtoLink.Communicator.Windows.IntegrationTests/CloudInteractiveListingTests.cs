@@ -70,6 +70,38 @@ public class CloudInteractiveListingTests
     }
 
     [Fact]
+    public void FolderChildCount_IgnoresCloudFiles()
+    {
+        var kids = new[]
+        {
+            new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFolder },
+            new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFolder },
+            new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFile },
+            new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFile }
+        };
+        Assert.Equal(2, CloudInteractiveListing.FolderChildCount(kids));
+    }
+
+    [Fact]
+    public void FolderChildCount_PrefersFolderRichCanonicalOverJunkTwin()
+    {
+        // Live FAIL: twin 0bc549dd ~132 files vs 898c1453 ~24 folders — raw Count wrongly picks twin.
+        var twinKids = Enumerable.Range(0, 132)
+            .Select(_ => new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFile })
+            .ToArray();
+        var canonicalKids = Enumerable.Range(0, 24)
+            .Select(_ => new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFolder })
+            .Concat(Enumerable.Range(0, 21)
+                .Select(_ => new GetEntitiesResult { Id = Guid.NewGuid(), Code = CloudEntityCodes.CloudFile }))
+            .ToArray();
+        Assert.Equal(0, CloudInteractiveListing.FolderChildCount(twinKids));
+        Assert.Equal(24, CloudInteractiveListing.FolderChildCount(canonicalKids));
+        Assert.True(
+            CloudInteractiveListing.FolderChildCount(canonicalKids)
+            > CloudInteractiveListing.FolderChildCount(twinKids));
+    }
+
+    [Fact]
     public void InteractiveListing_UsesSinglePage_AndDocumentsValuesLightPairing()
     {
         Assert.Equal(1, CloudApiService.InteractiveListingMaxPages);

@@ -228,12 +228,14 @@ public class SameNamedCloudFolderHealRunner
                 continue;
             }
 
+            // Android parity: folderChildCount — junk CloudFiles on a twin must not outrank
+            // a folder-rich canonical (live demotion 898c1453→0bc549dd on Win 1.0.94 raw Count).
             var count = 0;
             try
             {
                 var kids = await _api.GetEntitiesAsync(new[] { s.Id }, includeValues: false)
                     .ConfigureAwait(false);
-                count = kids.Count;
+                count = CloudInteractiveListing.FolderChildCount(kids);
             }
             catch
             {
