@@ -3,15 +3,19 @@ using System.IO;
 namespace ProtoLink.Communicator.Windows.Services.Sync;
 
 /// <summary>
-/// Force/Sync must not thrash AgentTeam open role queues when MyNotesFolder maps over
+/// Force/Sync must not thrash AgentTeam role queues when MyNotesFolder maps over
 /// <c>Protolink.ru/Agents</c> (ops/agents-queue-cloud-map · NFR-SYNC-1).
+/// Live 1.0.77 FORCE_MID_INVENTORY: open-queue shell skip cleared wave16 stall, but Force still
+/// BFS-listed every <c>done/&lt;taskShell&gt;</c> (+ evidence) past 15m — Force also skips done
+/// task shells; local done content stays prune-protected.
 /// </summary>
 internal static class AgentsRoleQueuePaths
 {
-    private static readonly string[] OpenQueues = { "todo", "progress", "hold" };
+    /// <summary>Open queues AgentTeam mutates live + done (Force throughput).</summary>
+    private static readonly string[] ForceExcludedQueues = { "todo", "progress", "hold", "done" };
 
     /// <summary>
-    /// Skip destructive Force prune for open-queue paths, their role/Agents ancestors,
+    /// Skip destructive Force prune for excluded-queue paths, their role/Agents ancestors,
     /// and any directory that contains such a queue on disk (e.g. <c>Protolink.ru</c>).
     /// </summary>
     public static bool IsForcePruneProtected(string relativePath, string? localRootFullPath = null)
@@ -26,12 +30,12 @@ internal static class AgentsRoleQueuePaths
         if (!Directory.Exists(full))
             return false;
 
-        return DirectoryContainsAgentsOpenQueue(full);
+        return DirectoryContainsAgentsExcludedQueue(full);
     }
 
     /// <summary>
-    /// Skip mkdir-only Force materialize for task shells under open queues
-    /// (<c>…/Agents/roles/&lt;role&gt;/todo|progress|hold/&lt;task&gt;</c>).
+    /// Skip mkdir-only Force materialize for task shells under role queues
+    /// (<c>…/Agents/roles/&lt;role&gt;/todo|progress|hold|done/&lt;task&gt;</c>).
     /// </summary>
     public static bool ShouldSkipFolderMaterialize(string relativePath)
     {
@@ -46,7 +50,7 @@ internal static class AgentsRoleQueuePaths
                 continue;
             if (i + 3 >= parts.Length)
                 return false;
-            if (!IsOpenQueue(parts[i + 3]))
+            if (!IsForceExcludedQueue(parts[i + 3]))
                 return false;
             // Under the queue folder (task shell or deeper) — not the queue folder itself.
             return parts.Length >= i + 5;
@@ -71,16 +75,16 @@ internal static class AgentsRoleQueuePaths
                 return true;
             if (i + 3 >= parts.Length)
                 return true;
-            return IsOpenQueue(parts[i + 3]);
+            return IsForceExcludedQueue(parts[i + 3]);
         }
 
         return false;
     }
 
-    private static bool IsOpenQueue(string name) =>
-        OpenQueues.Any(q => q.Equals(name, StringComparison.OrdinalIgnoreCase));
+    private static bool IsForceExcludedQueue(string name) =>
+        ForceExcludedQueues.Any(q => q.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-    private static bool DirectoryContainsAgentsOpenQueue(string fullDir)
+    private static bool DirectoryContainsAgentsExcludedQueue(string fullDir)
     {
         try
         {
@@ -92,7 +96,7 @@ internal static class AgentsRoleQueuePaths
                     continue;
                 foreach (var roleDir in Directory.EnumerateDirectories(rolesDir))
                 {
-                    foreach (var queue in OpenQueues)
+                    foreach (var queue in ForceExcludedQueues)
                     {
                         if (Directory.Exists(Path.Combine(roleDir, queue)))
                             return true;

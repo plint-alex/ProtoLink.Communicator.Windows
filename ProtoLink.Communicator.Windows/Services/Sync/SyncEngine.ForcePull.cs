@@ -188,8 +188,9 @@ public sealed partial class SyncEngine
                         MappingId = mapping.Id,
                         RelativePath = rel
                     });
-                    // Do not BFS-descend Agents open-queue task shells (SkipMkdir only skipped
-                    // mkdir — Android 1.0.76 live FORCE_MID_INVENTORY after wave≈16).
+                    // Do not BFS-descend Agents role-queue task shells (todo|progress|hold|done).
+                    // Open-queue stop cleared Android 1.0.76 wave16 stall; 1.0.77 still mid-inventory
+                    // on done shells + evidence past 15m.
                     if (isFolder &&
                         !visitedFolderIds.Contains(child.Id) &&
                         !AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(rel))
@@ -320,7 +321,7 @@ public sealed partial class SyncEngine
                     "ForcePullMapping.AgentsQueueSkipMkdir",
                     path,
                     loc.Entry.Id.ToString(),
-                    "skip folder materialize under Agents role open queue");
+                    "skip folder materialize under Agents role queue task shell");
                 return 0;
             }
 

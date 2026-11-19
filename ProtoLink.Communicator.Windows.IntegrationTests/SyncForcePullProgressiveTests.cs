@@ -19,7 +19,7 @@ public class SyncForcePullProgressiveTests
     private static readonly Guid NameTypeId = CloudEntityCodes.NameTypeId;
 
     [Fact]
-    public void AgentsRoleQueuePaths_ProtectsOpenQueues_NotDone()
+    public void AgentsRoleQueuePaths_ProtectsRoleQueues_IncludingDone()
     {
         Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
             "Protolink.ru/Agents/roles/frontend-developer/todo/P1-task/index.html"));
@@ -30,14 +30,18 @@ public class SyncForcePullProgressiveTests
         Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
             "Protolink.ru/Agents/roles/frontend-developer"));
         Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor("Protolink.ru/Agents"));
-        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
             "Protolink.ru/Agents/roles/frontend-developer/done/P1-old/index.html"));
         Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
             "Protolink.ru/Agents/docs/ops/index.html"));
         Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
             "Protolink.ru/Agents/roles/fe/todo/ghost-shell"));
+        Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/roles/fe/done/P1-old"));
         Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
             "Protolink.ru/Agents/roles/fe/todo"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/roles/fe/done"));
         Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize("films"));
     }
 
