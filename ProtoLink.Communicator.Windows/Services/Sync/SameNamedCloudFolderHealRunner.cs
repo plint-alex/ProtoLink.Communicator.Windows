@@ -228,21 +228,24 @@ public class SameNamedCloudFolderHealRunner
                 continue;
             }
 
-            // Android parity: folderChildCount — junk CloudFiles on a twin must not outrank
-            // a folder-rich canonical (live demotion 898c1453→0bc549dd on Win 1.0.94 raw Count).
-            var count = 0;
+            // Android parity: healRichnessScore — junk CloudFiles / near-clone dumps must not
+            // outrank folder-rich canonical (898c1453 vs twin 0bc549dd).
+            var folders = 0;
+            var files = 0;
             try
             {
                 var kids = await _api.GetEntitiesAsync(new[] { s.Id }, includeValues: false)
                     .ConfigureAwait(false);
-                count = CloudInteractiveListing.FolderChildCount(kids);
+                folders = CloudInteractiveListing.FolderChildCount(kids);
+                files = CloudInteractiveListing.FileChildCount(kids);
             }
             catch
             {
-                count = 0;
+                folders = 0;
+                files = 0;
             }
 
-            result.Add(s with { ImmediateChildCount = count });
+            result.Add(s with { ImmediateChildCount = folders, ImmediateFileCount = files });
         }
 
         return result;

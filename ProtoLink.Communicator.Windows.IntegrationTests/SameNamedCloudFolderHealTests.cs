@@ -133,6 +133,31 @@ public sealed class SameNamedCloudFolderHealTests
         Assert.Equal(WinId, remaps[0].ToId);
     }
 
+    /// <summary>
+    /// FAIL after FolderChildCount tip: near-clone twin (29 folders + 86 junk files) still
+    /// outranked 898 (28+25) on folders alone — HealRichnessScore must prefer 898.
+    /// </summary>
+    [Fact]
+    public void PreferExisting_NearCloneJunkTwinLosesToCanonical898()
+    {
+        var siblings = new[]
+        {
+            new SameNamedCloudFolderHeal.Sibling(
+                DupId, "MyNotesFolder", "2026-10-28T09:46:55",
+                ImmediateChildCount: 29, ImmediateFileCount: 86),
+            new SameNamedCloudFolderHeal.Sibling(
+                WinId, "MyNotesFolder", "2026-10-29T18:49:32",
+                ImmediateChildCount: 28, ImmediateFileCount: 25)
+        };
+        var pick = SameNamedCloudFolderHeal.PreferExistingSameName("MyNotesFolder", siblings);
+        Assert.NotNull(pick);
+        Assert.Equal(WinId, pick!.Value.Id);
+        Assert.Equal(WinId,
+            SameNamedCloudFolderHeal.CanonicalIdIfMappedIsDuplicate(DupId, "MyNotesFolder", siblings));
+        Assert.Null(
+            SameNamedCloudFolderHeal.CanonicalIdIfMappedIsDuplicate(WinId, "MyNotesFolder", siblings));
+    }
+
     [Fact]
     public void RemapsAndApply_HealsDupMappingWhenEmptyIsOlder()
     {

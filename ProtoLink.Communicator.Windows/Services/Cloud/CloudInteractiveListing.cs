@@ -47,6 +47,21 @@ public static class CloudInteractiveListing
         children.Count(e =>
             e.Code == CloudEntityCodes.CloudFolder || e.Code == CloudEntityCodes.CloudRoot);
 
+    /// <summary>CloudFile children only — used with <see cref="HealRichnessScore"/>.</summary>
+    public static int FileChildCount(IEnumerable<GetEntitiesResult> children) =>
+        children.Count(e => e.Code == CloudEntityCodes.CloudFile);
+
+    /// <summary>
+    /// SameNamed heal score: folders×10 − files so near-clone junk twin
+    /// (29 folders + 86 dumps) loses to owner canonical 898c1453 (28+25).
+    /// </summary>
+    public static int HealRichnessScore(int folderCount, int fileCount)
+    {
+        var folders = Math.Max(0, folderCount);
+        var files = Math.Max(0, fileCount);
+        return folders * 10 - files;
+    }
+
     /// <summary>Leaf segment of a sync RelativePath without lowercasing (UI label).</summary>
     public static string LeafName(string relativePath)
     {

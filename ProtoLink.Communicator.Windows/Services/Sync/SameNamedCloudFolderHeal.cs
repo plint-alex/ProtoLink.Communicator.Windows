@@ -3,8 +3,8 @@ namespace ProtoLink.Communicator.Windows.Services.Sync;
 /// <summary>
 /// Dual same-named CloudFolders (e.g. two "MyNotesFolder") break cross-device sync when
 /// Create-new in the map wizard adds a second id while another client already maps the populated one.
-/// Canonical pick among case-insensitive name matches: higher ImmediateChildCount
-/// (folder children only — see <c>CloudInteractiveListing.FolderChildCount</c>), then earliest
+/// Canonical pick among case-insensitive name matches: higher
+/// <c>CloudInteractiveListing.HealRichnessScore</c> (folder×10 − files), then earliest
 /// CreationTime, then Id — mirrors Android <c>SameNamedCloudFolderHeal</c>.
 /// </summary>
 public static class SameNamedCloudFolderHeal
@@ -13,7 +13,10 @@ public static class SameNamedCloudFolderHeal
         Guid Id,
         string Name,
         string? CreationTime = null,
-        int ImmediateChildCount = 0);
+        /// <summary>CloudFolder/CloudRoot immediate children only.</summary>
+        int ImmediateChildCount = 0,
+        /// <summary>CloudFile immediate children — near-clone junk demotion.</summary>
+        int ImmediateFileCount = 0);
 
     public readonly record struct MappingRow(
         Guid CloudFolderId,
@@ -142,7 +145,8 @@ public static class SameNamedCloudFolderHeal
                     CreationTime = string.IsNullOrWhiteSpace(prev.CreationTime)
                         ? s.CreationTime
                         : prev.CreationTime,
-                    ImmediateChildCount = Math.Max(prev.ImmediateChildCount, s.ImmediateChildCount)
+                    ImmediateChildCount = Math.Max(prev.ImmediateChildCount, s.ImmediateChildCount),
+                    ImmediateFileCount = Math.Max(prev.ImmediateFileCount, s.ImmediateFileCount)
                 };
             }
         }
@@ -202,8 +206,11 @@ public static class SameNamedCloudFolderHeal
 
         public int Compare(Sibling a, Sibling b)
         {
-            var childCmp = b.ImmediateChildCount.CompareTo(a.ImmediateChildCount);
-            if (childCmp != 0) return childCmp;
+            var scoreCmp = CloudInteractiveListing.HealRichnessScore(
+                    b.ImmediateChildCount, b.ImmediateFileCount)
+                .CompareTo(CloudInteractiveListing.HealRichnessScore(
+                    a.ImmediateChildCount, a.ImmediateFileCount));
+            if (scoreCmp != 0) return scoreCmp;
             var ta = a.CreationTime?.Trim() ?? "";
             var tb = b.CreationTime?.Trim() ?? "";
             if (ta.Length > 0 && tb.Length > 0 && ta != tb)

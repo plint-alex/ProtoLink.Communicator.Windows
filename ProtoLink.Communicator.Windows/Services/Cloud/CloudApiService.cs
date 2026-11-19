@@ -18,19 +18,23 @@ public class CloudApiService
     public const int GetEntitiesPageSize = 200;
 
     /// <summary>
-    /// Interactive Cloud folder listing: paint the first page(s) instead of walking every page of a
-    /// bloated CloudRoot (Drive-style duplicates) before the UI can recover.
-    /// Pair with values-light (<c>includeValues: false</c>) on the first request — IncludeValues
-    /// Take=200 on MyNotesFolder can exceed the Cloud UI HttpClient timeout under contention.
+    /// Interactive Cloud folder listing pages (values-light). Live FAIL
+    /// CLOUD_LISTING_DIVERGE_FOLDER_SET: MaxPages=1 Take=80 truncated twin MyNotesFolder
+    /// (115 kids) on API CreationTime order — folders-first client sort never saw structural
+    /// CloudFolders past page 1. 5×80 covers MyNotesFolder-scale (≤~380) without unbounded Drive walk.
+    /// Pair with values-light — IncludeValues Take=200 alone can exceed UI timeout under contention.
     /// </summary>
-    public const int InteractiveListingMaxPages = 1;
+    public const int InteractiveListingMaxPages = 5;
 
     /// <summary>
-    /// First-page Take for interactive Cloud browse / soft values hydrate. Smaller than
-    /// <see cref="GetEntitiesPageSize"/> so MyNotesFolder (~380 kids) stays under the UI timeout
+    /// Per-page Take for interactive Cloud browse / soft values hydrate. Smaller than
+    /// <see cref="GetEntitiesPageSize"/> so each request stays under the UI timeout
     /// when cold-start + tree + Refresh would otherwise stack contended GetEntities.
     /// </summary>
     public const int InteractiveListingPageSize = 80;
+
+    /// <summary>Soft-ready / paint budget for one interactive folder load.</summary>
+    public const int InteractiveListingMaxRows = InteractiveListingPageSize * InteractiveListingMaxPages;
 
     private readonly HttpClient _http;
 

@@ -102,12 +102,77 @@ public class CloudInteractiveListingTests
     }
 
     [Fact]
-    public void InteractiveListing_UsesSinglePage_AndDocumentsValuesLightPairing()
+    public void InteractiveListing_PagesCoverMyNotesFolderScale_ValuesLightPairing()
     {
-        Assert.Equal(1, CloudApiService.InteractiveListingMaxPages);
+        // FAIL CLOUD_LISTING_DIVERGE_FOLDER_SET: MaxPages=1 dropped structural folders past 80.
+        Assert.Equal(5, CloudApiService.InteractiveListingMaxPages);
         Assert.Equal(200, CloudApiService.GetEntitiesPageSize);
         Assert.Equal(80, CloudApiService.InteractiveListingPageSize);
+        Assert.Equal(400, CloudApiService.InteractiveListingMaxRows);
+        Assert.True(CloudApiService.InteractiveListingMaxRows >= 115);
         Assert.True(CloudApiService.InteractiveListingPageSize < CloudApiService.GetEntitiesPageSize);
+    }
+
+    [Fact]
+    public void HealRichnessScore_NearCloneJunkTwinLosesToCanonical()
+    {
+        var twin = CloudInteractiveListing.HealRichnessScore(29, 86);
+        var canonical = CloudInteractiveListing.HealRichnessScore(28, 25);
+        Assert.True(canonical > twin);
+        Assert.True(
+            CloudInteractiveListing.HealRichnessScore(24, 0)
+            > CloudInteractiveListing.HealRichnessScore(0, 132));
+    }
+
+    [Fact]
+    public void MultiPageFetch_ThenFoldersFirst_KeepsStructuralFoldersPastFirst80()
+    {
+        var files = Enumerable.Range(1, 86)
+            .Select(i => new GetEntitiesResult
+            {
+                Id = Guid.NewGuid(),
+                Code = CloudEntityCodes.CloudFile,
+                UpdateTime = DateTime.UtcNow.AddMinutes(-i),
+                Values =
+                [
+                    new EntityValue { Value = $"junk-{i}.txt", Parents = [CloudEntityCodes.NameTypeId] }
+                ]
+            })
+            .ToList();
+        var folderNames = new[] { "dev ops", "docusign", "ef commands", "films" };
+        var folders = folderNames.Select((n, i) => new GetEntitiesResult
+            {
+                Id = Guid.NewGuid(),
+                Code = CloudEntityCodes.CloudFolder,
+                UpdateTime = DateTime.UtcNow.AddDays(-2).AddMinutes(i),
+                Values =
+                [
+                    new EntityValue { Value = n, Parents = [CloudEntityCodes.NameTypeId] }
+                ]
+            })
+            .ToList();
+        var apiOrder = files.Concat(folders).ToList();
+        var page1 = apiOrder.Take(CloudApiService.InteractiveListingPageSize).ToList();
+        var page2 = apiOrder.Skip(CloudApiService.InteractiveListingPageSize)
+            .Take(CloudApiService.InteractiveListingPageSize).ToList();
+        Assert.DoesNotContain(page1, e => e.Code == CloudEntityCodes.CloudFolder);
+        var fetched = page1.Concat(page2).ToList();
+        var painted = fetched
+            .Select(e => (
+                Name: CloudInteractiveListing.ResolveRowName(e),
+                IsFolder: e.Code == CloudEntityCodes.CloudFolder,
+                Update: e.UpdateTime))
+            .OrderByDescending(x => x.IsFolder)
+            .ThenByDescending(x => x.Update)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        Assert.Contains(painted, x => x.Name == "dev ops");
+        Assert.Contains(painted, x => x.Name == "docusign");
+        Assert.Contains(painted, x => x.Name == "ef commands");
+        Assert.Equal(4, painted.Count(x => x.IsFolder));
+        Assert.DoesNotContain(
+            page1.Select(e => CloudInteractiveListing.ResolveRowName(e)),
+            n => n == "dev ops");
     }
 
     [Fact]

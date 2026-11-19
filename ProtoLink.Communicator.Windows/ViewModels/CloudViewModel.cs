@@ -1105,7 +1105,7 @@ public partial class CloudViewModel : ViewModelBase
         var rows = CloudInteractiveListing.BuildSoftReadyRows(
             folderId,
             _listingMetaStore.FindChildrenByParentRemoteId(folderId),
-            CloudApiService.InteractiveListingPageSize);
+            CloudApiService.InteractiveListingMaxRows);
         if (rows.Count == 0)
             return false;
 
