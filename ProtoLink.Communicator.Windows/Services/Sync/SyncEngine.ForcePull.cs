@@ -188,8 +188,14 @@ public sealed partial class SyncEngine
                         MappingId = mapping.Id,
                         RelativePath = rel
                     });
-                    if (isFolder && !visitedFolderIds.Contains(child.Id))
+                    // Do not BFS-descend Agents open-queue task shells (SkipMkdir only skipped
+                    // mkdir — Android 1.0.76 live FORCE_MID_INVENTORY after wave≈16).
+                    if (isFolder &&
+                        !visitedFolderIds.Contains(child.Id) &&
+                        !AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(rel))
+                    {
                         next.Add((child.Id, rel));
+                    }
                 }
             }
 
