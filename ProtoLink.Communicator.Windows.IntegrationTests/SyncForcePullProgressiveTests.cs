@@ -212,6 +212,71 @@ public class SyncForcePullProgressiveTests
         try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
     }
 
+    /// <summary>
+    /// Soft-fail empty nested inventory must not prune local children (inbox/output wipe class).
+    /// </summary>
+    [Fact]
+    public async Task ForcePull_SoftFailEmptyInventory_DoesNotPruneLocalChildren()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-inv-unk-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-force-inv-unk-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        var inboxIndex = Path.Combine(root, "Protolink.ru", "Agents", "inbox", "ask-1", "index.html");
+        Directory.CreateDirectory(Path.GetDirectoryName(inboxIndex)!);
+        File.WriteAllText(inboxIndex, "planted-inbox");
+        var outputNote = Path.Combine(root, "Protolink.ru", "Agents", "output", "note.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputNote)!);
+        File.WriteAllText(outputNote, "planted-output");
+        File.WriteAllText(Path.Combine(root, "ghost-root.txt"), "local-only-ghost");
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var filmsFolderId = Guid.NewGuid();
+        var filmsFileId = Guid.NewGuid();
+        var protolinkRuId = Guid.NewGuid();
+        var agentsId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+
+        const string cloudBody = "films-ok-inv-unk";
+        using var http = new HttpClient(new SoftFailAgentsInventoryHttpHandler(
+            cloudFolderId,
+            filmsFolderId,
+            filmsFileId,
+            Encoding.UTF8.GetBytes(cloudBody),
+            protolinkRuId,
+            agentsId))
+        {
+            BaseAddress = new Uri("http://sync-test.local/")
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        await engine.ForcePullMappingAsync(new SyncMappingInfo
+        {
+            Id = mappingId,
+            CloudFolderId = cloudFolderId,
+            LocalRootPath = root
+        });
+
+        Assert.True(File.Exists(inboxIndex), "Agents/inbox must survive soft-fail empty inventory prune");
+        Assert.Equal("planted-inbox", File.ReadAllText(inboxIndex));
+        Assert.True(File.Exists(outputNote), "Agents/output must survive soft-fail empty inventory prune");
+        Assert.False(File.Exists(Path.Combine(root, "ghost-root.txt")), "root ghosts still prune");
+        Assert.Equal(cloudBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
+    public void IsUnderForceInventoryUnknown_MatchesDescendants()
+    {
+        var unknown = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Protolink.ru/Agents" };
+        Assert.True(SyncEngine.IsUnderForceInventoryUnknown("Protolink.ru/Agents", unknown));
+        Assert.True(SyncEngine.IsUnderForceInventoryUnknown("Protolink.ru/Agents/inbox/x", unknown));
+        Assert.False(SyncEngine.IsUnderForceInventoryUnknown("Protolink.ru", unknown));
+        Assert.False(SyncEngine.IsUnderForceInventoryUnknown("films/index.html", unknown));
+    }
+
     [Fact]
     public async Task ForcePull_NullGetFile_SoftFailsAndContinuesSibling()
     {
@@ -531,6 +596,114 @@ public class SyncForcePullProgressiveTests
             }
             else if (parentId == _filmsFolderId)
                 list.Add(EntityJson(_filmsFileId, CloudEntityCodes.CloudFile, "index.html"));
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(list), Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static object EntityJson(Guid id, string code, string name) => new
+        {
+            id,
+            code,
+            version = 1,
+            creationTime = DateTime.UtcNow,
+            updateTime = DateTime.UtcNow,
+            values = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    type = "String",
+                    value = name,
+                    parents = new[] { NameTypeId }
+                }
+            }
+        };
+    }
+
+    /// <summary>
+    /// Root → films + Protolink.ru/Agents; Agents GetEntities always 500 (soft-fail empty).
+    /// </summary>
+    private sealed class SoftFailAgentsInventoryHttpHandler : HttpMessageHandler
+    {
+        private readonly Guid _rootFolderId;
+        private readonly Guid _filmsFolderId;
+        private readonly Guid _filmsFileId;
+        private readonly byte[] _fileBytes;
+        private readonly Guid _protolinkRuId;
+        private readonly Guid _agentsId;
+
+        public SoftFailAgentsInventoryHttpHandler(
+            Guid rootFolderId,
+            Guid filmsFolderId,
+            Guid filmsFileId,
+            byte[] fileBytes,
+            Guid protolinkRuId,
+            Guid agentsId)
+        {
+            _rootFolderId = rootFolderId;
+            _filmsFolderId = filmsFolderId;
+            _filmsFileId = filmsFileId;
+            _fileBytes = fileBytes;
+            _protolinkRuId = protolinkRuId;
+            _agentsId = agentsId;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.Contains("GetEntities", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(GetEntities(request));
+            if (path.Contains("getFile", StringComparison.OrdinalIgnoreCase))
+            {
+                var idText = path.Split('/').LastOrDefault() ?? "";
+                if (Guid.TryParse(idText, out var id) && id == _filmsFileId)
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(_fileBytes)
+                    });
+                }
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+        }
+
+        private HttpResponseMessage GetEntities(HttpRequestMessage request)
+        {
+            var body = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "{}";
+            using var doc = JsonDocument.Parse(string.IsNullOrEmpty(body) ? "{}" : body);
+            Guid? parentId = null;
+            if (doc.RootElement.TryGetProperty("parentIds", out var parents)
+                && parents.ValueKind == JsonValueKind.Array
+                && parents.GetArrayLength() > 0)
+                parentId = parents[0].GetGuid();
+
+            if (parentId == _agentsId)
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                {
+                    Content = new StringContent("inventory soft-fail", Encoding.UTF8, "text/plain")
+                };
+
+            var list = new List<object>();
+            if (parentId == _rootFolderId)
+            {
+                list.Add(EntityJson(_filmsFolderId, CloudEntityCodes.CloudFolder, "films"));
+                list.Add(EntityJson(_protolinkRuId, CloudEntityCodes.CloudFolder, "Protolink.ru"));
+            }
+            else if (parentId == _filmsFolderId)
+                list.Add(EntityJson(_filmsFileId, CloudEntityCodes.CloudFile, "index.html"));
+            else if (parentId == _protolinkRuId)
+                list.Add(EntityJson(_agentsId, CloudEntityCodes.CloudFolder, "Agents"));
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {

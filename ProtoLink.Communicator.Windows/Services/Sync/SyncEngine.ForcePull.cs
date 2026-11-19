@@ -66,6 +66,8 @@ public sealed partial class SyncEngine
         var seenPaths = new HashSet<string>(StringComparer.Ordinal);
         var visitedFolderIds = new HashSet<Guid>();
         var structureCache = new Dictionary<Guid, List<GetEntitiesResult>>();
+        // Soft-fail empty inventory ≠ proven zero children — skip early/final ghost prune under these.
+        var inventoryUnknownRels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var deferredRootFiles = new List<RemoteLocated>();
         var files = 0;
         var sawRemoteFile = false;
@@ -143,10 +145,17 @@ public sealed partial class SyncEngine
                 catch (Exception ex)
                 {
                     // Nested inventory soft-fail (Android Force 5xx parity) — skip branch.
+                    // Empty list here is unknown, not proven-empty: do not prune local children.
                     SyncRemoteDownload.LogMaterializeFailed(
                         "ForcePullMapping.Inventory", id.ToString(), id.ToString(),
                         ex.Message);
                     structureCache[id] = new List<GetEntitiesResult>();
+                    var unknownRel = waveParents
+                        .Where(p => p.FolderId == id)
+                        .Select(p => SyncPathUtil.Normalize(p.RelativeParent))
+                        .FirstOrDefault();
+                    if (unknownRel != null)
+                        inventoryUnknownRels.Add(unknownRel);
                 }
                 finally
                 {
@@ -212,6 +221,9 @@ public sealed partial class SyncEngine
             var kidsByParent = waveLocated.GroupBy(l => SyncPathUtil.ParentOf(l.RelativePath));
             foreach (var group in kidsByParent)
             {
+                var parentNorm = SyncPathUtil.Normalize(group.Key);
+                if (inventoryUnknownRels.Contains(parentNorm))
+                    continue;
                 PruneImmediateGhosts(
                     mapping,
                     group.Key,
@@ -265,12 +277,35 @@ public sealed partial class SyncEngine
         if (remotePaths.Count == 0)
             throw new SyncException("Force download found no remote files in this folder.");
 
-        PruneLocalAbsentFromRemote(mapping, remotePaths);
+        PruneLocalAbsentFromRemote(mapping, remotePaths, inventoryUnknownRels);
 
         if (files == 0 && !sawRemoteFile)
             throw new SyncException("Force download processed 0 files (folders only).");
 
         _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
+    }
+
+    /// <summary>
+    /// Soft-fail empty GetEntities must not count as proven-empty children for Force prune.
+    /// </summary>
+    internal static bool IsUnderForceInventoryUnknown(
+        string relativePath,
+        ISet<string> inventoryUnknownRels)
+    {
+        if (inventoryUnknownRels.Count == 0) return false;
+        var norm = SyncPathUtil.Normalize(relativePath);
+        foreach (var unknown in inventoryUnknownRels)
+        {
+            // Root inventory is hard-fail; empty unknown would mean whole-tree unknown.
+            if (string.IsNullOrEmpty(unknown))
+                return true;
+            if (norm.Equals(unknown, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (norm.StartsWith(unknown + "/", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private async Task<int> MaterializeForceFilesAsync(
@@ -482,8 +517,14 @@ public sealed partial class SyncEngine
         }
     }
 
-    /// <summary>Force download mirror: remove local paths (and meta) absent from the remote walk.</summary>
-    private void PruneLocalAbsentFromRemote(SyncMappingInfo mapping, HashSet<string> remotePaths)
+    /// <summary>
+    /// Force download mirror: remove local paths (and meta) absent from the remote walk.
+    /// Paths under soft-fail inventory parents are skipped (unknown ≠ empty).
+    /// </summary>
+    private void PruneLocalAbsentFromRemote(
+        SyncMappingInfo mapping,
+        HashSet<string> remotePaths,
+        ISet<string> inventoryUnknownRels)
     {
         var snap = SnapshotFs(mapping.LocalRootPath, computeContentHashes: false)
             .OrderByDescending(e => SyncPathUtil.Normalize(e.RelativePath).Count(c => c == '/'));
@@ -491,6 +532,16 @@ public sealed partial class SyncEngine
         {
             var path = SyncPathUtil.Normalize(entry.RelativePath);
             if (remotePaths.Contains(path)) continue;
+            if (IsUnderForceInventoryUnknown(path, inventoryUnknownRels))
+            {
+                SyncRemoteDownload.LogMaterializeFailed(
+                    "ForcePullMapping.Prune.InventoryUnknownSkip",
+                    path,
+                    "-",
+                    "skip prune under soft-fail empty inventory parent");
+                continue;
+            }
+
             if (AgentsRoleQueuePaths.IsForcePruneProtected(path, mapping.LocalRootPath))
             {
                 SyncRemoteDownload.LogMaterializeFailed(
@@ -527,6 +578,7 @@ public sealed partial class SyncEngine
         {
             var path = SyncPathUtil.Normalize(meta.RelativePath);
             if (remotePaths.Contains(path)) continue;
+            if (IsUnderForceInventoryUnknown(path, inventoryUnknownRels)) continue;
             if (AgentsRoleQueuePaths.IsForcePruneProtected(path, mapping.LocalRootPath))
                 continue;
             _store.Delete(mapping.Id, path);
