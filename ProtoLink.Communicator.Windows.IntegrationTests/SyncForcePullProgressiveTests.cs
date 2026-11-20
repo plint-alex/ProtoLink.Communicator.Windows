@@ -46,6 +46,43 @@ public class SyncForcePullProgressiveTests
     }
 
     [Fact]
+    public void AgentsRoleQueuePaths_ProtectsMailboxQueues_InboxOutbox()
+    {
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/inbox"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/inbox/todo"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/inbox/todo/ask-hello/index.html"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/inbox/done/P1-old-ask/index.html"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/outbox"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/outbox/todo/Q1-ask"));
+        Assert.True(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/outbox/done/Q1-closed"));
+        // Non-mailbox / non-queue Agents paths unchanged
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/docs/ops/index.html"));
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/output/index.html"));
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
+            "Protolink.ru/Agents/inbox/progress"));
+        Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor("films/inbox/todo"));
+        Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/inbox/todo/ghost-ask"));
+        Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/outbox/done/ghost-ask"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/inbox/todo"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/outbox/done"));
+        Assert.False(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
+            "Protolink.ru/Agents/inbox"));
+    }
+
+    [Fact]
     public async Task ForcePull_DoesNotPruneAgentsRoleOpenQueueTaskPage()
     {
         var root = Path.Combine(Path.GetTempPath(), "pl-force-agents-q-" + Guid.NewGuid().ToString("N"));
@@ -86,6 +123,62 @@ public class SyncForcePullProgressiveTests
 
         Assert.True(File.Exists(taskIndex), "Agents open-queue task page must survive Force prune");
         Assert.Equal("planted-agents-queue", File.ReadAllText(taskIndex));
+        Assert.False(File.Exists(Path.Combine(root, "ghost-root.txt")), "other ghosts still prune");
+        Assert.Equal(cloudBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
+    public async Task ForcePull_DoesNotPruneAgentsMailboxQueueAskPage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-force-agents-mb-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-force-agents-mb-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        var askIndex = Path.Combine(
+            root,
+            "Protolink.ru", "Agents", "inbox", "todo",
+            "ask-planted-mailbox", "index.html");
+        Directory.CreateDirectory(Path.GetDirectoryName(askIndex)!);
+        File.WriteAllText(askIndex, "planted-mailbox-ask");
+        var outboxDone = Path.Combine(
+            root,
+            "Protolink.ru", "Agents", "outbox", "done",
+            "Q1-closed", "index.html");
+        Directory.CreateDirectory(Path.GetDirectoryName(outboxDone)!);
+        File.WriteAllText(outboxDone, "planted-outbox-done");
+        File.WriteAllText(Path.Combine(root, "ghost-root.txt"), "local-only-ghost");
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var filmsFolderId = Guid.NewGuid();
+        var filmsFileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+
+        const string cloudBody = "films-ok";
+        using var http = new HttpClient(new ForceHttpHandler(
+            cloudFolderId,
+            filmsFolderId,
+            filmsFileId,
+            Encoding.UTF8.GetBytes(cloudBody),
+            nullFailFileId: null))
+        {
+            BaseAddress = new Uri("http://sync-test.local/")
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        await engine.ForcePullMappingAsync(new SyncMappingInfo
+        {
+            Id = mappingId,
+            CloudFolderId = cloudFolderId,
+            LocalRootPath = root
+        });
+
+        Assert.True(File.Exists(askIndex), "Agents inbox/todo ask page must survive Force prune");
+        Assert.Equal("planted-mailbox-ask", File.ReadAllText(askIndex));
+        Assert.True(File.Exists(outboxDone), "Agents outbox/done page must survive Force prune");
+        Assert.Equal("planted-outbox-done", File.ReadAllText(outboxDone));
         Assert.False(File.Exists(Path.Combine(root, "ghost-root.txt")), "other ghosts still prune");
         Assert.Equal(cloudBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
 
