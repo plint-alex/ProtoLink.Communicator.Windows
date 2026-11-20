@@ -24,7 +24,9 @@ public partial class MessengerViewModel : ViewModelBase
     private string _messageText = string.Empty;
     private bool _isCompactLayout;
     private bool _isChatLoading;
+    private bool _isContactsLoading;
     private int _contactSelectGeneration;
+    private int _contactsLoadGeneration;
     private Guid? _userContactsId;
     private Guid? _mySentContainerId;
     private Guid? _myReceivedContainerId;
@@ -66,7 +68,13 @@ public partial class MessengerViewModel : ViewModelBase
         InitMediaRenderCommands();
         InitCloudPickerGalleryUnfurlCommands();
 
-        _ = InitializeAsync();
+        // Input priority: do not wait behind Background enrichment / Sync deferrals
+        // (#messenger-startup-priority / change-then-wait).
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null)
+            dispatcher.BeginInvoke(new Action(() => _ = InitializeAsync()), MessengerContactsLoad.ListPaintPriority);
+        else
+            _ = InitializeAsync();
     }
 
     public ObservableCollection<Contact> Contacts { get; }
@@ -122,6 +130,27 @@ public partial class MessengerViewModel : ViewModelBase
             OnPropertyChanged();
         }
     }
+
+    /// <summary>
+    /// True while the contacts list is fetching (#messenger-startup-priority / change-then-wait).
+    /// </summary>
+    public bool IsContactsLoading
+    {
+        get => _isContactsLoading;
+        private set
+        {
+            if (_isContactsLoading == value) return;
+            _isContactsLoading = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowContactsEmpty));
+        }
+    }
+
+    /// <summary>Honest empty after load finished with zero rows (not silent in-flight empty).</summary>
+    public bool ShowContactsEmpty =>
+        MessengerContactsLoad.ShouldShowEmpty(IsContactsLoading, Contacts.Count);
+
+    public string ContactsEmptyHint => MessengerContactsLoad.EmptyHint;
 
     public Contact? SelectedContact
     {
@@ -442,44 +471,56 @@ public partial class MessengerViewModel : ViewModelBase
     {
         if (_authService.CurrentToken == null) return;
 
+        var gen = ++_contactsLoadGeneration;
+        IsContactsLoading = true;
+        OnPropertyChanged(nameof(ShowContactsEmpty));
+        _ = EnforceLeaveContactsLoadingBudgetAsync(gen);
+
         try
         {
             var userId = _authService.CurrentToken.UserId;
-            _userContactsId = await UserContactsBagClient.EnsureBagIdAsync(_httpClient, userId);
-            if (!_userContactsId.HasValue) return;
+            using var loadCts = new CancellationTokenSource(MessengerContactsLoad.InteractiveHttpTimeout);
 
-            var contactsResponse = await _httpClient.PostAsJsonAsync("api/Entities/GetEntities", new GetEntitiesContract
+            // Startup-fast bag: first page + no kid-count enrich so Sync/Notes cannot starve first paint.
+            _userContactsId = await MessengerChatLoad.AwaitWithinBudgetAsync(
+                UserContactsBagClient.EnsureBagIdStartupFastAsync(_httpClient, userId, loadCts.Token),
+                loadCts.Token).ConfigureAwait(true);
+            if (gen != _contactsLoadGeneration) return;
+            if (!_userContactsId.HasValue)
             {
-                ParentIds = new[] { _userContactsId.Value },
-                IncludeValues = true
-            });
-            var contactsResults = await contactsResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>();
+                Contacts.Clear();
+                StatusText = MessengerContactsLoad.LoadFailedSoft;
+                return;
+            }
+
+            var contactsResponse = await MessengerChatLoad.AwaitWithinBudgetAsync(
+                _httpClient.PostAsJsonAsync(
+                    "api/Entities/GetEntities",
+                    new GetEntitiesContract
+                    {
+                        ParentIds = new[] { _userContactsId.Value },
+                        IncludeValues = true
+                    },
+                    loadCts.Token),
+                loadCts.Token).ConfigureAwait(true);
+            if (gen != _contactsLoadGeneration) return;
+
+            var contactsResults = contactsResponse.IsSuccessStatusCode
+                ? await MessengerChatLoad.AwaitWithinBudgetAsync(
+                    contactsResponse.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: loadCts.Token),
+                    loadCts.Token).ConfigureAwait(true)
+                : null;
+            if (gen != _contactsLoadGeneration) return;
+
             Contacts.Clear();
             var contactUserIds = new List<Guid>();
             if (contactsResults != null)
             {
                 foreach (var c in contactsResults)
                 {
-                    Guid contactUserId = Guid.Empty;
-                    if (c.Values != null)
-                    {
-                        foreach (var val in c.Values)
-                        {
-                            if (val is EntityValue ev && ev.Type == "StringValue")
-                            {
-                                var s = ev.Value?.ToString();
-                                if (!string.IsNullOrEmpty(s) && s.StartsWith("userid:") && Guid.TryParse(s.AsSpan(7), out var uid))
-                                {
-                                    contactUserId = uid;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if (contactUserId == Guid.Empty && !string.IsNullOrEmpty(c.Code) && Guid.TryParse(c.Code, out var codeUid))
-                        contactUserId = codeUid;
-                    if (contactUserId != Guid.Empty)
-                        contactUserIds.Add(contactUserId);
+                    var parsed = MessengerContactsLoad.TryParseContactUserId(c.Values, c.Code);
+                    if (parsed.HasValue)
+                        contactUserIds.Add(parsed.Value);
                 }
             }
 
@@ -492,16 +533,128 @@ public partial class MessengerViewModel : ViewModelBase
                 Contacts.Add(new Contact { Id = id, Name = provisional });
             }
 
-            await EnsureSelfContactAsync(userId);
+            OnPropertyChanged(nameof(ShowContactsEmpty));
 
             // Wide layout only: open first chat for convenience.
             if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
                 SelectedContact = Contacts[0];
 
-            // Enrich display names in the background without delaying the chat.
-            _ = EnrichContactNamesAsync(contactUserIds);
+            // Self-row + name enrich + richest-bag reconcile after first paint (Background OK).
+            _ = ContinueContactsAfterPaintAsync(userId, contactUserIds, gen);
         }
-        catch { }
+        catch (OperationCanceledException)
+        {
+            if (gen == _contactsLoadGeneration && Contacts.Count == 0)
+                StatusText = MessengerContactsLoad.LoadFailedSoft;
+        }
+        catch (Exception)
+        {
+            if (gen == _contactsLoadGeneration && Contacts.Count == 0)
+                StatusText = MessengerContactsLoad.LoadFailedSoft;
+        }
+        finally
+        {
+            if (gen == _contactsLoadGeneration)
+            {
+                IsContactsLoading = false;
+                OnPropertyChanged(nameof(ShowContactsEmpty));
+            }
+        }
+    }
+
+    /// <summary>Self-contact + name enrich + full bag reconcile after provisional list paint.</summary>
+    private async Task ContinueContactsAfterPaintAsync(Guid userId, List<Guid> contactUserIds, int generation)
+    {
+        try
+        {
+            await EnsureSelfContactAsync(userId).ConfigureAwait(true);
+            if (generation != _contactsLoadGeneration) return;
+            OnPropertyChanged(nameof(ShowContactsEmpty));
+
+            _ = EnrichContactNamesAsync(contactUserIds);
+
+            // Background richest-bag pick — if different from startup-fast, swap kids once (no re-enter StartupFast).
+            var rich = await UserContactsBagClient.EnsureBagIdAsync(_httpClient, userId).ConfigureAwait(true);
+            if (generation != _contactsLoadGeneration) return;
+            if (rich.HasValue && rich != _userContactsId)
+            {
+                _userContactsId = rich;
+                await ReplaceContactRowsFromBagAsync(rich.Value, userId, generation).ConfigureAwait(true);
+            }
+        }
+        catch
+        {
+            // Soft: provisional list already shown.
+        }
+    }
+
+    private async Task ReplaceContactRowsFromBagAsync(Guid bagId, Guid userId, int generation)
+    {
+        var contactsResponse = await _httpClient.PostAsJsonAsync(
+            "api/Entities/GetEntities",
+            new GetEntitiesContract
+            {
+                ParentIds = new[] { bagId },
+                IncludeValues = true
+            }).ConfigureAwait(true);
+        if (generation != _contactsLoadGeneration) return;
+        if (!contactsResponse.IsSuccessStatusCode) return;
+
+        var contactsResults = await contactsResponse.Content
+            .ReadFromJsonAsync<List<GetEntitiesResult>>().ConfigureAwait(true);
+        if (generation != _contactsLoadGeneration) return;
+
+        var contactUserIds = new List<Guid>();
+        if (contactsResults != null)
+        {
+            foreach (var c in contactsResults)
+            {
+                var parsed = MessengerContactsLoad.TryParseContactUserId(c.Values, c.Code);
+                if (parsed.HasValue)
+                    contactUserIds.Add(parsed.Value);
+            }
+        }
+
+        var keepSelected = SelectedContact?.Id;
+        Contacts.Clear();
+        foreach (var id in contactUserIds)
+        {
+            var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                ? cached
+                : id.ToString();
+            Contacts.Add(new Contact { Id = id, Name = provisional });
+        }
+
+        await EnsureSelfContactAsync(userId).ConfigureAwait(true);
+        if (generation != _contactsLoadGeneration) return;
+        OnPropertyChanged(nameof(ShowContactsEmpty));
+
+        if (keepSelected.HasValue)
+        {
+            var match = Contacts.FirstOrDefault(c => c.Id == keepSelected.Value);
+            if (match != null)
+                SelectedContact = match;
+        }
+        else if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
+            SelectedContact = Contacts[0];
+
+        _ = EnrichContactNamesAsync(contactUserIds);
+    }
+
+    private async Task EnforceLeaveContactsLoadingBudgetAsync(int generation)
+    {
+        try
+        {
+            await Task.Delay(MessengerContactsLoad.InteractiveHttpTimeout).ConfigureAwait(true);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (generation != _contactsLoadGeneration) return;
+        if (IsContactsLoading)
+            IsContactsLoading = false;
     }
 
     private async Task EnsureSelfContactAsync(Guid userId)

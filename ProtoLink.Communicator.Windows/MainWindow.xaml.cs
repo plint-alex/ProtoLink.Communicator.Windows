@@ -49,6 +49,8 @@ public partial class MainWindow : Window
         }) { BaseAddress = new Uri(settings.ApiBaseAddress) };
         _authService = new AuthService(_httpClient, _tokenService, App.LoggerFactory.CreateLogger<AuthService>());
         _realtime.RefreshRequested += OnRealtimeRefreshRequested;
+        // Cold start: signed-in → Messenger main tab; unsigned → Notes (#messenger-startup-priority).
+        MainTabControl.SelectedIndex = AuthShellGate.ResolveInitialTab(_authService.IsAuthenticated);
         ShowMessengerContent();
         UpdateAuthGate();
         _syncStore = new SyncMappingStore(App.LoggerFactory.CreateLogger<SyncMappingStore>());
@@ -388,6 +390,8 @@ public partial class MainWindow : Window
         var vm = new SettingsViewModel(_settingsService, _authService, _tokenService, settingsClient, _logger);
         vm.OnLoginSuccess += () =>
         {
+            // After login land on Messenger (main signed-in tab); then rebuild content.
+            MainTabControl.SelectedIndex = AuthShellGate.SignedInDefaultTabIndex;
             CloseSettingsPanel();
             _ = EnsureRealtimeConnectedAsync();
         };

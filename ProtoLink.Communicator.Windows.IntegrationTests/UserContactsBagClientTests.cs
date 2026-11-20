@@ -91,6 +91,50 @@ public class UserContactsBagClientTests
         Assert.Equal(2, handler.ListPageFetches);
     }
 
+    [Fact]
+    public async Task StartupFast_UsesFirstPageOnly_NoKidEnrich()
+    {
+        // Newest-first page: empty newest + older Tina — without enrich, pick oldest (Tina).
+        var handler = new UcHandler(
+            listPages: new[]
+            {
+                new[]
+                {
+                    BagJson(EmptyNewest, "2026-10-27T00:00:00Z"),
+                    BagJson(RichTina, "2026-01-01T00:00:00Z"),
+                }
+            },
+            kidsByBag: new Dictionary<Guid, int>
+            {
+                [EmptyNewest] = 0,
+                [RichTina] = 3
+            });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
+
+        Assert.Equal(RichTina, id);
+        Assert.Equal(0, handler.AddEntityCount);
+        Assert.Equal(1, handler.ListPageFetches);
+        // No kids enrich GetEntities — only the dual-parent list page.
+        Assert.Equal(1, handler.GetEntitiesCount);
+    }
+
+    [Fact]
+    public async Task StartupFast_CreatesWhenFirstPageEmpty_AfterRecheck()
+    {
+        var created = Guid.Parse("cccccccc-dddd-4eee-8fff-000000000001");
+        var handler = new UcHandler(
+            listPages: new[] { Array.Empty<object>(), Array.Empty<object>() },
+            createdId: created);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
+
+        Assert.Equal(created, id);
+        Assert.Equal(1, handler.AddEntityCount);
+    }
+
     private static object BagJson(Guid id, string creationTime) => new
     {
         id = id.ToString("D"),

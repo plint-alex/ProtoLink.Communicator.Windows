@@ -1,7 +1,8 @@
 namespace ProtoLink.Communicator.Windows.Utilities;
 
 /// <summary>
-/// Notes-without-login shell policy (<c>#notes-without-login</c>).
+/// Notes-without-login shell policy (<c>#notes-without-login</c>) + signed-in Messenger main tab
+/// (<c>#messenger-startup-priority</c>).
 /// Unsigned users keep the tab shell; Messenger / Cloud require login (Settings/Auth).
 /// </summary>
 public static class AuthShellGate
@@ -23,8 +24,19 @@ public static class AuthShellGate
 
     public static int UnsignedDefaultTabIndex => NotesTabIndex;
 
+    /// <summary>Cold start / after login: Messenger is the main signed-in tab (Job #2).</summary>
+    public static int SignedInDefaultTabIndex => MessengerTabIndex;
+
+    /// <summary>
+    /// Initial tab for a fresh shell: signed-in → Messenger; unsigned → Notes.
+    /// Does not bounce intentional Notes/Cloud selection while already authenticated.
+    /// </summary>
+    public static int ResolveInitialTab(bool isAuthenticated) =>
+        isAuthenticated ? SignedInDefaultTabIndex : UnsignedDefaultTabIndex;
+
     /// <summary>
     /// After logout (or unsigned boot), bounce Messenger/Cloud selection to Notes.
+    /// Signed-in users keep their current tab (Notes stays reachable after cold Messenger land).
     /// </summary>
     public static int ResolveTabAfterAuthChange(bool isAuthenticated, int currentTabIndex) =>
         ShouldPromptLoginForTab(isAuthenticated, currentTabIndex)

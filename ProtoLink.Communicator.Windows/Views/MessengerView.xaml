@@ -79,60 +79,79 @@
                                Foreground="{DynamicResource ForegroundBrush}"/>
                 </DockPanel>
             </Border>
-            <ListBox x:Name="ContactsList"
-                     Grid.Row="1"
-                     ItemsSource="{Binding Contacts}"
-                     SelectedItem="{Binding SelectedContact}"
-                     Background="{DynamicResource ListBackground}"
-                     BorderThickness="0"
-                     ItemContainerStyle="{StaticResource ContactListBoxItemStyle}"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                <ListBox.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="{Binding PlacementTarget.DataContext.ContactInformationLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  Command="{Binding PlacementTarget.DataContext.OpenContactInformationCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  AutomationProperties.Name="Contact information"/>
-                        <MenuItem Header="{Binding PlacementTarget.DataContext.CopyContactIdLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  Command="{Binding PlacementTarget.DataContext.CopyContactIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                  AutomationProperties.Name="Copy contact id"/>
-                    </ContextMenu>
-                </ListBox.ContextMenu>
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <DockPanel LastChildFill="True">
-                            <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="20"
-                                    Background="#FF5B8DEE" Margin="0,0,12,0">
-                                <TextBlock Text="{Binding Initial}" Foreground="White"
-                                           FontWeight="SemiBold" FontSize="15"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                            <DockPanel LastChildFill="True" VerticalAlignment="Center">
-                                <Border DockPanel.Dock="Right" MinWidth="20" Height="20" CornerRadius="10"
-                                        Background="#FFE53935" Padding="5,0" Margin="8,0,0,0"
-                                        VerticalAlignment="Center">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding HasUnread}" Value="True">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock Text="{Binding UnreadLabel}" Foreground="White" FontSize="11" FontWeight="SemiBold"
+            <Grid Grid.Row="1">
+                <ListBox x:Name="ContactsList"
+                         ItemsSource="{Binding Contacts}"
+                         SelectedItem="{Binding SelectedContact}"
+                         Background="{DynamicResource ListBackground}"
+                         BorderThickness="0"
+                         ItemContainerStyle="{StaticResource ContactListBoxItemStyle}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         Visibility="{Binding ShowContactsEmpty, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Inverse}">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="{Binding PlacementTarget.DataContext.ContactInformationLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      Command="{Binding PlacementTarget.DataContext.OpenContactInformationCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      AutomationProperties.Name="Contact information"/>
+                            <MenuItem Header="{Binding PlacementTarget.DataContext.CopyContactIdLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      Command="{Binding PlacementTarget.DataContext.CopyContactIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                      AutomationProperties.Name="Copy contact id"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel LastChildFill="True">
+                                <Border DockPanel.Dock="Left" Width="40" Height="40" CornerRadius="20"
+                                        Background="#FF5B8DEE" Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding Initial}" Foreground="White"
+                                               FontWeight="SemiBold" FontSize="15"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Border>
-                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis"
-                                           Foreground="{DynamicResource ForegroundBrush}"/>
+                                <DockPanel LastChildFill="True" VerticalAlignment="Center">
+                                    <Border DockPanel.Dock="Right" MinWidth="20" Height="20" CornerRadius="10"
+                                            Background="#FFE53935" Padding="5,0" Margin="8,0,0,0"
+                                            VerticalAlignment="Center">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUnread}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding UnreadLabel}" Foreground="White" FontSize="11" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               Foreground="{DynamicResource ForegroundBrush}"/>
+                                </DockPanel>
                             </DockPanel>
-                        </DockPanel>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Text="Loading…"
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource ForegroundBrush}"
+                           AutomationProperties.Name="Contacts loading"
+                           Visibility="{Binding IsContactsLoading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                <TextBlock Text="{Binding ContactsEmptyHint}"
+                           FontSize="14"
+                           TextWrapping="Wrap"
+                           Margin="24,0"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           TextAlignment="Center"
+                           Foreground="{DynamicResource ForegroundBrush}"
+                           AutomationProperties.Name="Contacts empty"
+                           Visibility="{Binding ShowContactsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </Grid>
         </Grid>
 
         <!-- Chat pane -->

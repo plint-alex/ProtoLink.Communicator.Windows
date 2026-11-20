@@ -56,4 +56,27 @@ public class AuthShellGateTests
     {
         Assert.Equal(AuthShellGate.NotesTabIndex, AuthShellGate.UnsignedDefaultTabIndex);
     }
+
+    [Fact]
+    public void SignedInDefaultTab_IsMessenger()
+    {
+        Assert.Equal(AuthShellGate.MessengerTabIndex, AuthShellGate.SignedInDefaultTabIndex);
+    }
+
+    [Theory]
+    [InlineData(true, AuthShellGate.MessengerTabIndex)]
+    [InlineData(false, AuthShellGate.NotesTabIndex)]
+    public void ResolveInitialTab_SignedInMessenger_UnsignedNotes(bool authenticated, int expected)
+    {
+        Assert.Equal(expected, AuthShellGate.ResolveInitialTab(authenticated));
+    }
+
+    [Fact]
+    public void ResolveTabAfterAuthChange_KeepsNotesWhenSignedIn()
+    {
+        // Intentional Notes while signed-in must not bounce to Messenger on UpdateAuthGate.
+        Assert.Equal(
+            AuthShellGate.NotesTabIndex,
+            AuthShellGate.ResolveTabAfterAuthChange(true, AuthShellGate.NotesTabIndex));
+    }
 }

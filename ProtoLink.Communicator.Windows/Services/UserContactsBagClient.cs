@@ -116,6 +116,62 @@ public static class UserContactsBagClient
         if (picked.HasValue)
             return picked;
 
+        return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Startup-fast bag for Messenger contacts ASAP (#messenger-startup-priority):
+    /// first list page only, pick without kid-count enrich. Full <see cref="EnsureBagIdAsync"/>
+    /// (page-all + enrich) stays for Settings Add / background reconcile.
+    /// </summary>
+    public static async Task<Guid?> EnsureBagIdStartupFastAsync(
+        HttpClient http,
+        Guid ownerUserId,
+        CancellationToken ct = default)
+    {
+        var first = await ListFirstPageBagsAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        if (!UserContactsBagHelpers.ShouldCreateBag(first))
+        {
+            var snapshots = UserContactsBagHelpers.ToSnapshots(first);
+            return UserContactsBagHelpers.PickBagId(snapshots);
+        }
+
+        // Race guard: empty first page — recheck full list before create.
+        var picked = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        if (picked.HasValue)
+            return picked;
+
+        return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>First dual-parent UserContacts page only (newest-first API).</summary>
+    public static async Task<List<GetEntitiesResult>> ListFirstPageBagsAsync(
+        HttpClient http,
+        Guid ownerUserId,
+        CancellationToken ct = default)
+    {
+        var response = await http.PostAsJsonAsync(
+            "api/Entities/GetEntities",
+            new GetEntitiesContract
+            {
+                ParentIds = new[] { SystemEntities.Contacts, ownerUserId },
+                Skip = 0,
+                Take = UserContactsBagHelpers.ListPageSize,
+                IncludeValues = false
+            },
+            ct).ConfigureAwait(false);
+        var chunk = response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: ct)
+                .ConfigureAwait(false)
+            : null;
+        return chunk ?? new List<GetEntitiesResult>();
+    }
+
+    private static async Task<Guid?> CreateBagAsync(
+        HttpClient http,
+        Guid ownerUserId,
+        CancellationToken ct)
+    {
         var addResponse = await http.PostAsJsonAsync(
             "api/Entities/AddEntity",
             new AddEntityContract
