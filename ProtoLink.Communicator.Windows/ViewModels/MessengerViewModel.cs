@@ -602,32 +602,8 @@ public partial class MessengerViewModel : ViewModelBase
             }
 
             // Do not wipe a richer disk paint with a thin StartupFast bag (self-only while Tina off-page).
-            var paintedCount = Contacts.Count;
-            if (PreferOnlineUiCache.ShouldReplaceContactsList(contactUserIds.Count, paintedCount))
-            {
-                Contacts.Clear();
-                foreach (var id in contactUserIds)
-                {
-                    var provisional = _userLoginCache.TryGetValue(id, out var cached)
-                        ? cached
-                        : id.ToString();
-                    Contacts.Add(new Contact { Id = id, Name = provisional });
-                }
-
-                PersistContactsDiskAsap(userId);
-            }
-            else
-            {
-                // Keep painted partners; merge any online ids not yet shown.
-                foreach (var id in contactUserIds)
-                {
-                    if (Contacts.Any(c => c.Id == id)) continue;
-                    var provisional = _userLoginCache.TryGetValue(id, out var cached)
-                        ? cached
-                        : id.ToString();
-                    Contacts.Add(new Contact { Id = id, Name = provisional });
-                }
-            }
+            ApplyContactUserIdsToList(contactUserIds);
+            PersistContactsDiskAsap(userId);
 
             OnPropertyChanged(nameof(ShowContactsEmpty));
             StatusText = null;
@@ -735,14 +711,9 @@ public partial class MessengerViewModel : ViewModelBase
         }
 
         var keepSelected = SelectedContact?.Id;
-        Contacts.Clear();
-        foreach (var id in contactUserIds)
-        {
-            var provisional = _userLoginCache.TryGetValue(id, out var cached)
-                ? cached
-                : id.ToString();
-            Contacts.Add(new Contact { Id = id, Name = provisional });
-        }
+        // Bag swap after EnsureBagIdAsync must not shrink a richer startup/disk paint
+        // (TINA_FLASH_THEN_DROP — rich paint then self-only replace).
+        ApplyContactUserIdsToList(contactUserIds);
 
         await EnsureSelfContactAsync(userId).ConfigureAwait(true);
         if (generation != _contactsLoadGeneration) return;
@@ -781,6 +752,37 @@ public partial class MessengerViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(ShowContactsEmpty));
+    }
+
+    /// <summary>
+    /// Apply online/bag contact ids without wiping a richer painted list (Tina flash-then-drop).
+    /// Shared by StartupFast paint and ContinueContacts bag swap.
+    /// </summary>
+    private void ApplyContactUserIdsToList(IReadOnlyList<Guid> contactUserIds)
+    {
+        var paintedCount = Contacts.Count;
+        if (PreferOnlineUiCache.ShouldReplaceContactsList(contactUserIds.Count, paintedCount))
+        {
+            Contacts.Clear();
+            foreach (var id in contactUserIds)
+            {
+                var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                    ? cached
+                    : id.ToString();
+                Contacts.Add(new Contact { Id = id, Name = provisional });
+            }
+            return;
+        }
+
+        // Keep painted partners; merge any online ids not yet shown.
+        foreach (var id in contactUserIds)
+        {
+            if (Contacts.Any(c => c.Id == id)) continue;
+            var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                ? cached
+                : id.ToString();
+            Contacts.Add(new Contact { Id = id, Name = provisional });
+        }
     }
 
     private void PersistContactsDiskAsap(Guid ownerUserId)

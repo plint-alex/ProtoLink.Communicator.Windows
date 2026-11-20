@@ -89,6 +89,21 @@ public class PreferOnlineUiCacheTests
         bool expected) =>
         Assert.Equal(expected, PreferOnlineUiCache.ShouldReplaceContactsList(online, painted));
 
+    /// <summary>
+    /// TINA_FLASH_THEN_DROP: bag swap after EnsureBagIdAsync must not Clear a richer paint
+    /// (startup painted self+Tina=2; thinner bag returns self-only=1).
+    /// </summary>
+    [Fact]
+    public void BagSwap_MustNotShrinkRichPaint_SelfOnlyOverSelfPlusTina()
+    {
+        const int richPaintSelfPlusTina = 2;
+        const int thinBagSelfOnly = 1;
+        Assert.False(
+            PreferOnlineUiCache.ShouldReplaceContactsList(thinBagSelfOnly, richPaintSelfPlusTina));
+        Assert.True(
+            PreferOnlineUiCache.ShouldReplaceContactsList(richPaintSelfPlusTina, thinBagSelfOnly));
+    }
+
     [Theory]
     [InlineData(2, 2, true)]
     [InlineData(1, 2, false)]
