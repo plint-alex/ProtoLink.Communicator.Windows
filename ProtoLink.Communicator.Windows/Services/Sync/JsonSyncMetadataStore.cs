@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 
@@ -270,6 +271,30 @@ public sealed class JsonSyncMetadataStore
         {
             _items.Remove(Key(mappingId, relativePath));
             MarkDirtyOrSaveUnlocked();
+        }
+    }
+
+    /// <summary>
+    /// Drop sync-meta rows whose <see cref="SyncItemMeta.RemoteId"/> is in
+    /// <paramref name="remoteIds"/>. Used after Cloud delete so Soft Ready cannot resurrect
+    /// soft-hidden entities when GetEntities times out (E10 / AT-CFD Win regress).
+    /// </summary>
+    public int RemoveByRemoteIds(IEnumerable<Guid> remoteIds)
+    {
+        var set = remoteIds as HashSet<Guid> ?? remoteIds.ToHashSet();
+        if (set.Count == 0) return 0;
+        EnsureLoaded();
+        lock (_gate)
+        {
+            var keys = _items
+                .Where(kv => set.Contains(kv.Value.RemoteId))
+                .Select(kv => kv.Key)
+                .ToList();
+            foreach (var k in keys)
+                _items.Remove(k);
+            if (keys.Count > 0)
+                MarkDirtyOrSaveUnlocked();
+            return keys.Count;
         }
     }
 

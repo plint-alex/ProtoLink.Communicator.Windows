@@ -159,27 +159,38 @@ public partial class CloudViewModel
                 return;
             }
 
+            StatusText = "Deleting…";
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
             var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
+            var deletedIds = new HashSet<Guid>();
             _mappedSync.SuspendMappedRootWatchers();
             try
             {
                 if (item.IsFolder)
                 {
-                    var children = await _api.GetEntitiesAsync(new[] { item.Id }, includeValues: false);
-                    foreach (var c in children ?? new List<GetEntitiesResult>())
-                    {
-                        if (c.Code == CloudEntityCodes.CloudFile)
-                            await _api.DeleteEntityAsync(c.Id);
-                        else if (c.Code == CloudEntityCodes.CloudFolder)
-                            await DeleteFolderRecursiveAsync(c.Id);
-                    }
-                    await _api.DeleteEntityAsync(item.Id);
+                    await CloudFolderDelete.DeleteFolderRecursiveAsync(
+                        item.Id,
+                        async id =>
+                        {
+                            var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false);
+                            return (kids ?? new List<GetEntitiesResult>())
+                                .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code))
+                                .ToList();
+                        },
+                        id => _api.DeleteEntityAsync(id),
+                        deletedIds);
                 }
                 else
                 {
                     await _api.DeleteEntityAsync(item.Id);
+                    deletedIds.Add(item.Id);
                 }
+
+                // Soft Ready paints sync-meta children when GetEntities times out — purge so
+                // deleted ids cannot resurrect after a successful Cloud soft-hide (E10 regress).
+                _listingMetaStore.RemoveByRemoteIds(deletedIds);
+                foreach (var id in deletedIds)
+                    _deletedRemoteIds.Add(id);
 
                 // NFR-SYNC-1: mirror IO soft-fails; Cloud tree already deleted.
                 CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);
@@ -202,19 +213,6 @@ public partial class CloudViewModel
         {
             ReportCaughtException(ex);
         }
-    }
-
-    private async Task DeleteFolderRecursiveAsync(Guid folderId)
-    {
-        var children = await _api.GetEntitiesAsync(new[] { folderId }, includeValues: false);
-        foreach (var c in children ?? new List<GetEntitiesResult>())
-        {
-            if (c.Code == CloudEntityCodes.CloudFile)
-                await _api.DeleteEntityAsync(c.Id);
-            else
-                await DeleteFolderRecursiveAsync(c.Id);
-        }
-        await _api.DeleteEntityAsync(folderId);
     }
 
     public async Task DownloadAsync(CloudItemViewModel item)

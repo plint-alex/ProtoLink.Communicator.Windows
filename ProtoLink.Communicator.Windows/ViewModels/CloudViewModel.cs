@@ -49,6 +49,8 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Dictionary<Guid, string> _shareRootCaptions = new();
     /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
     private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
+    /// <summary>Session tombstones after Cloud delete — Soft Ready must not resurrect them.</summary>
+    private readonly HashSet<Guid> _deletedRemoteIds = new();
     private string? _folderSizeSummary;
     private int _folderSizeGeneration;
 
@@ -721,6 +723,7 @@ public partial class CloudViewModel : ViewModelBase
 
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
                 fresh = (list ?? new List<GetEntitiesResult>())
+                    .Where(e => !_deletedRemoteIds.Contains(e.Id))
                     .Select(e => ToListItem(e, syncedIds, ResolveListingMetaName))
                     .OrderByDescending(x => x.IsFolder)
                     .ThenByDescending(x => x.UpdateTime)
@@ -1102,9 +1105,11 @@ public partial class CloudViewModel : ViewModelBase
 
     private bool TryApplySyncMetaSoftReady(Guid folderId, Guid? selectedId, bool reset)
     {
+        var metaKids = _listingMetaStore.FindChildrenByParentRemoteId(folderId)
+            .Where(c => !_deletedRemoteIds.Contains(c.RemoteId));
         var rows = CloudInteractiveListing.BuildSoftReadyRows(
             folderId,
-            _listingMetaStore.FindChildrenByParentRemoteId(folderId),
+            metaKids,
             CloudApiService.InteractiveListingMaxRows);
         if (rows.Count == 0)
             return false;

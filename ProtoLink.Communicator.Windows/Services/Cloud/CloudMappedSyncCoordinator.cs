@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Windows.Threading;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Services.Sync;
@@ -41,6 +42,8 @@ public sealed class CloudMappedSyncCoordinator
     private int _deferredFolderSync;
     private int _budgetedExclusive;
     private int _forcePreferred;
+    /// <summary>Cloud UI mutation (delete) — skip interval AutoPush so local mirror cannot recreate soft-hidden Cloud rows.</summary>
+    private int _cloudMutationSuspend;
     private readonly object _deferredFolderGate = new();
     private Guid _deferredFolderId;
     private string _deferredFolderPath = "";
@@ -144,6 +147,8 @@ public sealed class CloudMappedSyncCoordinator
                         continue;
                     if (Volatile.Read(ref _deferredFolderSync) != 0)
                         continue;
+                    if (Volatile.Read(ref _cloudMutationSuspend) > 0)
+                        continue;
                     await PushLocalChangesAllAsync(notifyIfUploaded: true, budget: AutoPushBudget);
                 }
                 catch (OperationCanceledException)
@@ -165,8 +170,18 @@ public sealed class CloudMappedSyncCoordinator
         _intervalCts = null;
     }
 
-    public void SuspendMappedRootWatchers() { }
-    public void ResumeMappedRootWatchers() { }
+    /// <summary>
+    /// Pause interval AutoPush while Cloud delete (and mirror cleanup) runs so PushLocalChanges
+    /// cannot recreate the soft-hidden Cloud tree from a still-present local mirror.
+    /// </summary>
+    public void SuspendMappedRootWatchers() => Interlocked.Increment(ref _cloudMutationSuspend);
+
+    public void ResumeMappedRootWatchers()
+    {
+        if (Interlocked.Decrement(ref _cloudMutationSuspend) < 0)
+            Interlocked.Exchange(ref _cloudMutationSuspend, 0);
+    }
+
     public void RestartFileWatchers() { }
 
     public Task RunFolderSynchronizeAsync(Guid folderId, string localPath) =>
@@ -341,9 +356,14 @@ public sealed class CloudMappedSyncCoordinator
         CancelExclusiveWork();
     }
 
-    private Task PushLocalChangesAllAsync(bool notifyIfUploaded, TimeSpan? budget) =>
-        RunExclusiveAsync(async ct =>
+    private Task PushLocalChangesAllAsync(bool notifyIfUploaded, TimeSpan? budget)
+    {
+        if (Volatile.Read(ref _cloudMutationSuspend) > 0)
+            return Task.CompletedTask;
+
+        return RunExclusiveAsync(async ct =>
         {
+            if (Volatile.Read(ref _cloudMutationSuspend) > 0) return;
             if (!EnsureAuthenticatedForSync()) return;
             var applied = await _folderSynchronizer.PushLocalChangesAllAsync(
                 _syncMappings.ToList(),
@@ -362,6 +382,7 @@ public sealed class CloudMappedSyncCoordinator
             try { _onSyncCompleted?.Invoke(); }
             catch { /* ignore */ }
         }, budget);
+    }
 
     /// <summary>
     /// Force Download/Upload: preempt Sync holder, bound-wait for the mutex, run work, then clear preferred
