@@ -44,4 +44,27 @@ public class MessengerChatLoadTests
         Assert.True(MessengerChatLoad.ShouldClearLoadingOnFault(new HttpRequestException("refused")));
         Assert.False(MessengerChatLoad.ShouldClearLoadingOnFault(null));
     }
+
+    [Fact]
+    public async Task ObserveAbandonedSoft_FaultedTask_DoesNotThrow()
+    {
+        var faulted = Task.FromException(new ObjectDisposedException("System.Threading.CancellationTokenSource"));
+        MessengerChatLoad.ObserveAbandonedSoft(faulted);
+        // Give continuation a tick; must not surface unobserved.
+        await Task.Delay(50);
+        Assert.True(faulted.IsFaulted);
+    }
+
+    [Fact]
+    public async Task CancelObserveAndDispose_DoesNotDisposeUntilWorkCompletes()
+    {
+        var cts = new CancellationTokenSource();
+        var tcs = new TaskCompletionSource();
+        MessengerChatLoad.CancelObserveAndDispose(cts, tcs.Task);
+        // CTS must still accept Cancel while work incomplete (not disposed yet).
+        Assert.True(cts.IsCancellationRequested);
+        tcs.SetException(new ObjectDisposedException("System.Threading.CancellationTokenSource"));
+        await Task.Delay(100);
+        Assert.Throws<ObjectDisposedException>(() => cts.Token.Register(() => { }));
+    }
 }

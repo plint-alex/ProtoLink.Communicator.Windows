@@ -94,4 +94,15 @@ public class ApiExceptionHelperTests
             new InvalidOperationException("bug")));
         Assert.False(ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(null));
     }
+
+    [Fact]
+    public void IsCancellationTokenDisposedFailure_True_For_CtsObjectName()
+    {
+        var ex = new ObjectDisposedException("System.Threading.CancellationTokenSource");
+        Assert.True(ApiExceptionHelper.IsCancellationTokenDisposedFailure(ex));
+        Assert.True(ApiExceptionHelper.IsCancellationTokenDisposedFailure(new AggregateException(ex)));
+        Assert.False(ApiExceptionHelper.IsCancellationTokenDisposedFailure(
+            new ObjectDisposedException("System.Net.Http.HttpClient")));
+        Assert.False(ApiExceptionHelper.IsCancellationTokenDisposedFailure(null));
+    }
 }

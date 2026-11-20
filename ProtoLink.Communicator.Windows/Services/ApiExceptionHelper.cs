@@ -55,6 +55,19 @@ internal static class ApiExceptionHelper
         return ChainHasHttpStreamAlreadyConsumed(ex);
     }
 
+    /// <summary>
+    /// CTS disposed under in-flight WaitAsync/HttpClient (budget abandon race) — soft-observe
+    /// so StartupFast escalate cannot surface "Background task error".
+    /// </summary>
+    public static bool IsCancellationTokenDisposedFailure(Exception? ex)
+    {
+        if (ex == null) return false;
+        if (ex is AggregateException agg)
+            return agg.Flatten().InnerExceptions.Any(IsCancellationTokenDisposedFailure);
+
+        return ChainHasCancellationTokenDisposed(ex);
+    }
+
     private static bool ChainHasUnauthorizedHttp(Exception ex)
     {
         for (var e = ex; e != null; e = e.InnerException)
@@ -114,6 +127,22 @@ internal static class ApiExceptionHelper
         {
             if (e is InvalidOperationException
                 && e.Message.Contains("stream was already consumed", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ChainHasCancellationTokenDisposed(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is not ObjectDisposedException ode) continue;
+            // CTS Dispose under in-flight WaitAsync/HttpClient callback registration.
+            if (ode.ObjectName != null
+                && ode.ObjectName.Contains("CancellationToken", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (ode.Message.Contains("CancellationToken", StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 

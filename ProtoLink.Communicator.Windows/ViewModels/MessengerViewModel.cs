@@ -498,15 +498,39 @@ public partial class MessengerViewModel : ViewModelBase
         if (Contacts.Count == 0)
             TryPaintContactsFromDisk(userId);
 
+        // Do not `using`-dispose this CTS while StartupFast escalate may still be in flight —
+        // disposing the token under HttpClient/Semaphore wait → ObjectDisposedException →
+        // Unobserved "Background task error" (FAIL_CLASS BACKGROUND_TASK_ERROR_STARTUPFAST).
+        CancellationTokenSource? loadCts = new(MessengerContactsLoad.InteractiveHttpTimeout);
+        Task? abandonedBagTask = null;
         try
         {
-            using var loadCts = new CancellationTokenSource(MessengerContactsLoad.InteractiveHttpTimeout);
+            // Startup-fast bag (short page enrich / full page escalate with early-exit).
+            var bagTask = UserContactsBagClient.EnsureBagIdStartupFastAsync(
+                _httpClient, userId, loadCts.Token);
+            abandonedBagTask = bagTask;
+            try
+            {
+                _userContactsId = await MessengerChatLoad.AwaitWithinBudgetAsync(bagTask, loadCts.Token)
+                    .ConfigureAwait(true);
+                abandonedBagTask = null;
+            }
+            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            {
+                // Budget elapsed: soft-observe abandoned escalate; reconcile in background below.
+                MessengerChatLoad.CancelObserveAndDispose(loadCts, bagTask);
+                loadCts = null;
+                abandonedBagTask = null;
+                if (gen != _contactsLoadGeneration) return;
+                if (PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(true, Contacts.Count > 0))
+                    StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
+                else if (Contacts.Count == 0)
+                    StatusText = MessengerContactsLoad.LoadFailedSoft;
+                // Still try richest-bag reconcile so Tina can appear after Interactive leave.
+                _ = ContinueContactsAfterPaintAsync(userId, Contacts.Select(c => c.Id).ToList(), gen);
+                return;
+            }
 
-            // Startup-fast bag: first page + no kid-count enrich so Sync/Notes cannot starve first paint.
-            // Prefer online when PreferOnlineUiCache.ShouldRefreshOnlineAfterCachePaint.
-            _userContactsId = await MessengerChatLoad.AwaitWithinBudgetAsync(
-                UserContactsBagClient.EnsureBagIdStartupFastAsync(_httpClient, userId, loadCts.Token),
-                loadCts.Token).ConfigureAwait(true);
             if (gen != _contactsLoadGeneration) return;
             if (!_userContactsId.HasValue)
             {
@@ -601,6 +625,8 @@ public partial class MessengerViewModel : ViewModelBase
                 StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
             else if (Contacts.Count == 0)
                 StatusText = MessengerContactsLoad.LoadFailedSoft;
+            // Budget/connectivity soft-fail: still reconcile richest bag in background (Tina).
+            _ = ContinueContactsAfterPaintAsync(userId, Contacts.Select(c => c.Id).ToList(), gen);
         }
         catch (Exception)
         {
@@ -609,6 +635,8 @@ public partial class MessengerViewModel : ViewModelBase
         }
         finally
         {
+            if (loadCts != null)
+                MessengerChatLoad.CancelObserveAndDispose(loadCts, abandonedBagTask);
             if (gen == _contactsLoadGeneration)
             {
                 IsContactsLoading = false;

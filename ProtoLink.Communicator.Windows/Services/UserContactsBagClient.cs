@@ -50,24 +50,38 @@ public static class UserContactsBagClient
 
     /// <summary>
     /// When 2+ bags, count kids (take 500) so pick prefers the richest (Tina/person rows).
-    /// Runs a small parallel pool so multi-bag accounts (dozens of UC siblings) stay interactive.
+    /// Oldest-first. When <paramref name="earlyExitOnPartner"/>, stop after the first
+    /// partner-bearing bag (StartupFast Interactive budget). Full ensure keeps scanning all.
     /// </summary>
     public static async Task EnrichPersonRowCountsAsync(
         HttpClient http,
         IList<UserContactsBagHelpers.BagSnapshot> bags,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool earlyExitOnPartner = false)
     {
         if (bags.Count < 2)
             return;
 
-        // Multi-bag Alex (~100 UC siblings): higher pool so StartupFast escalate still fits Interactive budget.
         const int enrichParallelism = 8;
+        var ordered = UserContactsBagHelpers.OrderBagsForEnrich(bags);
         using var gate = new SemaphoreSlim(enrichParallelism, enrichParallelism);
-        var tasks = bags.Select(async bag =>
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var tasks = ordered.Select(async bag =>
         {
-            await gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                await gate.WaitAsync(stop.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            try
+            {
+                if (stop.IsCancellationRequested)
+                    return;
+
                 var response = await http.PostAsJsonAsync(
                     "api/Entities/GetEntities",
                     new GetEntitiesContract
@@ -77,16 +91,32 @@ public static class UserContactsBagClient
                         Take = UserContactsBagHelpers.KidsTake,
                         IncludeValues = false
                     },
-                    ct).ConfigureAwait(false);
+                    stop.Token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
                     bag.PersonRowCount = 0;
                     return;
                 }
 
-                var kids = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: ct)
+                var kids = await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: stop.Token)
                     .ConfigureAwait(false);
                 bag.PersonRowCount = kids?.Count ?? 0;
+                if (earlyExitOnPartner
+                    && bag.PersonRowCount >= UserContactsBagHelpers.PartnerRowThreshold)
+                {
+                    try
+                    {
+                        stop.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // stop already torn down — fine
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Early-exit or outer cancel — leave count unset/0; pick still uses known counts.
             }
             catch
             {
@@ -142,12 +172,14 @@ public static class UserContactsBagClient
             return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
         }
 
-        // Truncated newest-first page can hide older partner bags — same path as EnsureBagIdAsync pick.
+        // Truncated newest-first page can hide older partner bags — page-all + early-exit enrich.
         if (!UserContactsBagHelpers.CanPickFromStartupFastFirstPage(first))
-            return await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+            return await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true)
+                .ConfigureAwait(false);
 
         var snapshots = UserContactsBagHelpers.ToSnapshots(first);
-        await EnrichPersonRowCountsAsync(http, snapshots, ct).ConfigureAwait(false);
+        await EnrichPersonRowCountsAsync(http, snapshots, ct, earlyExitOnPartner: true)
+            .ConfigureAwait(false);
         return UserContactsBagHelpers.PickBagId(snapshots);
     }
 
@@ -209,14 +241,15 @@ public static class UserContactsBagClient
     private static async Task<Guid?> TryPickEnrichedAsync(
         HttpClient http,
         Guid ownerUserId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool earlyExitOnPartner = false)
     {
         var entities = await ListAllBagsAsync(http, ownerUserId, ct).ConfigureAwait(false);
         if (UserContactsBagHelpers.ShouldCreateBag(entities))
             return null;
 
         var snapshots = UserContactsBagHelpers.ToSnapshots(entities);
-        await EnrichPersonRowCountsAsync(http, snapshots, ct).ConfigureAwait(false);
+        await EnrichPersonRowCountsAsync(http, snapshots, ct, earlyExitOnPartner).ConfigureAwait(false);
         return UserContactsBagHelpers.PickBagId(snapshots);
     }
 }

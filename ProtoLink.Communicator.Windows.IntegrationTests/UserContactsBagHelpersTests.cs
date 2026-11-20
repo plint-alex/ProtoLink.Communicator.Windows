@@ -169,4 +169,14 @@ public class UserContactsBagHelpersTests
         }));
         Assert.False(UserContactsBagHelpers.HasPartnerBearingBag(null));
     }
+
+    [Fact]
+    public void OrderBagsForEnrich_OldestFirst_TinaBeforeNewestSpawns()
+    {
+        var newest = Bag(New, new DateTime(2026, 10, 27, 0, 0, 0, DateTimeKind.Utc), 0);
+        var tina = Bag(Old, new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc), 3);
+        var mid = Bag(Primary, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 1);
+        var ordered = UserContactsBagHelpers.OrderBagsForEnrich(new[] { newest, mid, tina });
+        Assert.Equal(new[] { Old, Primary, New }, ordered.Select(b => b.Id).ToArray());
+    }
 }

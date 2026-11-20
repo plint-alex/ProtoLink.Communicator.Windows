@@ -119,7 +119,8 @@ public partial class App : System.Windows.Application
 
             if (ApiExceptionHelper.IndicatesUnauthorizedHttp(e.Exception)
                 || ApiExceptionHelper.IsExpectedConnectivityFailure(e.Exception)
-                || ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(e.Exception))
+                || ApiExceptionHelper.IsHttpStreamAlreadyConsumedFailure(e.Exception)
+                || ApiExceptionHelper.IsCancellationTokenDisposedFailure(e.Exception))
             {
                 e.SetObserved();
                 return;

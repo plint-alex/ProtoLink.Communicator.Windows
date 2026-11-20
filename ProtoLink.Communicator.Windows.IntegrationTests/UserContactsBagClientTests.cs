@@ -116,8 +116,9 @@ public class UserContactsBagClientTests
         Assert.Equal(RichTina, id);
         Assert.Equal(0, handler.AddEntityCount);
         Assert.Equal(1, handler.ListPageFetches);
-        // Dual-parent list + 2 kid enrich calls.
-        Assert.Equal(3, handler.GetEntitiesCount);
+        // Dual-parent list + early-exit kid enrich (Tina oldest/partner) — may skip empty sibling.
+        Assert.True(handler.GetEntitiesCount >= 2 && handler.GetEntitiesCount <= 3);
+        Assert.True(handler.KidFetches >= 1 && handler.KidFetches <= 2);
     }
 
     [Fact]
@@ -144,6 +145,32 @@ public class UserContactsBagClientTests
         Assert.Equal(0, handler.AddEntityCount);
         Assert.True(handler.ListPageFetches >= 2);
         Assert.True(handler.GetEntitiesCount > 2);
+    }
+
+    [Fact]
+    public async Task StartupFast_Escalate_EarlyExitEnrich_DoesNotKidFetchAllHundredBags()
+    {
+        // ~100 thin newest + oldest Tina: early-exit must stop kid fetches well under 100.
+        var thin = Enumerable.Range(0, 99)
+            .Select(i => BagJson(
+                Guid.Parse($"10000000-0000-4000-8000-{i:D12}"),
+                $"2026-10-{(i % 27) + 1:D2}T00:00:00Z"))
+            .Cast<object>()
+            .ToArray();
+        var allBags = thin.Concat(new[] { BagJson(RichTina, "2025-01-01T00:00:00Z") }).ToArray();
+        var kids = Enumerable.Range(0, 99)
+            .ToDictionary(i => Guid.Parse($"10000000-0000-4000-8000-{i:D12}"), _ => 1);
+        kids[RichTina] = 3;
+
+        var handler = new UcHandler(listPages: Array.Empty<object[]>(), kidsByBag: kids, pagedBags: allBags);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
+
+        Assert.Equal(RichTina, id);
+        // Dual-parent pages (~2) + kid enrich: early-exit after Tina (oldest) — not 99+ kid calls.
+        Assert.True(handler.KidFetches < 20, $"KidFetches={handler.KidFetches} should early-exit");
+        Assert.True(handler.KidFetches >= 1);
     }
 
     [Fact]
@@ -180,6 +207,7 @@ public class UserContactsBagClientTests
         public int AddEntityCount { get; private set; }
         public int GetEntitiesCount { get; private set; }
         public int ListPageFetches { get; private set; }
+        public int KidFetches { get; private set; }
 
         public UcHandler(
             IEnumerable<object[]> listPages,
@@ -242,6 +270,7 @@ public class UserContactsBagClientTests
                 // Kids under a single bag id
                 if (parents.Count == 1 && _kidsByBag.TryGetValue(parents[0], out var kidCount))
                 {
+                    KidFetches++;
                     var kids = Enumerable.Range(0, kidCount)
                         .Select(i => new
                         {

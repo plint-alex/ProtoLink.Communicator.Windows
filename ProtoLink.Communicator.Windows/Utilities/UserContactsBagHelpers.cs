@@ -47,6 +47,22 @@ public static class UserContactsBagHelpers
     public static bool CanPickFromStartupFastFirstPage(IReadOnlyList<GetEntitiesResult>? firstPage) =>
         !IsListPageFull(firstPage);
 
+    /// <summary>
+    /// Enrich oldest-first so partner bags (Tina) surface before thin newest spawns — enables early-exit.
+    /// </summary>
+    public static IReadOnlyList<BagSnapshot> OrderBagsForEnrich(IEnumerable<BagSnapshot>? bags)
+    {
+        if (bags == null)
+            return Array.Empty<BagSnapshot>();
+        var list = bags as IList<BagSnapshot> ?? bags.ToList();
+        if (list.Count == 0)
+            return Array.Empty<BagSnapshot>();
+        return list
+            .OrderBy(b => b.CreationTime == default ? DateTime.MaxValue : b.CreationTime)
+            .ThenBy(b => b.Id)
+            .ToList();
+    }
+
     /// <summary>True when known kid counts show at least one partner-bearing bag.</summary>
     public static bool HasPartnerBearingBag(IReadOnlyList<BagSnapshot>? bags)
     {
