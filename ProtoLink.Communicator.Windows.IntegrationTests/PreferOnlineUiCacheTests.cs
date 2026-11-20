@@ -40,4 +40,23 @@ public class PreferOnlineUiCacheTests
     [InlineData(false, true)]
     public void ClearChromeForLoad_OnlyWhenNoCache(bool hasCache, bool expectedClear) =>
         Assert.Equal(expectedClear, PreferOnlineUiCache.ShouldClearChromeForLoad(hasCache));
+
+    [Theory]
+    [InlineData(2, 2, true)]
+    [InlineData(3, 2, true)]
+    [InlineData(1, 2, false)]
+    [InlineData(0, 1, false)]
+    [InlineData(1, 0, true)]
+    public void ReplaceContactsList_BlocksThinOnlineOverRichPaint(
+        int online,
+        int painted,
+        bool expected) =>
+        Assert.Equal(expected, PreferOnlineUiCache.ShouldReplaceContactsList(online, painted));
+
+    [Theory]
+    [InlineData(2, 2, true)]
+    [InlineData(1, 2, false)]
+    [InlineData(3, 1, true)]
+    public void ReplaceContactsCache_BlocksShrink(int incoming, int existing, bool expected) =>
+        Assert.Equal(expected, PreferOnlineUiCache.ShouldReplaceContactsCache(incoming, existing));
 }

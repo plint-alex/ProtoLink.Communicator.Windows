@@ -142,4 +142,31 @@ public class UserContactsBagHelpersTests
         Assert.False(UserContactsBagHelpers.IsListPageFull(newestFirst.Skip(take).ToList(), take));
         Assert.Equal(Old, UserContactsBagHelpers.PickBagId(UserContactsBagHelpers.ToSnapshots(all)));
     }
+
+    [Fact]
+    public void StartupFastFirstPage_InsufficientWhenFull_TinaOffPage()
+    {
+        var full = Enumerable.Range(0, UserContactsBagHelpers.ListPageSize)
+            .Select(_ => Entity(Guid.NewGuid()))
+            .ToList();
+        Assert.False(UserContactsBagHelpers.CanPickFromStartupFastFirstPage(full));
+        Assert.True(UserContactsBagHelpers.CanPickFromStartupFastFirstPage(full.Take(3).ToList()));
+        Assert.True(UserContactsBagHelpers.CanPickFromStartupFastFirstPage(Array.Empty<GetEntitiesResult>()));
+    }
+
+    [Fact]
+    public void HasPartnerBearingBag_Threshold()
+    {
+        Assert.False(UserContactsBagHelpers.HasPartnerBearingBag(new[]
+        {
+            Bag(Old, DateTime.UtcNow, 0),
+            Bag(New, DateTime.UtcNow, 1),
+        }));
+        Assert.True(UserContactsBagHelpers.HasPartnerBearingBag(new[]
+        {
+            Bag(Old, DateTime.UtcNow, 1),
+            Bag(Primary, DateTime.UtcNow, UserContactsBagHelpers.PartnerRowThreshold),
+        }));
+        Assert.False(UserContactsBagHelpers.HasPartnerBearingBag(null));
+    }
 }

@@ -19,6 +19,12 @@ public static class UserContactsBagHelpers
     /// <summary>Kids page size when enriching person-row counts for pick.</summary>
     public const int KidsTake = 500;
 
+    /// <summary>
+    /// Minimum person rows that imply a real partner (not empty / self-only spawn bag).
+    /// Used by StartupFast to decide whether a first-page pick is safe.
+    /// </summary>
+    public const int PartnerRowThreshold = 2;
+
     public sealed class BagSnapshot
     {
         public Guid Id { get; init; }
@@ -32,6 +38,26 @@ public static class UserContactsBagHelpers
                 CreationTime = entity.CreationTime,
                 PersonRowCount = personRowCount
             };
+    }
+
+    /// <summary>
+    /// StartupFast may use first-page-only pick only when the newest-first page is short
+    /// (no hidden older siblings). A full page can hide partner bags (Tina) → escalate to page-all+enrich.
+    /// </summary>
+    public static bool CanPickFromStartupFastFirstPage(IReadOnlyList<GetEntitiesResult>? firstPage) =>
+        !IsListPageFull(firstPage);
+
+    /// <summary>True when known kid counts show at least one partner-bearing bag.</summary>
+    public static bool HasPartnerBearingBag(IReadOnlyList<BagSnapshot>? bags)
+    {
+        if (bags == null) return false;
+        foreach (var b in bags)
+        {
+            if (b.PersonRowCount is >= PartnerRowThreshold)
+                return true;
+        }
+
+        return false;
     }
 
     public static bool IsListPageFull(IReadOnlyList<GetEntitiesResult>? page, int pageSize = ListPageSize)

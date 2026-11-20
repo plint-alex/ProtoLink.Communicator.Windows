@@ -26,4 +26,17 @@ public static class PreferOnlineUiCache
     /// Navigate/list start: prefer painting cache over clearing to empty when cache exists.
     /// </summary>
     public static bool ShouldClearChromeForLoad(bool hasCachedPayloadForTarget) => !hasCachedPayloadForTarget;
+
+    /// <summary>
+    /// Replace painted Messenger contacts only when online is at least as complete.
+    /// Blocks thin StartupFast / self-only bags from wiping a richer disk paint (Tina).
+    /// </summary>
+    public static bool ShouldReplaceContactsList(int onlineContactCount, int paintedContactCount) =>
+        onlineContactCount >= paintedContactCount;
+
+    /// <summary>
+    /// Persist contacts cache only when the new list is not a shrink vs last-good disk.
+    /// </summary>
+    public static bool ShouldReplaceContactsCache(int incomingCount, int existingCachedCount) =>
+        incomingCount >= existingCachedCount;
 }

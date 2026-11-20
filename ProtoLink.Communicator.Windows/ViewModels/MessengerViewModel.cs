@@ -548,7 +548,6 @@ public partial class MessengerViewModel : ViewModelBase
                 return;
             }
 
-            Contacts.Clear();
             var contactUserIds = new List<Guid>();
             foreach (var c in contactsResults)
             {
@@ -557,17 +556,33 @@ public partial class MessengerViewModel : ViewModelBase
                     contactUserIds.Add(parsed.Value);
             }
 
-            // Show list immediately (provisional names). Compact starts on the list (no auto-open chat).
-            foreach (var id in contactUserIds)
+            // Do not wipe a richer disk paint with a thin StartupFast bag (self-only while Tina off-page).
+            var paintedCount = Contacts.Count;
+            if (PreferOnlineUiCache.ShouldReplaceContactsList(contactUserIds.Count, paintedCount))
             {
-                var provisional = _userLoginCache.TryGetValue(id, out var cached)
-                    ? cached
-                    : id.ToString();
-                Contacts.Add(new Contact { Id = id, Name = provisional });
-            }
+                Contacts.Clear();
+                foreach (var id in contactUserIds)
+                {
+                    var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                        ? cached
+                        : id.ToString();
+                    Contacts.Add(new Contact { Id = id, Name = provisional });
+                }
 
-            // ASAP disk write so next sick-connection paint sees freshest success.
-            PersistContactsDiskAsap(userId);
+                PersistContactsDiskAsap(userId);
+            }
+            else
+            {
+                // Keep painted partners; merge any online ids not yet shown.
+                foreach (var id in contactUserIds)
+                {
+                    if (Contacts.Any(c => c.Id == id)) continue;
+                    var provisional = _userLoginCache.TryGetValue(id, out var cached)
+                        ? cached
+                        : id.ToString();
+                    Contacts.Add(new Contact { Id = id, Name = provisional });
+                }
+            }
 
             OnPropertyChanged(nameof(ShowContactsEmpty));
             StatusText = null;
@@ -701,6 +716,9 @@ public partial class MessengerViewModel : ViewModelBase
     private void PersistContactsDiskAsap(Guid ownerUserId)
     {
         if (Contacts.Count == 0) return;
+        var existing = _diskCache.TryLoadContacts(ownerUserId);
+        if (!PreferOnlineUiCache.ShouldReplaceContactsCache(Contacts.Count, existing.Count))
+            return;
         _diskCache.SaveContactsAsap(
             ownerUserId,
             Contacts.Select(c => new MessengerDiskCache.CachedContact(c.Id, c.Name)));

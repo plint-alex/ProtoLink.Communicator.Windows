@@ -60,7 +60,8 @@ public static class UserContactsBagClient
         if (bags.Count < 2)
             return;
 
-        const int enrichParallelism = 4;
+        // Multi-bag Alex (~100 UC siblings): higher pool so StartupFast escalate still fits Interactive budget.
+        const int enrichParallelism = 8;
         using var gate = new SemaphoreSlim(enrichParallelism, enrichParallelism);
         var tasks = bags.Select(async bag =>
         {
@@ -120,9 +121,10 @@ public static class UserContactsBagClient
     }
 
     /// <summary>
-    /// Startup-fast bag for Messenger contacts ASAP (#messenger-startup-priority):
-    /// first list page only, pick without kid-count enrich. Full <see cref="EnsureBagIdAsync"/>
-    /// (page-all + enrich) stays for Settings Add / background reconcile.
+    /// Startup-fast bag for Messenger contacts ASAP (#messenger-startup-priority).
+    /// Short first page: enrich kid counts then pick (same <see cref="UserContactsBagHelpers.PickBag"/>).
+    /// Full first page (newest-first truncation): escalate to page-all + enrich so partner bags
+    /// off-page (Tina) are not hidden — do not pick thin newest bags without counts.
     /// </summary>
     public static async Task<Guid?> EnsureBagIdStartupFastAsync(
         HttpClient http,
@@ -130,18 +132,23 @@ public static class UserContactsBagClient
         CancellationToken ct = default)
     {
         var first = await ListFirstPageBagsAsync(http, ownerUserId, ct).ConfigureAwait(false);
-        if (!UserContactsBagHelpers.ShouldCreateBag(first))
+        if (UserContactsBagHelpers.ShouldCreateBag(first))
         {
-            var snapshots = UserContactsBagHelpers.ToSnapshots(first);
-            return UserContactsBagHelpers.PickBagId(snapshots);
+            // Race guard: empty first page — recheck full list before create.
+            var pickedEmpty = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+            if (pickedEmpty.HasValue)
+                return pickedEmpty;
+
+            return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
         }
 
-        // Race guard: empty first page — recheck full list before create.
-        var picked = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
-        if (picked.HasValue)
-            return picked;
+        // Truncated newest-first page can hide older partner bags — same path as EnsureBagIdAsync pick.
+        if (!UserContactsBagHelpers.CanPickFromStartupFastFirstPage(first))
+            return await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
 
-        return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        var snapshots = UserContactsBagHelpers.ToSnapshots(first);
+        await EnrichPersonRowCountsAsync(http, snapshots, ct).ConfigureAwait(false);
+        return UserContactsBagHelpers.PickBagId(snapshots);
     }
 
     /// <summary>First dual-parent UserContacts page only (newest-first API).</summary>

@@ -92,9 +92,9 @@ public class UserContactsBagClientTests
     }
 
     [Fact]
-    public async Task StartupFast_UsesFirstPageOnly_NoKidEnrich()
+    public async Task StartupFast_ShortPage_EnrichesAndPicksPartnerBag()
     {
-        // Newest-first page: empty newest + older Tina — without enrich, pick oldest (Tina).
+        // Short first page: enrich kid counts, prefer partner-bearing Tina over empty newest.
         var handler = new UcHandler(
             listPages: new[]
             {
@@ -116,8 +116,34 @@ public class UserContactsBagClientTests
         Assert.Equal(RichTina, id);
         Assert.Equal(0, handler.AddEntityCount);
         Assert.Equal(1, handler.ListPageFetches);
-        // No kids enrich GetEntities — only the dual-parent list page.
-        Assert.Equal(1, handler.GetEntitiesCount);
+        // Dual-parent list + 2 kid enrich calls.
+        Assert.Equal(3, handler.GetEntitiesCount);
+    }
+
+    [Fact]
+    public async Task StartupFast_TruncatedFirstPage_EscalatesFullEnrich_PicksOffPageTina()
+    {
+        // Newest-first page full of thin bags; Tina only on page 2 — must escalate (not pick thin).
+        var allBags = Enumerable.Range(0, 50)
+            .Select(i => BagJson(
+                Guid.Parse($"10000000-0000-4000-8000-{i:D12}"),
+                "2026-10-27T00:00:00Z"))
+            .Concat(new[] { BagJson(RichTina, "2025-01-01T00:00:00Z") })
+            .Cast<object>()
+            .ToArray();
+        var kids = Enumerable.Range(0, 50)
+            .ToDictionary(i => Guid.Parse($"10000000-0000-4000-8000-{i:D12}"), _ => 1);
+        kids[RichTina] = 3;
+
+        var handler = new UcHandler(listPages: Array.Empty<object[]>(), kidsByBag: kids, pagedBags: allBags);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
+
+        Assert.Equal(RichTina, id);
+        Assert.Equal(0, handler.AddEntityCount);
+        Assert.True(handler.ListPageFetches >= 2);
+        Assert.True(handler.GetEntitiesCount > 2);
     }
 
     [Fact]
@@ -149,6 +175,7 @@ public class UserContactsBagClientTests
         private readonly Queue<object[]> _listPages;
         private readonly Dictionary<Guid, int> _kidsByBag;
         private readonly Guid? _createdId;
+        private readonly object[]? _pagedBags;
 
         public int AddEntityCount { get; private set; }
         public int GetEntitiesCount { get; private set; }
@@ -157,11 +184,13 @@ public class UserContactsBagClientTests
         public UcHandler(
             IEnumerable<object[]> listPages,
             Dictionary<Guid, int>? kidsByBag = null,
-            Guid? createdId = null)
+            Guid? createdId = null,
+            object[]? pagedBags = null)
         {
             _listPages = new Queue<object[]>(listPages);
             _kidsByBag = kidsByBag ?? new Dictionary<Guid, int>();
             _createdId = createdId;
+            _pagedBags = pagedBags;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -187,6 +216,12 @@ public class UserContactsBagClientTests
                 var parents = root.TryGetProperty("parentIds", out var p) || root.TryGetProperty("ParentIds", out p)
                     ? p.EnumerateArray().Select(x => Guid.Parse(x.GetString()!)).ToList()
                     : new List<Guid>();
+                var skip = root.TryGetProperty("skip", out var sk) || root.TryGetProperty("Skip", out sk)
+                    ? sk.GetInt32()
+                    : 0;
+                var take = root.TryGetProperty("take", out var tk) || root.TryGetProperty("Take", out tk)
+                    ? tk.GetInt32()
+                    : 50;
 
                 // Dual-parent list: CONTACTS + owner
                 if (parents.Count == 2
@@ -194,6 +229,12 @@ public class UserContactsBagClientTests
                     && parents.Contains(Owner))
                 {
                     ListPageFetches++;
+                    if (_pagedBags != null)
+                    {
+                        var slice = _pagedBags.Skip(skip).Take(take).ToArray();
+                        return Json(slice);
+                    }
+
                     var page = _listPages.Count > 0 ? _listPages.Dequeue() : Array.Empty<object>();
                     return Json(page);
                 }
