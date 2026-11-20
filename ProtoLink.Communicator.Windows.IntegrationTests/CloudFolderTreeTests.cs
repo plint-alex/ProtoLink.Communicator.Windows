@@ -278,6 +278,62 @@ public class CloudFolderTreeTests
     }
 
     [Fact]
+    public void KeepChildrenAcrossRefresh_SameRoot_True()
+    {
+        var root = Guid.NewGuid();
+        Assert.True(CloudFolderTree.KeepChildrenAcrossRefresh(root, root));
+        Assert.False(CloudFolderTree.KeepChildrenAcrossRefresh(null, root));
+        Assert.False(CloudFolderTree.KeepChildrenAcrossRefresh(Guid.NewGuid(), root));
+    }
+
+    [Fact]
+    public void ProjectVisible_SameRootRefresh_ClearedLoadedKeepsPriorChildrenVisible()
+    {
+        // 1.0.102 wipe: Reset cleared children before Ensure → mid-await Rebuild painted root-only.
+        // Same-root refresh must keep prior kids while Loaded is cleared for re-fetch.
+        var root = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var map = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [root] = new[] { new CloudFolderTree.Node(a, "A") },
+            [a] = new[] { new CloudFolderTree.Node(a1, "A1") }
+        };
+        Assert.True(CloudFolderTree.KeepChildrenAcrossRefresh(root, root));
+        var expanded = CloudFolderTree.ExpandSetForRefresh(root, root, new HashSet<Guid> { root, a });
+        var loadedCleared = new HashSet<Guid>(); // mid-refresh: Loaded cleared, children kept
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, "Root"),
+            map,
+            expanded,
+            loadedCleared,
+            selectedId: a);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Contains(rows, r => r.Id == a1);
+        Assert.True(rows.First(r => r.Id == root).IsExpanded);
+        Assert.True(rows.First(r => r.Id == a).IsExpanded);
+    }
+
+    [Fact]
+    public void ProjectVisible_ChildrenClearedMidRefresh_ShowsRootOnlyWipe()
+    {
+        // Documents the failing path: expanded root + empty children map = My Cloud only.
+        var root = Guid.NewGuid();
+        var expanded = new HashSet<Guid> { root };
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, "My Cloud"),
+            new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>(),
+            expanded,
+            loadedParentIds: new HashSet<Guid>(),
+            selectedId: root);
+
+        Assert.Single(rows);
+        Assert.True(rows[0].IsExpanded);
+        Assert.True(rows[0].CanExpand);
+    }
+
+    [Fact]
     public void ProjectVisible_FirstPaintSoftFailStub_ShowsExpandableRoot()
     {
         // RefreshFolderTreeAsync: Reset + TryEnsure soft-fail with empty prior → root stub chrome.

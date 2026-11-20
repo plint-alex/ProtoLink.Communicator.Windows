@@ -189,30 +189,32 @@ public partial class CloudViewModel
             return;
         }
 
-        // Snapshot before Reset so soft-fail can restore last-good chrome (not empty first paint).
+        // Snapshot before cache mutation so soft-fail can restore last-good chrome (not empty first paint).
         var priorHadChrome = FolderTreeRows.Count > 0;
         var cacheSnap = SnapshotFolderTreeCache();
         var priorRootId = _folderTreeRootId;
-        var sameRoot = priorRootId == treeRoot;
+        var sameRoot = CloudFolderTree.KeepChildrenAcrossRefresh(priorRootId, treeRoot);
         var refreshGen = ++_folderTreeRefreshGeneration;
 
         try
         {
-            // Same root → keep live expand set (do not replace with a start-of-refresh snapshot);
-            // new root / first paint → E9b root-only via ExpandSetForRefresh.
+            // Same root → keep live expand set + prior children (re-fetch via cleared Loaded);
+            // new root / first paint → E9b root-only via ExpandSetForRefresh + full Reset.
             var baselineExpanded = CloudFolderTree.ExpandSetForRefresh(
                 _folderTreeRootId,
                 treeRoot,
                 _folderTreeExpanded);
-            ResetFolderTreeCache(preserveExpanded: sameRoot);
-            if (!sameRoot)
+            if (sameRoot)
             {
-                foreach (var id in baselineExpanded)
-                    _folderTreeExpanded.Add(id);
+                _folderTreeLoaded.Clear();
+                _folderTreeLoading.Clear();
+                _folderTreeExpanded.Add(treeRoot);
             }
             else
             {
-                _folderTreeExpanded.Add(treeRoot);
+                ResetFolderTreeCache();
+                foreach (var id in baselineExpanded)
+                    _folderTreeExpanded.Add(id);
             }
 
             var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == treeRoot)?.Name
@@ -297,7 +299,8 @@ public partial class CloudViewModel
             foreach (var id in liveExpanded)
                 _folderTreeExpanded.Add(id);
             _folderTreeRootId = priorRootId;
-            // FolderTreeRows still hold prior paint; do not Clear.
+            // Mid-await Rebuild may have wiped rows while children were cleared — repaint from cache.
+            RebuildFolderTreeRows();
             return;
         }
 
@@ -424,6 +427,11 @@ public partial class CloudViewModel
             includeValues: false,
             maxPages: CloudApiService.InteractiveListingMaxPages,
             pageSize: CloudApiService.InteractiveListingPageSize);
+
+        // Same-root refresh keeps prior kids until replace — drop their count before re-add.
+        if (_folderTreeChildren.TryGetValue(parentId, out var priorKids) && priorKids != null)
+            _folderTreeFolderCount = Math.Max(0, _folderTreeFolderCount - priorKids.Count);
+
         var folderKids = new List<CloudFolderTree.Node>();
         foreach (var e in (list ?? new List<GetEntitiesResult>())
                  .Where(x => CloudFolderTree.IsFolderTreeCode(x.Code))
@@ -487,12 +495,11 @@ public partial class CloudViewModel
         OnPropertyChanged(nameof(FolderTreeHeading));
     }
 
-    private void ResetFolderTreeCache(bool preserveExpanded = false)
+    private void ResetFolderTreeCache()
     {
         _folderTreeChildren.Clear();
         _folderTreeNames.Clear();
-        if (!preserveExpanded)
-            _folderTreeExpanded.Clear();
+        _folderTreeExpanded.Clear();
         _folderTreeLoaded.Clear();
         _folderTreeLoading.Clear();
         _folderTreeFolderCount = 0;

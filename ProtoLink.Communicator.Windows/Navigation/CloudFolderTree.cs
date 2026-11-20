@@ -196,6 +196,14 @@ public static class CloudFolderTree
     }
 
     /// <summary>
+    /// Same-root mid-session refresh must keep prior children/names in the cache so
+    /// <see cref="ProjectVisible"/> stays populated while Loaded is cleared and Ensure re-fetches.
+    /// Clearing children first (1.0.102) made any mid-await Rebuild paint root-only wipe.
+    /// </summary>
+    public static bool KeepChildrenAcrossRefresh(Guid? previousRootId, Guid newRootId) =>
+        previousRootId is { } prev && prev != Guid.Empty && prev == newRootId;
+
+    /// <summary>
     /// Union a refresh baseline with expands committed while refresh awaited (lazy Toggle race).
     /// Same-root mid-session must not drop live expands that landed after the baseline snapshot.
     /// </summary>

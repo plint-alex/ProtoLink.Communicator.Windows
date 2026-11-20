@@ -1,6 +1,7 @@
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -497,11 +498,18 @@ public partial class CloudView : System.Windows.Controls.UserControl
             cmd.Execute(param);
     }
 
-    private void OnFolderTreeDoubleClick(object sender, MouseButtonEventArgs e) =>
+    private void OnFolderTreeDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        // PreviewMouse* tunnels ListBox→button; expand affordance must not open (1.0.102 wipe).
+        if (IsFolderTreeExpandAffordance(e.OriginalSource as DependencyObject)) return;
         OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
+    }
 
-    private void OnFolderTreeItemClick(object sender, MouseButtonEventArgs e) =>
+    private void OnFolderTreeItemClick(object sender, MouseButtonEventArgs e)
+    {
+        if (IsFolderTreeExpandAffordance(e.OriginalSource as DependencyObject)) return;
         OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
+    }
 
     private void OpenFolderTreeFromSender(DependencyObject? source)
     {
@@ -520,6 +528,29 @@ public partial class CloudView : System.Windows.Controls.UserControl
                 return row;
         }
         return null;
+    }
+
+    /// <summary>
+    /// ListBox uses PreviewMouseLeftButtonUp (tunnel). Expand Button PreviewDown Handled does not
+    /// stop that tunnel — without this filter every expand also OpenFolderTree'd and listing refresh
+    /// wiped children (tester 1.0.102 Session-1).
+    /// </summary>
+    private static bool IsFolderTreeExpandAffordance(DependencyObject? start)
+    {
+        for (var d = start; d != null; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is System.Windows.Controls.Button btn)
+            {
+                var name = AutomationProperties.GetName(btn);
+                if (string.Equals(name, "Expand or collapse folder", StringComparison.Ordinal))
+                    return true;
+            }
+
+            if (d is System.Windows.Controls.ListBoxItem)
+                break;
+        }
+
+        return false;
     }
 
     private void OnItemMouseDown(object sender, MouseButtonEventArgs e)
