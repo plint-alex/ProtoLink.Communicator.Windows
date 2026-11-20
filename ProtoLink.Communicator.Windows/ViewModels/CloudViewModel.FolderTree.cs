@@ -20,6 +20,9 @@ public partial class CloudViewModel
     private readonly HashSet<Guid> _folderTreeLoaded = new();
     private readonly HashSet<Guid> _folderTreeLoading = new();
     private int _folderTreeFolderCount;
+    private int _folderTreeRefreshGeneration;
+    private bool _folderTreeRefreshRunning;
+    private bool _folderTreeRefreshQueued;
 
     public ObservableCollection<CloudFolderTreeRowViewModel> FolderTreeRows { get; } = new();
 
@@ -108,16 +111,23 @@ public partial class CloudViewModel
         if (!row.CanExpand && !_folderTreeLoaded.Contains(row.Id))
             return;
 
+        // Commit expand intent before await so overlapping RefreshFolderTreeAsync cannot
+        // snapshot-wipe this row after load settles (1.0.97 expand→load→collapse regress).
         _folderTreeLoading.Add(row.Id);
+        _folderTreeExpanded.Add(row.Id);
         RebuildFolderTreeRows();
         await YieldForChromePaintAsync();
 
         try
         {
             if (!await TryEnsureFolderTreeChildrenLoadedAsync(row.Id))
-                return; // soft-fail: leave unloaded so retry works; loading cleared in finally
-            if (_folderTreeChildren.TryGetValue(row.Id, out var kids) && kids.Count > 0)
-                _folderTreeExpanded.Add(row.Id);
+            {
+                _folderTreeExpanded.Remove(row.Id); // soft-fail: retry from collapsed
+                return;
+            }
+
+            if (!_folderTreeChildren.TryGetValue(row.Id, out var kids) || kids.Count == 0)
+                _folderTreeExpanded.Remove(row.Id); // leaf after load
         }
         finally
         {
@@ -127,6 +137,31 @@ public partial class CloudViewModel
     }
 
     private async Task RefreshFolderTreeAsync()
+    {
+        // Coalesce overlapping listing-driven refreshes so a stale in-flight pass cannot
+        // Rebuild with an expand snapshot taken before a concurrent Toggle committed.
+        if (_folderTreeRefreshRunning)
+        {
+            _folderTreeRefreshQueued = true;
+            return;
+        }
+
+        _folderTreeRefreshRunning = true;
+        try
+        {
+            do
+            {
+                _folderTreeRefreshQueued = false;
+                await RefreshFolderTreeCoreAsync().ConfigureAwait(true);
+            } while (_folderTreeRefreshQueued);
+        }
+        finally
+        {
+            _folderTreeRefreshRunning = false;
+        }
+    }
+
+    private async Task RefreshFolderTreeCoreAsync()
     {
         if (ListedFolderId is not { } listed || CloudVirtualNodes.IsVirtual(listed))
         {
@@ -158,17 +193,27 @@ public partial class CloudViewModel
         var priorHadChrome = FolderTreeRows.Count > 0;
         var cacheSnap = SnapshotFolderTreeCache();
         var priorRootId = _folderTreeRootId;
+        var sameRoot = priorRootId == treeRoot;
+        var refreshGen = ++_folderTreeRefreshGeneration;
 
         try
         {
-            // Same root → keep user expands across listing refresh; new root → E9b first paint.
-            var nextExpanded = CloudFolderTree.ExpandSetForRefresh(
+            // Same root → keep live expand set (do not replace with a start-of-refresh snapshot);
+            // new root / first paint → E9b root-only via ExpandSetForRefresh.
+            var baselineExpanded = CloudFolderTree.ExpandSetForRefresh(
                 _folderTreeRootId,
                 treeRoot,
                 _folderTreeExpanded);
-            ResetFolderTreeCache();
-            foreach (var id in nextExpanded)
-                _folderTreeExpanded.Add(id);
+            ResetFolderTreeCache(preserveExpanded: sameRoot);
+            if (!sameRoot)
+            {
+                foreach (var id in baselineExpanded)
+                    _folderTreeExpanded.Add(id);
+            }
+            else
+            {
+                _folderTreeExpanded.Add(treeRoot);
+            }
 
             var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == treeRoot)?.Name
                            ?? (_photosLibraryId == treeRoot
@@ -178,6 +223,7 @@ public partial class CloudViewModel
 
             if (!await TryEnsureFolderTreeChildrenLoadedAsync(treeRoot))
             {
+                if (refreshGen != _folderTreeRefreshGeneration) return;
                 ApplyFolderTreeSoftFailChrome(treeRoot, rootName, priorHadChrome, priorRootId, cacheSnap);
                 return;
             }
@@ -188,25 +234,47 @@ public partial class CloudViewModel
                 return;
             }
 
-            // Reload children for preserved expands so ProjectVisible can keep descendants visible.
-            foreach (var id in _folderTreeExpanded.ToList())
-            {
-                if (id == treeRoot) continue;
-                if (!await TryEnsureFolderTreeChildrenLoadedAsync(id))
-                    continue; // soft-fail: leave unloaded; expand set stays for retry
-            }
+            // Reload children for expands (incl. Toggle commits that landed during awaits).
+            await EnsureExpandedFolderChildrenLoadedAsync(treeRoot).ConfigureAwait(true);
+            if (refreshGen != _folderTreeRefreshGeneration) return;
+
+            // Union again in case Toggle expanded while the load loop ran (never Clear live set).
+            foreach (var id in CloudFolderTree.UnionExpandSets(
+                         baselineExpanded,
+                         _folderTreeExpanded,
+                         treeRoot))
+                _folderTreeExpanded.Add(id);
+            await EnsureExpandedFolderChildrenLoadedAsync(treeRoot).ConfigureAwait(true);
+            if (refreshGen != _folderTreeRefreshGeneration) return;
 
             _folderTreeRootId = treeRoot;
             RebuildFolderTreeRows();
         }
         catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
         {
+            if (refreshGen != _folderTreeRefreshGeneration) return;
             System.Diagnostics.Debug.WriteLine(ex);
             var rootName = BreadcrumbPath.FirstOrDefault(b => b.Id == treeRoot)?.Name
                            ?? (_photosLibraryId == treeRoot
                                ? ShareSheetStrings.Photos(_settingsService.LoadSettings().UiLanguage)
                                : "Cloud");
             ApplyFolderTreeSoftFailChrome(treeRoot, rootName, priorHadChrome, priorRootId, cacheSnap);
+        }
+    }
+
+    /// <summary>Load children for every expanded non-root id that is not yet loaded.</summary>
+    private async Task EnsureExpandedFolderChildrenLoadedAsync(Guid treeRoot)
+    {
+        // Two passes: Toggle may add expands while the first pass awaits GetEntities.
+        for (var pass = 0; pass < 2; pass++)
+        {
+            foreach (var id in _folderTreeExpanded.ToList())
+            {
+                if (id == treeRoot) continue;
+                if (_folderTreeLoaded.Contains(id)) continue;
+                if (!await TryEnsureFolderTreeChildrenLoadedAsync(id))
+                    continue; // soft-fail: leave unloaded; expand set stays for retry
+            }
         }
     }
 
@@ -223,7 +291,11 @@ public partial class CloudViewModel
     {
         if (priorHadChrome)
         {
+            // Keep expands Toggle committed after the soft-fail snapshot was taken.
+            var liveExpanded = new HashSet<Guid>(_folderTreeExpanded);
             RestoreFolderTreeCache(cacheSnap);
+            foreach (var id in liveExpanded)
+                _folderTreeExpanded.Add(id);
             _folderTreeRootId = priorRootId;
             // FolderTreeRows still hold prior paint; do not Clear.
             return;
@@ -415,11 +487,12 @@ public partial class CloudViewModel
         OnPropertyChanged(nameof(FolderTreeHeading));
     }
 
-    private void ResetFolderTreeCache()
+    private void ResetFolderTreeCache(bool preserveExpanded = false)
     {
         _folderTreeChildren.Clear();
         _folderTreeNames.Clear();
-        _folderTreeExpanded.Clear();
+        if (!preserveExpanded)
+            _folderTreeExpanded.Clear();
         _folderTreeLoaded.Clear();
         _folderTreeLoading.Clear();
         _folderTreeFolderCount = 0;

@@ -209,6 +209,47 @@ public class CloudFolderTreeTests
     }
 
     [Fact]
+    public void UnionExpandSets_RefreshBaselinePlusLiveToggle_KeepsNestedExpand()
+    {
+        // Stale Refresh snapshotted {root} before Toggle committed nested A during load.
+        var root = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var baseline = new HashSet<Guid> { root };
+        var live = new HashSet<Guid> { root, a };
+        var merged = CloudFolderTree.UnionExpandSets(baseline, live, root);
+        Assert.Contains(root, merged);
+        Assert.Contains(a, merged);
+    }
+
+    [Fact]
+    public void ProjectVisible_AfterRefreshWithUnionedLiveExpand_KeepsDescendants()
+    {
+        var root = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var map = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [root] = new[] { new CloudFolderTree.Node(a, "A") },
+            [a] = new[] { new CloudFolderTree.Node(a1, "A1") },
+            [a1] = Array.Empty<CloudFolderTree.Node>()
+        };
+        var baseline = CloudFolderTree.ExpandSetForRefresh(root, root, new HashSet<Guid> { root });
+        var liveDuringRefresh = new HashSet<Guid> { root, a }; // Toggle committed while Refresh awaited
+        var expanded = CloudFolderTree.UnionExpandSets(baseline, liveDuringRefresh, root);
+        var loaded = new HashSet<Guid> { root, a, a1 };
+        var rows = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, "Root"),
+            map,
+            expanded,
+            loaded,
+            selectedId: a1);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Contains(rows, r => r.Id == a1);
+        Assert.True(rows.First(r => r.Id == a).IsExpanded);
+    }
+
+    [Fact]
     public void ProjectVisible_AfterRefreshRebuild_PreservedExpandsKeepDescendantsVisible()
     {
         // Simulates ResetFolderTreeCache + reload children while expand set was preserved.

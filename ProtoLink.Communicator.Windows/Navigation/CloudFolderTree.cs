@@ -194,4 +194,31 @@ public static class CloudFolderTree
 
         return new HashSet<Guid> { newRootId };
     }
+
+    /// <summary>
+    /// Union a refresh baseline with expands committed while refresh awaited (lazy Toggle race).
+    /// Same-root mid-session must not drop live expands that landed after the baseline snapshot.
+    /// </summary>
+    public static HashSet<Guid> UnionExpandSets(
+        IReadOnlyCollection<Guid>? baseline,
+        IReadOnlyCollection<Guid>? live,
+        Guid rootId)
+    {
+        var set = new HashSet<Guid>();
+        if (baseline != null)
+        {
+            foreach (var id in baseline)
+                set.Add(id);
+        }
+
+        if (live != null)
+        {
+            foreach (var id in live)
+                set.Add(id);
+        }
+
+        if (rootId != Guid.Empty)
+            set.Add(rootId);
+        return set;
+    }
 }
