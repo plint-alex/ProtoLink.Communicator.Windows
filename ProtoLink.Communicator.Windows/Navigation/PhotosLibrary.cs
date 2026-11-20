@@ -9,6 +9,13 @@ public static class PhotosLibrary
     public const string HostCode = "Photos";
     public const string FolderPrefix = "photosfolder:";
 
+    /// <summary>
+    /// Dedicated Photos product surface (hub row / host chrome). Paused per vision
+    /// #photos-paused-for-now — Messenger Cloud attach/send photo stays. Feature modules may remain unused.
+    /// Method (not const) so the pause flag does not create CS0162 dead-branch noise.
+    /// </summary>
+    public static bool IsSurfaceEnabled() => false;
+
     /// <summary>Parse library CloudFolder id from Photos host string values.</summary>
     public static Guid? ParseFolderId(IEnumerable<EntityValue>? values)
     {

@@ -8,6 +8,13 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 public class PhotosLibraryTests
 {
     [Fact]
+    public void SurfaceEnabled_PausedForNow()
+    {
+        // Vision #photos-paused-for-now — hub/host product entry off; modules may remain.
+        Assert.False(PhotosLibrary.IsSurfaceEnabled());
+    }
+
+    [Fact]
     public void ParseFolderId_ReadsPhotosfolderPointer()
     {
         var lib = Guid.NewGuid();

@@ -704,7 +704,8 @@ public partial class CloudViewModel : ViewModelBase
             List<CloudItemViewModel> fresh;
             if (folderId == CloudVirtualNodes.HubId)
             {
-                await EnsurePhotosLibraryIdAsync();
+                if (PhotosLibrary.IsSurfaceEnabled())
+                    await EnsurePhotosLibraryIdAsync();
                 fresh = BuildHubListing();
             }
             else if (folderId == CloudVirtualNodes.SharedWithMeId)
@@ -855,7 +856,10 @@ public partial class CloudViewModel : ViewModelBase
             }
         };
 
-        if (_photosLibraryId is { } photosLib && photosLib != Guid.Empty)
+        // Photos hub entry paused (#photos-paused-for-now); keep modules for possible resume.
+        if (PhotosLibrary.IsSurfaceEnabled()
+            && _photosLibraryId is { } photosLib
+            && photosLib != Guid.Empty)
         {
             rows.Add(new CloudItemViewModel
             {

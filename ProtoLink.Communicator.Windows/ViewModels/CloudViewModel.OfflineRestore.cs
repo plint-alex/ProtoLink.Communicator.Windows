@@ -19,7 +19,23 @@ public partial class CloudViewModel
         try
         {
             var resolved = await TryResolveEntityPathAsync(entityId);
-            if (resolved is not { } open) return false;
+            if (resolved is not { } open)
+            {
+                // Paused Photos host with no My Cloud yet → Cloud hub (not blank host chrome).
+                if (!PhotosLibrary.IsSurfaceEnabled())
+                {
+                    var found = await _api.GetEntitiesByIdsAsync(new[] { entityId }, includeValues: false);
+                    if (found.FirstOrDefault() is { } e
+                        && string.Equals(e.Code, PhotosLibrary.HostCode, StringComparison.Ordinal))
+                    {
+                        await EnsureRootAsync();
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             await OpenAsync(open.Entity, open.Breadcrumb, pushHistory: true);
             return true;
         }
@@ -92,9 +108,16 @@ public partial class CloudViewModel
         if (entity == null)
             return null;
 
-        // Anti-SAP (AT-PC6): Photos host → library folder entity, never stay on host-only chrome.
+        // Photos host: paused → soft-land My Cloud / hub; else anti-SAP (AT-PC6) → library.
         if (string.Equals(entity.Code, PhotosLibrary.HostCode, StringComparison.Ordinal))
         {
+            if (!PhotosLibrary.IsSurfaceEnabled())
+            {
+                if (_myCloudRootId != Guid.Empty && _myCloudRootId != entityId)
+                    return await TryResolveEntityPathAsync(_myCloudRootId);
+                return null;
+            }
+
             await EnsurePhotosLibraryIdAsync();
             if (_photosLibraryId is { } lib && lib != entityId)
                 return await TryResolveEntityPathAsync(lib);
