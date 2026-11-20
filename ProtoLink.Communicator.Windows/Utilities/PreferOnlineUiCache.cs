@@ -21,6 +21,19 @@ public static class PreferOnlineUiCache
     /// </summary>
     public static bool ShouldShowOfflineBannerOnInteractiveBudgetElapsed => false;
 
+    /// <summary>
+    /// Cold start may open last-good UserContacts bag id from disk before page-all escalate —
+    /// avoids self-only while ~100+ thin bags are listed (SELF_ONLY_TINA_MISSING).
+    /// </summary>
+    public static bool ShouldPreferCachedUserContactsBag => true;
+
+    /// <summary>
+    /// Persist bag id only when the list is partner-bearing — never stamp a self-only thin bag
+    /// as the cold-start authority.
+    /// </summary>
+    public static bool ShouldPersistUserContactsBagId(int contactCount) =>
+        contactCount >= UserContactsBagHelpers.PartnerRowThreshold;
+
     /// <summary>Paint disk/memory cache before waiting on network when a prior payload exists.</summary>
     public static bool ShouldPaintCacheBeforeOnline(bool hasCachedPayload) => hasCachedPayload;
 

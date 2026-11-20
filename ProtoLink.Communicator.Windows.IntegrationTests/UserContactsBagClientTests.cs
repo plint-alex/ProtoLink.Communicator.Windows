@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
@@ -46,7 +47,11 @@ public class UserContactsBagClientTests
     public async Task Ensure_CreatesOnly_WhenListEmpty_AfterRecheck()
     {
         var created = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
-        var handler = new UcHandler(listPages: new[] { Array.Empty<object>(), Array.Empty<object>() }, createdId: created);
+        // Race-guard snapshots: each ListAll sees empty at skip=0 (not multi-page).
+        var handler = new UcHandler(
+            listPages: Array.Empty<object[]>(),
+            createdId: created,
+            listSnapshots: new[] { Array.Empty<object>(), Array.Empty<object>() });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
 
         var id = await UserContactsBagClient.EnsureBagIdAsync(http, Owner);
@@ -58,13 +63,15 @@ public class UserContactsBagClientTests
     [Fact]
     public async Task Ensure_Recheck_StopsSpawn_WhenSecondListHasBag()
     {
+        // First Ensure ListAll empty; recheck ListAll returns Tina (successive skip=0 snapshots).
         var handler = new UcHandler(
-            listPages: new[]
+            listPages: Array.Empty<object[]>(),
+            kidsByBag: new Dictionary<Guid, int> { [RichTina] = 1 },
+            listSnapshots: new[]
             {
                 Array.Empty<object>(),
                 new[] { BagJson(RichTina, "2026-01-01T00:00:00Z") }
-            },
-            kidsByBag: new Dictionary<Guid, int> { [RichTina] = 1 });
+            });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
 
         var id = await UserContactsBagClient.EnsureBagIdAsync(http, Owner);
@@ -88,7 +95,11 @@ public class UserContactsBagClientTests
 
         Assert.Equal(51, bags.Count);
         Assert.Contains(bags, b => b.Id == RichTina);
-        Assert.Equal(2, handler.ListPageFetches);
+        // Sequential first page + parallel wave (may over-fetch empty tail).
+        Assert.True(handler.ListPageFetches >= 2, $"ListPageFetches={handler.ListPageFetches}");
+        Assert.True(
+            handler.ListPageFetches <= 1 + UserContactsBagHelpers.ListPageParallelism,
+            $"ListPageFetches={handler.ListPageFetches}");
     }
 
     [Fact]
@@ -174,12 +185,63 @@ public class UserContactsBagClientTests
     }
 
     [Fact]
+    public async Task Ensure_EarlyExitEnrich_DoesNotKidFetchAllHundredBags()
+    {
+        // ContinueContactsAfterPaint uses EnsureBagIdAsync — must early-exit like StartupFast
+        // or Refresh generation bump leaves SELF_ONLY forever.
+        var thin = Enumerable.Range(0, 99)
+            .Select(i => BagJson(
+                Guid.Parse($"10000000-0000-4000-8000-{i:D12}"),
+                $"2026-10-{(i % 27) + 1:D2}T00:00:00Z"))
+            .Cast<object>()
+            .ToArray();
+        var allBags = thin.Concat(new[] { BagJson(RichTina, "2025-01-01T00:00:00Z") }).ToArray();
+        var kids = Enumerable.Range(0, 99)
+            .ToDictionary(i => Guid.Parse($"10000000-0000-4000-8000-{i:D12}"), _ => 1);
+        kids[RichTina] = 3;
+
+        var handler = new UcHandler(listPages: Array.Empty<object[]>(), kidsByBag: kids, pagedBags: allBags);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdAsync(http, Owner);
+
+        Assert.Equal(RichTina, id);
+        Assert.True(handler.KidFetches < 20, $"KidFetches={handler.KidFetches} should early-exit");
+    }
+
+    [Fact]
+    public async Task StartupFast_Truncated_ReusesFirstPage_DoesNotRefetchSkip0()
+    {
+        var allBags = Enumerable.Range(0, 50)
+            .Select(i => BagJson(
+                Guid.Parse($"10000000-0000-4000-8000-{i:D12}"),
+                "2026-10-27T00:00:00Z"))
+            .Concat(new[] { BagJson(RichTina, "2025-01-01T00:00:00Z") })
+            .Cast<object>()
+            .ToArray();
+        var kids = Enumerable.Range(0, 50)
+            .ToDictionary(i => Guid.Parse($"10000000-0000-4000-8000-{i:D12}"), _ => 1);
+        kids[RichTina] = 3;
+
+        var handler = new UcHandler(listPages: Array.Empty<object[]>(), kidsByBag: kids, pagedBags: allBags);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+
+        var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
+
+        Assert.Equal(RichTina, id);
+        // First page once + remaining wave — skip=0 must not be fetched twice.
+        Assert.Equal(1, handler.Skip0ListFetches);
+        Assert.True(handler.ListPageFetches >= 2);
+    }
+
+    [Fact]
     public async Task StartupFast_CreatesWhenFirstPageEmpty_AfterRecheck()
     {
         var created = Guid.Parse("cccccccc-dddd-4eee-8fff-000000000001");
         var handler = new UcHandler(
-            listPages: new[] { Array.Empty<object>(), Array.Empty<object>() },
-            createdId: created);
+            listPages: Array.Empty<object[]>(),
+            createdId: created,
+            listSnapshots: new[] { Array.Empty<object>(), Array.Empty<object>(), Array.Empty<object>() });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
 
         var id = await UserContactsBagClient.EnsureBagIdStartupFastAsync(http, Owner);
@@ -199,26 +261,32 @@ public class UserContactsBagClientTests
 
     private sealed class UcHandler : HttpMessageHandler
     {
-        private readonly Queue<object[]> _listPages;
+        private readonly object[][] _listPages;
         private readonly Dictionary<Guid, int> _kidsByBag;
         private readonly Guid? _createdId;
         private readonly object[]? _pagedBags;
+        private readonly Queue<object[]>? _listSnapshots;
+        private readonly object _snapshotGate = new();
 
         public int AddEntityCount { get; private set; }
         public int GetEntitiesCount { get; private set; }
         public int ListPageFetches { get; private set; }
+        public int Skip0ListFetches { get; private set; }
         public int KidFetches { get; private set; }
 
         public UcHandler(
             IEnumerable<object[]> listPages,
             Dictionary<Guid, int>? kidsByBag = null,
             Guid? createdId = null,
-            object[]? pagedBags = null)
+            object[]? pagedBags = null,
+            IEnumerable<object[]>? listSnapshots = null)
         {
-            _listPages = new Queue<object[]>(listPages);
+            // Indexed by skip/take — parallel list waves must not race a Queue.Dequeue.
+            _listPages = listPages.ToArray();
             _kidsByBag = kidsByBag ?? new Dictionary<Guid, int>();
             _createdId = createdId;
             _pagedBags = pagedBags;
+            _listSnapshots = listSnapshots != null ? new Queue<object[]>(listSnapshots) : null;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -257,13 +325,32 @@ public class UserContactsBagClientTests
                     && parents.Contains(Owner))
                 {
                     ListPageFetches++;
+                    if (skip == 0)
+                        Skip0ListFetches++;
                     if (_pagedBags != null)
                     {
                         var slice = _pagedBags.Skip(skip).Take(take).ToArray();
                         return Json(slice);
                     }
 
-                    var page = _listPages.Count > 0 ? _listPages.Dequeue() : Array.Empty<object>();
+                    // Successive full-list snapshots (race-guard recheck) — only at skip=0.
+                    if (_listSnapshots != null)
+                    {
+                        if (skip != 0)
+                            return Json(Array.Empty<object>());
+                        lock (_snapshotGate)
+                        {
+                            var snap = _listSnapshots.Count > 0
+                                ? _listSnapshots.Dequeue()
+                                : Array.Empty<object>();
+                            return Json(snap);
+                        }
+                    }
+
+                    var pageIndex = take > 0 ? skip / take : 0;
+                    var page = pageIndex >= 0 && pageIndex < _listPages.Length
+                        ? _listPages[pageIndex]
+                        : Array.Empty<object>();
                     return Json(page);
                 }
 

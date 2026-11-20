@@ -16,6 +16,12 @@ public static class UserContactsBagHelpers
     /// <summary>Hard cap on pages so a broken API cannot loop forever (~25k bags).</summary>
     public const int ListMaxPages = 500;
 
+    /// <summary>
+    /// Parallel dual-parent list wave size. Sequential page-all of ~100+ bags exceeds
+    /// Messenger Interactive budget (~12s); a short wave finishes list in one RTT.
+    /// </summary>
+    public const int ListPageParallelism = 4;
+
     /// <summary>Kids page size when enriching person-row counts for pick.</summary>
     public const int KidsTake = 500;
 

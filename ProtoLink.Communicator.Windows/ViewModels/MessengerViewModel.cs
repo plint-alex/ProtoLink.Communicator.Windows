@@ -511,10 +511,23 @@ public partial class MessengerViewModel : ViewModelBase
         Task? abandonedBagTask = null;
         try
         {
-            // Startup-fast bag (short page enrich / full page escalate with early-exit).
-            var bagTask = UserContactsBagClient.EnsureBagIdStartupFastAsync(
-                _httpClient, userId, loadCts.Token);
-            abandonedBagTask = bagTask;
+            // Prefer last-good bag id when disk has one — skip page-all escalate on cold start
+            // (138 thin bags / sequential list blew Interactive budget → SELF_ONLY_TINA_MISSING).
+            Guid? bagFromCache = null;
+            if (PreferOnlineUiCache.ShouldPreferCachedUserContactsBag)
+            {
+                var cachedBag = _diskCache.TryLoadUserContactsBagId(userId);
+                if (cachedBag.HasValue)
+                    bagFromCache = cachedBag;
+            }
+
+            Task<Guid?> bagTask;
+            if (bagFromCache.HasValue)
+                bagTask = Task.FromResult<Guid?>(bagFromCache);
+            else
+                bagTask = UserContactsBagClient.EnsureBagIdStartupFastAsync(
+                    _httpClient, userId, loadCts.Token);
+            abandonedBagTask = bagFromCache.HasValue ? null : bagTask;
             try
             {
                 _userContactsId = await MessengerChatLoad.AwaitWithinBudgetAsync(bagTask, loadCts.Token)
@@ -525,7 +538,7 @@ public partial class MessengerViewModel : ViewModelBase
             {
                 // Budget elapsed: soft-observe abandoned escalate; prefer-online continues below.
                 // Do not sticky OfflineBanner — budget ≠ connectivity (healthy Api was timing out).
-                MessengerChatLoad.CancelObserveAndDispose(loadCts, bagTask);
+                MessengerChatLoad.CancelObserveAndDispose(loadCts, abandonedBagTask);
                 loadCts = null;
                 abandonedBagTask = null;
                 if (gen != _contactsLoadGeneration) return;
@@ -774,11 +787,25 @@ public partial class MessengerViewModel : ViewModelBase
     {
         if (Contacts.Count == 0) return;
         var existing = _diskCache.TryLoadContacts(ownerUserId);
+        var bagToPersist = PreferOnlineUiCache.ShouldPersistUserContactsBagId(Contacts.Count)
+            ? _userContactsId
+            : null;
         if (!PreferOnlineUiCache.ShouldReplaceContactsCache(Contacts.Count, existing.Count))
+        {
+            if (bagToPersist.HasValue)
+                _diskCache.SaveContactsAsap(
+                    ownerUserId,
+                    existing.Count > 0
+                        ? existing
+                        : Contacts.Select(c => new MessengerDiskCache.CachedContact(c.Id, c.Name)),
+                    bagToPersist);
             return;
+        }
+
         _diskCache.SaveContactsAsap(
             ownerUserId,
-            Contacts.Select(c => new MessengerDiskCache.CachedContact(c.Id, c.Name)));
+            Contacts.Select(c => new MessengerDiskCache.CachedContact(c.Id, c.Name)),
+            bagToPersist);
     }
 
     private List<MessageViewModel>? TryHydrateMessagesFromDisk(Guid ownerUserId, Guid partnerUserId)

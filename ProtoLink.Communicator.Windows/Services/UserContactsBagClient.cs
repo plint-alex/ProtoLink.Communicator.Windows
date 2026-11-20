@@ -14,35 +14,76 @@ namespace ProtoLink.Communicator.Windows.Services;
 /// </summary>
 public static class UserContactsBagClient
 {
-    /// <summary>Page all dual-parent UserContacts bags (newest-first API).</summary>
+    /// <summary>Page all dual-parent UserContacts bags (newest-first API), parallel waves.</summary>
+    public static Task<List<GetEntitiesResult>> ListAllBagsAsync(
+        HttpClient http,
+        Guid ownerUserId,
+        CancellationToken ct = default) =>
+        ListAllBagsAsync(http, ownerUserId, ct, seedFirstPage: null);
+
+    /// <summary>
+    /// Page all dual-parent UserContacts bags. When <paramref name="seedFirstPage"/> is set
+    /// (StartupFast already fetched skip=0), that page is reused so escalate does not pay
+    /// a duplicate first-page RTT before parallel remaining waves.
+    /// </summary>
     public static async Task<List<GetEntitiesResult>> ListAllBagsAsync(
         HttpClient http,
         Guid ownerUserId,
-        CancellationToken ct = default)
+        CancellationToken ct,
+        IReadOnlyList<GetEntitiesResult>? seedFirstPage)
     {
         var bags = new List<GetEntitiesResult>();
         var skip = 0;
-        for (var page = 0; page < UserContactsBagHelpers.ListMaxPages; page++)
+        var pagesDone = 0;
+
+        if (seedFirstPage != null)
         {
-            var response = await http.PostAsJsonAsync(
-                "api/Entities/GetEntities",
-                new GetEntitiesContract
+            bags = UserContactsBagHelpers.MergeBagPages(bags, seedFirstPage);
+            pagesDone++;
+            if (!UserContactsBagHelpers.IsListPageFull(seedFirstPage))
+                return bags;
+            skip = UserContactsBagHelpers.ListPageSize;
+        }
+        else
+        {
+            // Sequential first page — empty/short list must not speculative-fetch later skips
+            // (would merge a false "page 2" from race-guard snapshot stubs).
+            var first = await FetchListPageAsync(http, ownerUserId, skip: 0, ct).ConfigureAwait(false);
+            bags = UserContactsBagHelpers.MergeBagPages(bags, first);
+            pagesDone++;
+            if (!UserContactsBagHelpers.IsListPageFull(first))
+                return bags;
+            skip = UserContactsBagHelpers.ListPageSize;
+        }
+
+        while (pagesDone < UserContactsBagHelpers.ListMaxPages)
+        {
+            var remaining = UserContactsBagHelpers.ListMaxPages - pagesDone;
+            var waveSize = Math.Min(UserContactsBagHelpers.ListPageParallelism, remaining);
+            var waveSkips = new int[waveSize];
+            for (var i = 0; i < waveSize; i++)
+                waveSkips[i] = skip + i * UserContactsBagHelpers.ListPageSize;
+
+            var wavePages = await Task.WhenAll(
+                    waveSkips.Select(s => FetchListPageAsync(http, ownerUserId, s, ct)))
+                .ConfigureAwait(false);
+
+            var hitShort = false;
+            for (var i = 0; i < wavePages.Length; i++)
+            {
+                bags = UserContactsBagHelpers.MergeBagPages(bags, wavePages[i]);
+                pagesDone++;
+                if (!UserContactsBagHelpers.IsListPageFull(wavePages[i]))
                 {
-                    ParentIds = new[] { SystemEntities.Contacts, ownerUserId },
-                    Skip = skip,
-                    Take = UserContactsBagHelpers.ListPageSize,
-                    IncludeValues = false
-                },
-                ct).ConfigureAwait(false);
-            var chunk = response.IsSuccessStatusCode
-                ? await response.Content.ReadFromJsonAsync<List<GetEntitiesResult>>(cancellationToken: ct)
-                    .ConfigureAwait(false)
-                : null;
-            chunk ??= new List<GetEntitiesResult>();
-            bags = UserContactsBagHelpers.MergeBagPages(bags, chunk);
-            if (!UserContactsBagHelpers.IsListPageFull(chunk))
+                    hitShort = true;
+                    break;
+                }
+            }
+
+            if (hitShort)
                 break;
-            skip += UserContactsBagHelpers.ListPageSize;
+
+            skip += waveSize * UserContactsBagHelpers.ListPageSize;
         }
 
         return bags;
@@ -51,7 +92,7 @@ public static class UserContactsBagClient
     /// <summary>
     /// When 2+ bags, count kids (take 500) so pick prefers the richest (Tina/person rows).
     /// Oldest-first. When <paramref name="earlyExitOnPartner"/>, stop after the first
-    /// partner-bearing bag (StartupFast Interactive budget). Full ensure keeps scanning all.
+    /// partner-bearing bag (Messenger Interactive / ContinueContacts budget).
     /// </summary>
     public static async Task EnrichPersonRowCountsAsync(
         HttpClient http,
@@ -138,12 +179,16 @@ public static class UserContactsBagClient
         Guid ownerUserId,
         CancellationToken ct = default)
     {
-        var picked = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        // Early-exit enrich: ~100+ thin spawn bags must not block Messenger ContinueContacts
+        // (full kid scan exceeds Refresh generation). Oldest partner-bearing bag is enough.
+        var picked = await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true)
+            .ConfigureAwait(false);
         if (picked.HasValue)
             return picked;
 
         // Race guard: empty first snapshot must not AddEntity when bags already exist.
-        picked = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        picked = await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true)
+            .ConfigureAwait(false);
         if (picked.HasValue)
             return picked;
 
@@ -165,16 +210,18 @@ public static class UserContactsBagClient
         if (UserContactsBagHelpers.ShouldCreateBag(first))
         {
             // Race guard: empty first page — recheck full list before create.
-            var pickedEmpty = await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+            var pickedEmpty = await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true)
+                .ConfigureAwait(false);
             if (pickedEmpty.HasValue)
                 return pickedEmpty;
 
             return await CreateBagAsync(http, ownerUserId, ct).ConfigureAwait(false);
         }
 
-        // Truncated newest-first page can hide older partner bags — page-all + early-exit enrich.
+        // Truncated newest-first page can hide older partner bags — page-all (reuse first) + early-exit enrich.
         if (!UserContactsBagHelpers.CanPickFromStartupFastFirstPage(first))
-            return await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true)
+            return await TryPickEnrichedAsync(
+                    http, ownerUserId, ct, earlyExitOnPartner: true, seedFirstPage: first)
                 .ConfigureAwait(false);
 
         var snapshots = UserContactsBagHelpers.ToSnapshots(first);
@@ -187,14 +234,21 @@ public static class UserContactsBagClient
     public static async Task<List<GetEntitiesResult>> ListFirstPageBagsAsync(
         HttpClient http,
         Guid ownerUserId,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        await FetchListPageAsync(http, ownerUserId, skip: 0, ct).ConfigureAwait(false);
+
+    private static async Task<List<GetEntitiesResult>> FetchListPageAsync(
+        HttpClient http,
+        Guid ownerUserId,
+        int skip,
+        CancellationToken ct)
     {
         var response = await http.PostAsJsonAsync(
             "api/Entities/GetEntities",
             new GetEntitiesContract
             {
                 ParentIds = new[] { SystemEntities.Contacts, ownerUserId },
-                Skip = 0,
+                Skip = skip,
                 Take = UserContactsBagHelpers.ListPageSize,
                 IncludeValues = false
             },
@@ -236,15 +290,16 @@ public static class UserContactsBagClient
         HttpClient http,
         Guid ownerUserId,
         CancellationToken ct = default) =>
-        await TryPickEnrichedAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        await TryPickEnrichedAsync(http, ownerUserId, ct, earlyExitOnPartner: true).ConfigureAwait(false);
 
     private static async Task<Guid?> TryPickEnrichedAsync(
         HttpClient http,
         Guid ownerUserId,
         CancellationToken ct,
-        bool earlyExitOnPartner = false)
+        bool earlyExitOnPartner = true,
+        IReadOnlyList<GetEntitiesResult>? seedFirstPage = null)
     {
-        var entities = await ListAllBagsAsync(http, ownerUserId, ct).ConfigureAwait(false);
+        var entities = await ListAllBagsAsync(http, ownerUserId, ct, seedFirstPage).ConfigureAwait(false);
         if (UserContactsBagHelpers.ShouldCreateBag(entities))
             return null;
 

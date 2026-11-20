@@ -155,6 +155,13 @@ public class UserContactsBagHelpersTests
     }
 
     [Fact]
+    public void ListPageParallelism_AtLeastTwo_ForInteractiveBudget()
+    {
+        Assert.True(UserContactsBagHelpers.ListPageParallelism >= 2);
+        Assert.True(UserContactsBagHelpers.ListPageParallelism <= UserContactsBagHelpers.ListPageSize);
+    }
+
+    [Fact]
     public void HasPartnerBearingBag_Threshold()
     {
         Assert.False(UserContactsBagHelpers.HasPartnerBearingBag(new[]

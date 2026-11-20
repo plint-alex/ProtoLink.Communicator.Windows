@@ -39,17 +39,35 @@ public class MessengerDiskCacheTests : IDisposable
         var owner = Guid.NewGuid();
         var a = Guid.NewGuid();
         var b = Guid.NewGuid();
+        var bag = Guid.NewGuid();
         _cache.SaveContactsAsap(owner, new[]
         {
             new MessengerDiskCache.CachedContact(a, "Alice"),
             new MessengerDiskCache.CachedContact(b, "Bob")
-        });
+        }, bag);
 
         var loaded = _cache.TryLoadContacts(owner);
         Assert.Equal(2, loaded.Count);
         Assert.Contains(loaded, c => c.Id == a && c.Name == "Alice");
         Assert.Contains(loaded, c => c.Id == b && c.Name == "Bob");
+        Assert.Equal(bag, _cache.TryLoadUserContactsBagId(owner));
         Assert.Empty(_cache.TryLoadContacts(Guid.NewGuid()));
+        Assert.Null(_cache.TryLoadUserContactsBagId(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void Contacts_SaveAsap_PreservesBagId_WhenOmitted()
+    {
+        var owner = Guid.NewGuid();
+        var bag = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        _cache.SaveContactsAsap(owner, new[] { new MessengerDiskCache.CachedContact(a, "A") }, bag);
+        _cache.SaveContactsAsap(owner, new[]
+        {
+            new MessengerDiskCache.CachedContact(a, "A"),
+            new MessengerDiskCache.CachedContact(Guid.NewGuid(), "B")
+        });
+        Assert.Equal(bag, _cache.TryLoadUserContactsBagId(owner));
     }
 
     [Fact]

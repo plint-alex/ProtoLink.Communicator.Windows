@@ -40,10 +40,8 @@ public sealed class MessengerDiskCache
         {
             try
             {
-                var path = ContactsPath(ownerUserId);
-                if (!File.Exists(path)) return Array.Empty<CachedContact>();
-                var dto = JsonSerializer.Deserialize<ContactsFile>(File.ReadAllText(path), JsonOptions);
-                if (dto?.Contacts == null || dto.OwnerUserId != ownerUserId)
+                var dto = ReadContactsFile(ownerUserId);
+                if (dto?.Contacts == null)
                     return Array.Empty<CachedContact>();
                 return dto.Contacts
                     .Where(c => c.Id != Guid.Empty)
@@ -57,7 +55,29 @@ public sealed class MessengerDiskCache
         }
     }
 
-    public void SaveContactsAsap(Guid ownerUserId, IEnumerable<CachedContact> contacts)
+    /// <summary>Last-good UserContacts bag id for StartupFast prefer-online cold start.</summary>
+    public Guid? TryLoadUserContactsBagId(Guid ownerUserId)
+    {
+        lock (_io)
+        {
+            try
+            {
+                var dto = ReadContactsFile(ownerUserId);
+                if (dto == null || dto.OwnerUserId != ownerUserId)
+                    return null;
+                return dto.UserContactsBagId != Guid.Empty ? dto.UserContactsBagId : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    public void SaveContactsAsap(
+        Guid ownerUserId,
+        IEnumerable<CachedContact> contacts,
+        Guid? userContactsBagId = null)
     {
         if (!PreferOnlineUiCache.ShouldWriteCacheAsap(onlineFetchSucceeded: true)) return;
         lock (_io)
@@ -65,10 +85,24 @@ public sealed class MessengerDiskCache
             try
             {
                 Directory.CreateDirectory(_root);
+                var priorBag = Guid.Empty;
+                try
+                {
+                    var prior = ReadContactsFile(ownerUserId);
+                    if (prior?.UserContactsBagId != null && prior.UserContactsBagId != Guid.Empty)
+                        priorBag = prior.UserContactsBagId;
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                var bagId = userContactsBagId is { } id && id != Guid.Empty ? id : priorBag;
                 var dto = new ContactsFile
                 {
                     OwnerUserId = ownerUserId,
                     SavedUtc = DateTime.UtcNow,
+                    UserContactsBagId = bagId,
                     Contacts = contacts
                         .Where(c => c.Id != Guid.Empty)
                         .Select(c => new ContactDto { Id = c.Id, Name = c.Name ?? "" })
@@ -158,6 +192,16 @@ public sealed class MessengerDiskCache
         }
     }
 
+    private ContactsFile? ReadContactsFile(Guid ownerUserId)
+    {
+        var path = ContactsPath(ownerUserId);
+        if (!File.Exists(path)) return null;
+        var dto = JsonSerializer.Deserialize<ContactsFile>(File.ReadAllText(path), JsonOptions);
+        if (dto == null || dto.OwnerUserId != ownerUserId)
+            return null;
+        return dto;
+    }
+
     private string ContactsPath(Guid ownerUserId) =>
         Path.Combine(_root, $"contacts-{ownerUserId:N}.json");
 
@@ -181,6 +225,7 @@ public sealed class MessengerDiskCache
     {
         public Guid OwnerUserId { get; set; }
         public DateTime SavedUtc { get; set; }
+        public Guid UserContactsBagId { get; set; }
         public List<ContactDto>? Contacts { get; set; }
     }
 

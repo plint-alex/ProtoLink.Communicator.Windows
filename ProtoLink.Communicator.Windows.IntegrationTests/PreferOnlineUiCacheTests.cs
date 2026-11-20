@@ -21,6 +21,15 @@ public class PreferOnlineUiCacheTests
         Assert.False(PreferOnlineUiCache.ShouldShowOfflineBannerOnInteractiveBudgetElapsed);
     }
 
+    [Fact]
+    public void PreferOnline_CachedUserContactsBag_OnlyWhenPartnerBearing()
+    {
+        Assert.True(PreferOnlineUiCache.ShouldPreferCachedUserContactsBag);
+        Assert.False(PreferOnlineUiCache.ShouldPersistUserContactsBagId(0));
+        Assert.False(PreferOnlineUiCache.ShouldPersistUserContactsBagId(1));
+        Assert.True(PreferOnlineUiCache.ShouldPersistUserContactsBagId(2));
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(false, false)]
