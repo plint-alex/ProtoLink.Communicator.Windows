@@ -35,18 +35,24 @@ public partial class MessengerViewModel : ViewModelBase
     private readonly Dictionary<Guid, List<MessageViewModel>> _cachedMessages = new();
     private readonly HashSet<Guid> _loadedContacts = new();
     private readonly Dictionary<Guid, string> _userLoginCache = new();
+    private readonly MessengerDiskCache _diskCache;
     private DispatcherTimer? _chatPollTimer;
     private int _loadMessagesBusy;
     private int _loadMessagesQueued;
     private readonly string? _uiLanguage;
     private string? _statusText;
 
-    public MessengerViewModel(IAuthService authService, HttpClient httpClient, ISettingsService? settingsService = null)
+    public MessengerViewModel(
+        IAuthService authService,
+        HttpClient httpClient,
+        ISettingsService? settingsService = null,
+        MessengerDiskCache? diskCache = null)
     {
         _authService = authService;
         _httpClient = httpClient;
         _settingsService = settingsService;
         _uiLanguage = settingsService?.LoadSettings()?.UiLanguage;
+        _diskCache = diskCache ?? new MessengerDiskCache();
         _cloudApi = new CloudApiService(httpClient);
         _chatFolders = settingsService != null
             ? new MessengerChatFolderResolver(_cloudApi, settingsService)
@@ -175,7 +181,18 @@ public partial class MessengerViewModel : ViewModelBase
                 return;
             }
 
+            // Memory first; cold/sick: hydrate last-good disk page before online prefer.
             var hasCache = _cachedMessages.TryGetValue(value.Id, out var cached);
+            if (!hasCache && _authService.CurrentToken != null)
+            {
+                var fromDisk = TryHydrateMessagesFromDisk(_authService.CurrentToken.UserId, value.Id);
+                if (fromDisk != null)
+                {
+                    cached = fromDisk;
+                    hasCache = true;
+                }
+            }
+
             // Drop previous partner's thread before any network / hydrate work so chrome can change.
             if (ContactSelection.ShouldClearMessagesForSelection(previousId, nextId) && Messages.Count > 0)
                 Messages.Clear();
@@ -185,7 +202,7 @@ public partial class MessengerViewModel : ViewModelBase
                             || (hasCache && ContactSelection.ShouldClearMessagesForSelection(previousId, nextId));
 
             var contactId = value.Id;
-            var cachedThread = hasCache ? cached : null;
+            var cachedThread = PreferOnlineUiCache.ShouldPaintCacheBeforeOnline(hasCache) ? cached : null;
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
 
             // Wall-clock leave-Loading from select (not from when Background work eventually runs).
@@ -476,20 +493,30 @@ public partial class MessengerViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowContactsEmpty));
         _ = EnforceLeaveContactsLoadingBudgetAsync(gen);
 
+        var userId = _authService.CurrentToken.UserId;
+        // Sick/cold: paint last-good disk contacts before online prefer (never blank wipe).
+        if (Contacts.Count == 0)
+            TryPaintContactsFromDisk(userId);
+
         try
         {
-            var userId = _authService.CurrentToken.UserId;
             using var loadCts = new CancellationTokenSource(MessengerContactsLoad.InteractiveHttpTimeout);
 
             // Startup-fast bag: first page + no kid-count enrich so Sync/Notes cannot starve first paint.
+            // Prefer online when PreferOnlineUiCache.ShouldRefreshOnlineAfterCachePaint.
             _userContactsId = await MessengerChatLoad.AwaitWithinBudgetAsync(
                 UserContactsBagClient.EnsureBagIdStartupFastAsync(_httpClient, userId, loadCts.Token),
                 loadCts.Token).ConfigureAwait(true);
             if (gen != _contactsLoadGeneration) return;
             if (!_userContactsId.HasValue)
             {
-                Contacts.Clear();
-                StatusText = MessengerContactsLoad.LoadFailedSoft;
+                if (Contacts.Count == 0)
+                {
+                    Contacts.Clear();
+                    StatusText = MessengerContactsLoad.LoadFailedSoft;
+                }
+                else
+                    StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
                 return;
             }
 
@@ -512,16 +539,22 @@ public partial class MessengerViewModel : ViewModelBase
                 : null;
             if (gen != _contactsLoadGeneration) return;
 
+            if (contactsResults == null)
+            {
+                if (Contacts.Count == 0)
+                    StatusText = MessengerContactsLoad.LoadFailedSoft;
+                else
+                    StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
+                return;
+            }
+
             Contacts.Clear();
             var contactUserIds = new List<Guid>();
-            if (contactsResults != null)
+            foreach (var c in contactsResults)
             {
-                foreach (var c in contactsResults)
-                {
-                    var parsed = MessengerContactsLoad.TryParseContactUserId(c.Values, c.Code);
-                    if (parsed.HasValue)
-                        contactUserIds.Add(parsed.Value);
-                }
+                var parsed = MessengerContactsLoad.TryParseContactUserId(c.Values, c.Code);
+                if (parsed.HasValue)
+                    contactUserIds.Add(parsed.Value);
             }
 
             // Show list immediately (provisional names). Compact starts on the list (no auto-open chat).
@@ -533,7 +566,11 @@ public partial class MessengerViewModel : ViewModelBase
                 Contacts.Add(new Contact { Id = id, Name = provisional });
             }
 
+            // ASAP disk write so next sick-connection paint sees freshest success.
+            PersistContactsDiskAsap(userId);
+
             OnPropertyChanged(nameof(ShowContactsEmpty));
+            StatusText = null;
 
             // Wide layout only: open first chat for convenience.
             if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
@@ -542,9 +579,12 @@ public partial class MessengerViewModel : ViewModelBase
             // Self-row + name enrich + richest-bag reconcile after first paint (Background OK).
             _ = ContinueContactsAfterPaintAsync(userId, contactUserIds, gen);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
         {
-            if (gen == _contactsLoadGeneration && Contacts.Count == 0)
+            if (gen != _contactsLoadGeneration) return;
+            if (PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(true, Contacts.Count > 0))
+                StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
+            else if (Contacts.Count == 0)
                 StatusText = MessengerContactsLoad.LoadFailedSoft;
         }
         catch (Exception)
@@ -639,6 +679,72 @@ public partial class MessengerViewModel : ViewModelBase
             SelectedContact = Contacts[0];
 
         _ = EnrichContactNamesAsync(contactUserIds);
+        PersistContactsDiskAsap(userId);
+    }
+
+    private void TryPaintContactsFromDisk(Guid ownerUserId)
+    {
+        var cached = _diskCache.TryLoadContacts(ownerUserId);
+        if (!PreferOnlineUiCache.ShouldPaintCacheBeforeOnline(cached.Count > 0))
+            return;
+
+        foreach (var row in cached)
+        {
+            if (Contacts.Any(c => c.Id == row.Id)) continue;
+            _userLoginCache[row.Id] = row.Name;
+            Contacts.Add(new Contact { Id = row.Id, Name = row.Name });
+        }
+
+        OnPropertyChanged(nameof(ShowContactsEmpty));
+    }
+
+    private void PersistContactsDiskAsap(Guid ownerUserId)
+    {
+        if (Contacts.Count == 0) return;
+        _diskCache.SaveContactsAsap(
+            ownerUserId,
+            Contacts.Select(c => new MessengerDiskCache.CachedContact(c.Id, c.Name)));
+    }
+
+    private List<MessageViewModel>? TryHydrateMessagesFromDisk(Guid ownerUserId, Guid partnerUserId)
+    {
+        var cached = _diskCache.TryLoadMessages(ownerUserId, partnerUserId);
+        if (!PreferOnlineUiCache.ShouldPaintCacheBeforeOnline(cached.Count > 0))
+            return null;
+
+        var list = cached.Select(m => new MessageViewModel
+        {
+            EntityId = m.EntityId,
+            Text = m.Text,
+            SenderName = m.SenderName,
+            Timestamp = m.TimestampUtc,
+            IsFromMe = m.IsFromMe,
+            IsDateSeparator = m.IsDateSeparator,
+            TimeLabel = m.TimeLabel,
+            DayLabel = m.DayLabel,
+            AttachmentIds = m.AttachmentIds.ToArray(),
+            PartnerUserId = partnerUserId
+        }).ToList();
+        _cachedMessages[partnerUserId] = list;
+        return list;
+    }
+
+    private void PersistMessagesDiskAsap(Guid ownerUserId, Guid partnerUserId, IReadOnlyList<MessageViewModel> list)
+    {
+        _diskCache.SaveMessagesAsap(
+            ownerUserId,
+            partnerUserId,
+            list.Where(m => !m.IsDateSeparator || m.EntityId != Guid.Empty || !string.IsNullOrEmpty(m.DayLabel))
+                .Select(m => new MessengerDiskCache.CachedMessage(
+                    m.EntityId,
+                    m.Text,
+                    m.SenderName,
+                    m.Timestamp.Kind == DateTimeKind.Utc ? m.Timestamp : m.Timestamp.ToUniversalTime(),
+                    m.IsFromMe,
+                    m.IsDateSeparator,
+                    m.TimeLabel,
+                    m.DayLabel,
+                    m.AttachmentIds)));
     }
 
     private async Task EnforceLeaveContactsLoadingBudgetAsync(int generation)
@@ -904,14 +1010,20 @@ public partial class MessengerViewModel : ViewModelBase
                     .ToList();
                 _loadedContacts.Add(partnerUserId);
                 ShowMessages(_cachedMessages[partnerUserId]);
+                PersistMessagesDiskAsap(myUserId, partnerUserId, _cachedMessages[partnerUserId]);
+                StatusText = null;
                 // Receipts / realtime must not keep Chat loading past interactive paint.
                 IsChatLoading = false;
                 await MarkOpenChatReadAsync(partnerUserId, _cachedMessages[partnerUserId]);
             }
-            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
             {
-                // Budget elapsed — clear Loading even while HTTP may still be in flight.
-                System.Diagnostics.Debug.WriteLine("Messenger chat load interactive budget elapsed");
+                // Soft-fail: keep cache paint; soft banner when we have last-good.
+                System.Diagnostics.Debug.WriteLine(ex);
+                if (PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(
+                        true,
+                        _cachedMessages.ContainsKey(partnerUserId)))
+                    StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
             }
         }
         finally

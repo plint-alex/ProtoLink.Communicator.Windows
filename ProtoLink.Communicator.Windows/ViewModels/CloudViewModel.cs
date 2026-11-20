@@ -10,6 +10,7 @@ using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Models.Share;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Services.Cloud;
 using ProtoLink.Communicator.Windows.Services.Sync;
 using ProtoLink.Communicator.Windows.Utilities;
 using ProtoLink.Communicator.Windows.ViewModels.Share;
@@ -28,6 +29,7 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Action? _onAfterMappedSync;
     private readonly Action<string>? _onSendShareLinkInMessenger;
     private readonly ICloudRecentStore _recentStore;
+    private readonly CloudListingDiskCache _listingDiskCache;
     private readonly JsonSyncMetadataStore _listingMetaStore = new();
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
@@ -73,7 +75,8 @@ public partial class CloudViewModel : ViewModelBase
         Action? onAfterMappedSync = null,
         Action<string>? onSendShareLinkInMessenger = null,
         ICloudRecentStore? recentStore = null,
-        HttpClient? syncHttpClient = null)
+        HttpClient? syncHttpClient = null,
+        CloudListingDiskCache? listingDiskCache = null)
     {
         _authService = authService;
         _settingsService = settingsService;
@@ -88,6 +91,7 @@ public partial class CloudViewModel : ViewModelBase
         _onAfterMappedSync = onAfterMappedSync;
         _onSendShareLinkInMessenger = onSendShareLinkInMessenger;
         _recentStore = recentStore ?? new CloudRecentStore();
+        _listingDiskCache = listingDiskCache ?? new CloudListingDiskCache();
         Items = new ObservableCollection<CloudItemViewModel>();
         FilteredItems = CollectionViewSource.GetDefaultView(Items);
         FilteredItems.Filter = MatchesSearchFilter;
@@ -588,11 +592,17 @@ public partial class CloudViewModel : ViewModelBase
         });
     }
 
-    /// <summary>Empty list + Loading status so chrome can paint before GetEntities returns.</summary>
+    /// <summary>
+    /// Change-then-wait chrome before GetEntities: paint last-good disk cache when present
+    /// (#comm-win-sick-connection); otherwise clear to empty+Loading.
+    /// </summary>
     private void BeginFolderListingLoad()
     {
         SelectedItem = null;
-        if (Items.Count > 0)
+        var folderId = ListedFolderId;
+        var painted = folderId is { } id && TryPaintListingFromDisk(id, selectedId: null, reset: true);
+        if (!painted && PreferOnlineUiCache.ShouldClearChromeForLoad(hasCachedPayloadForTarget: false)
+            && Items.Count > 0)
             Items.Clear();
         // Do not mask Force lock-wait / download (live FAIL 1.0.87 FORCE_NO_PROGRESS).
         if (!IsForceProgressStatus(_statusText))
@@ -736,6 +746,7 @@ public partial class CloudViewModel : ViewModelBase
 
             ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: folderChanged);
+            PersistListingDiskAsap(folderId, fresh);
             _listedFolderId = folderId;
             ClearNetworkBanner();
             // Navigate sets Loading even when quiet — clear so ShowStatusBanner hides.
@@ -763,6 +774,14 @@ public partial class CloudViewModel : ViewModelBase
                     StatusText = "Ready";
                 _ = ContinueAfterListingReadyAsync(folderId, selectedId, loadGen);
                 return;
+            }
+
+            // Sick connection: if chrome was cleared, paint last-good disk listing before banner.
+            if (Items.Count == 0
+                && !CloudVirtualNodes.IsVirtual(folderId)
+                && TryPaintListingFromDisk(folderId, selectedId, reset: true))
+            {
+                _listedFolderId = folderId;
             }
 
             // Keep last list (MergeListing not called); show offline banner (AT-C6).
@@ -1128,6 +1147,50 @@ public partial class CloudViewModel : ViewModelBase
         ApplyCheapItemSizes(fresh);
         MergeListing(fresh, selectedId, reset: reset);
         return true;
+    }
+
+    private bool TryPaintListingFromDisk(Guid folderId, Guid? selectedId, bool reset)
+    {
+        if (CloudVirtualNodes.IsVirtual(folderId)) return false;
+        var cached = _listingDiskCache.TryLoad(folderId);
+        if (!PreferOnlineUiCache.ShouldPaintCacheBeforeOnline(cached.Count > 0))
+            return false;
+
+        var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var fresh = cached
+            .Where(c => !_deletedRemoteIds.Contains(c.Id))
+            .Select(c => new CloudItemViewModel
+            {
+                Id = c.Id,
+                Name = c.Name,
+                IsFolder = c.IsFolder,
+                IsSynced = c.IsFolder && syncedIds.Contains(c.Id),
+                MimeType = c.MimeType,
+                UpdateTime = c.UpdateTimeUtc
+            })
+            .OrderByDescending(x => x.IsFolder)
+            .ThenByDescending(x => x.UpdateTime)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (fresh.Count == 0) return false;
+        ApplyCheapItemSizes(fresh);
+        MergeListing(fresh, selectedId, reset: reset);
+        return true;
+    }
+
+    private void PersistListingDiskAsap(Guid folderId, IReadOnlyList<CloudItemViewModel> fresh)
+    {
+        if (CloudVirtualNodes.IsVirtual(folderId)) return;
+        _listingDiskCache.SaveAsap(
+            folderId,
+            fresh
+                .Where(i => !i.IsVirtualEntry)
+                .Select(i => new CloudListingDiskCache.CachedListingItem(
+                    i.Id,
+                    i.Name,
+                    i.IsFolder,
+                    i.MimeType,
+                    i.UpdateTime.Kind == DateTimeKind.Utc ? i.UpdateTime : i.UpdateTime.ToUniversalTime())));
     }
 
     /// <summary>
