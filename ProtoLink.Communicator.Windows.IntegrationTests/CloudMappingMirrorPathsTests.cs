@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.ViewModels;
 using Xunit;
@@ -8,6 +9,53 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 [Trait("Category", "Offline")]
 public class CloudMappingMirrorPathsTests
 {
+    [Fact]
+    public void AddMissing_MergesStoreDedicatedMap_WithoutDroppingParent()
+    {
+        var parentId = Guid.NewGuid();
+        var mapId = Guid.NewGuid();
+        var parentLocal = Path.Combine(Path.GetTempPath(), "pl-cfd-parent-" + Guid.NewGuid().ToString("N"));
+        var mapLocal = Path.Combine(Path.GetTempPath(), "pl-cfd-ded-" + Guid.NewGuid().ToString("N"));
+        var live = new ObservableCollection<CloudSyncMapping>
+        {
+            new() { CloudFolderId = parentId, LocalPath = parentLocal, CloudFolderName = "MyNotesFolder" }
+        };
+        var store = new[]
+        {
+            new CloudSyncMapping { CloudFolderId = parentId, LocalPath = parentLocal, CloudFolderName = "MyNotesFolder" },
+            new CloudSyncMapping { CloudFolderId = mapId, LocalPath = mapLocal, CloudFolderName = "AT-CFD-map" }
+        };
+
+        Assert.Equal(1, CloudSyncMappingsMerge.AddMissing(live, store));
+        Assert.Equal(2, live.Count);
+        Assert.Contains(live, m => m.CloudFolderId == parentId);
+        Assert.Contains(live, m => m.CloudFolderId == mapId && m.LocalPath == mapLocal);
+        Assert.Equal(0, CloudSyncMappingsMerge.AddMissing(live, store));
+    }
+
+    [Fact]
+    public void AddMissing_ThenMappedRootDelete_RemovesLocalTree()
+    {
+        var mapId = Guid.NewGuid();
+        var cloudRootId = Guid.NewGuid();
+        var localRoot = Path.Combine(Path.GetTempPath(), "pl-cfd-merge-del-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(localRoot, "nested"));
+        File.WriteAllText(Path.Combine(localRoot, "nested", "a.txt"), "x");
+        var live = new ObservableCollection<CloudSyncMapping>();
+        var store = new[]
+        {
+            new CloudSyncMapping { CloudFolderId = mapId, LocalPath = localRoot, CloudFolderName = "MappedRoot" }
+        };
+        CloudSyncMappingsMerge.AddMissing(live, store);
+        var crumbs = new[] { new CloudBreadcrumbEntry { Id = cloudRootId, Name = "My Cloud", Index = 0 } };
+        var item = new CloudItemViewModel { Id = mapId, Name = "MappedRoot", IsFolder = true };
+
+        var path = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, crumbs, live);
+        Assert.Equal(localRoot, path);
+        Assert.True(CloudMappingMirrorPaths.DeleteLocalMirror(item, path));
+        Assert.False(Directory.Exists(localRoot));
+    }
+
     [Fact]
     public void DeleteLocalMirror_MissingPath_ReturnsTrue()
     {

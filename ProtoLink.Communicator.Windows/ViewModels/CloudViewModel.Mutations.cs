@@ -160,6 +160,8 @@ public partial class CloudViewModel
             }
 
             StatusText = "Deleting…";
+            // Disk may have dedicated maps written after start (AT-CFD inject / heal) — merge before mirror resolve.
+            CloudSyncMappingsMerge.AddMissing(SyncMappings, _syncStore.Load());
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
             var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
             var deletedIds = new HashSet<Guid>();
