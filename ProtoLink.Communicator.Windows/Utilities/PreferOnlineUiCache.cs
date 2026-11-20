@@ -9,6 +9,18 @@ public static class PreferOnlineUiCache
     /// <summary>Always attempt Api refresh after a cache paint (cache is never a stale-only mode).</summary>
     public static bool ShouldRefreshOnlineAfterCachePaint => true;
 
+    /// <summary>
+    /// After disk/memory paint, contact display names must be re-fetched from Api —
+    /// do not treat painted login strings as authoritative memory-cache hits.
+    /// </summary>
+    public static bool ShouldForceLoginRefreshAfterCachePaint => ShouldRefreshOnlineAfterCachePaint;
+
+    /// <summary>
+    /// Interactive budget abandon is not a connectivity failure. Sticky OfflineBanner would
+    /// leave healthy Api sessions stuck on Waiting for network after a slow StartupFast.
+    /// </summary>
+    public static bool ShouldShowOfflineBannerOnInteractiveBudgetElapsed => false;
+
     /// <summary>Paint disk/memory cache before waiting on network when a prior payload exists.</summary>
     public static bool ShouldPaintCacheBeforeOnline(bool hasCachedPayload) => hasCachedPayload;
 

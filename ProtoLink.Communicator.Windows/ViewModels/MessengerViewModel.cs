@@ -450,9 +450,13 @@ public partial class MessengerViewModel : ViewModelBase
         EnsureMessageUnfurls(message);
     }
 
-    private async Task<string> GetUserLoginAsync(Guid userId, CancellationToken cancellationToken = default)
+    private async Task<string> GetUserLoginAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default,
+        bool forceRefresh = false)
     {
-        if (_userLoginCache.TryGetValue(userId, out var cached)) return cached;
+        if (!forceRefresh && _userLoginCache.TryGetValue(userId, out var cached))
+            return cached;
         try
         {
             var response = await _httpClient.GetAsync(
@@ -474,6 +478,8 @@ public partial class MessengerViewModel : ViewModelBase
             throw;
         }
         catch { }
+        if (_userLoginCache.TryGetValue(userId, out var prior))
+            return prior;
         return userId.ToString();
     }
 
@@ -517,16 +523,18 @@ public partial class MessengerViewModel : ViewModelBase
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
-                // Budget elapsed: soft-observe abandoned escalate; reconcile in background below.
+                // Budget elapsed: soft-observe abandoned escalate; prefer-online continues below.
+                // Do not sticky OfflineBanner — budget ≠ connectivity (healthy Api was timing out).
                 MessengerChatLoad.CancelObserveAndDispose(loadCts, bagTask);
                 loadCts = null;
                 abandonedBagTask = null;
                 if (gen != _contactsLoadGeneration) return;
-                if (PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(true, Contacts.Count > 0))
+                if (PreferOnlineUiCache.ShouldShowOfflineBannerOnInteractiveBudgetElapsed
+                    && PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(true, Contacts.Count > 0))
                     StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
                 else if (Contacts.Count == 0)
                     StatusText = MessengerContactsLoad.LoadFailedSoft;
-                // Still try richest-bag reconcile so Tina can appear after Interactive leave.
+                // Prefer-online: richest-bag + login refresh after cache paint (Tina / stale names).
                 _ = ContinueContactsAfterPaintAsync(userId, Contacts.Select(c => c.Id).ToList(), gen);
                 return;
             }
@@ -654,7 +662,14 @@ public partial class MessengerViewModel : ViewModelBase
             if (generation != _contactsLoadGeneration) return;
             OnPropertyChanged(nameof(ShowContactsEmpty));
 
-            _ = EnrichContactNamesAsync(contactUserIds);
+            // Prefer-online: await login refresh so planted/stale disk names are replaced ASAP.
+            await EnrichContactNamesAsync(
+                    contactUserIds,
+                    forceRefresh: PreferOnlineUiCache.ShouldForceLoginRefreshAfterCachePaint)
+                .ConfigureAwait(true);
+            if (generation != _contactsLoadGeneration) return;
+            PersistContactsDiskAsap(userId);
+            StatusText = null;
 
             // Background richest-bag pick — if different from startup-fast, swap kids once (no re-enter StartupFast).
             var rich = await UserContactsBagClient.EnsureBagIdAsync(_httpClient, userId).ConfigureAwait(true);
@@ -664,6 +679,14 @@ public partial class MessengerViewModel : ViewModelBase
                 _userContactsId = rich;
                 await ReplaceContactRowsFromBagAsync(rich.Value, userId, generation).ConfigureAwait(true);
             }
+            else if (generation == _contactsLoadGeneration)
+                StatusText = null;
+        }
+        catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
+        {
+            if (generation != _contactsLoadGeneration) return;
+            if (PreferOnlineUiCache.ShouldKeepCacheOnSoftFail(true, Contacts.Count > 0))
+                StatusText = ShareSheetStrings.OfflineBanner(_uiLanguage);
         }
         catch
         {
@@ -721,8 +744,13 @@ public partial class MessengerViewModel : ViewModelBase
         else if (!_isCompactLayout && SelectedContact == null && Contacts.Count > 0)
             SelectedContact = Contacts[0];
 
-        _ = EnrichContactNamesAsync(contactUserIds);
+        await EnrichContactNamesAsync(
+                contactUserIds,
+                forceRefresh: PreferOnlineUiCache.ShouldForceLoginRefreshAfterCachePaint)
+            .ConfigureAwait(true);
+        if (generation != _contactsLoadGeneration) return;
         PersistContactsDiskAsap(userId);
+        StatusText = null;
     }
 
     private void TryPaintContactsFromDisk(Guid ownerUserId)
@@ -734,7 +762,8 @@ public partial class MessengerViewModel : ViewModelBase
         foreach (var row in cached)
         {
             if (Contacts.Any(c => c.Id == row.Id)) continue;
-            _userLoginCache[row.Id] = row.Name;
+            // Paint UI only — do not poison _userLoginCache with disk names (prefer-online
+            // Enrich must hit Api; planted/stale markers must not become memory hits).
             Contacts.Add(new Contact { Id = row.Id, Name = row.Name });
         }
 
@@ -841,11 +870,13 @@ public partial class MessengerViewModel : ViewModelBase
         }
     }
 
-    private async Task EnrichContactNamesAsync(List<Guid> contactUserIds)
+    private async Task EnrichContactNamesAsync(List<Guid> contactUserIds, bool forceRefresh = false)
     {
         try
         {
-            var loginTasks = contactUserIds.Select(id => GetUserLoginAsync(id)).ToArray();
+            var loginTasks = contactUserIds
+                .Select(id => GetUserLoginAsync(id, forceRefresh: forceRefresh))
+                .ToArray();
             var names = await Task.WhenAll(loginTasks);
             for (var i = 0; i < contactUserIds.Count; i++)
             {

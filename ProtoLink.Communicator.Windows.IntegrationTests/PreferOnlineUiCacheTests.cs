@@ -11,6 +11,14 @@ public class PreferOnlineUiCacheTests
     public void PreferOnline_AlwaysRefreshesAfterCachePaint()
     {
         Assert.True(PreferOnlineUiCache.ShouldRefreshOnlineAfterCachePaint);
+        Assert.True(PreferOnlineUiCache.ShouldForceLoginRefreshAfterCachePaint);
+    }
+
+    [Fact]
+    public void PreferOnline_BudgetElapsed_DoesNotStickyOfflineBanner()
+    {
+        // Interactive budget abandon ≠ connectivity; sticky banner left healthy Api on Waiting for network.
+        Assert.False(PreferOnlineUiCache.ShouldShowOfflineBannerOnInteractiveBudgetElapsed);
     }
 
     [Theory]
