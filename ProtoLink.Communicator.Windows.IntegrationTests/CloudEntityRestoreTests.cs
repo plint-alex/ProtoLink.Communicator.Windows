@@ -92,4 +92,20 @@ public class CloudEntityRestoreTests
         };
         Assert.Null(CloudEntityRestore.BuildOpenTarget(chain));
     }
+
+    [Fact]
+    public void BuildOfflineMyCloudOpen_HubThenMyCloud_ForSickListingPaint()
+    {
+        var myCloud = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var (entity, crumbs) = CloudEntityRestore.BuildOfflineMyCloudOpen(myCloud, "Cloud", "My Cloud");
+        Assert.Equal(myCloud, entity.Id);
+        Assert.Equal(CloudEntityKind.Folder, entity.Kind);
+        Assert.Equal("My Cloud", entity.Name);
+        Assert.Equal(CloudVirtualNodes.HubId, entity.ParentId);
+        Assert.Equal(2, crumbs.Count);
+        Assert.Equal(CloudVirtualNodes.HubId, crumbs[0].Id);
+        Assert.Equal("Cloud", crumbs[0].Name);
+        Assert.Equal(myCloud, crumbs[1].Id);
+        Assert.Equal("My Cloud", crumbs[1].Name);
+    }
 }

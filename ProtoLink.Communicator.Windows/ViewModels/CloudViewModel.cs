@@ -794,8 +794,11 @@ public partial class CloudViewModel : ViewModelBase
             EnsureFolderTreeChromeOnListingSoftFail();
             ReportCaughtException(ex, asNetworkFailure: true);
             // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
+            // Never hub-fallback when last-good listing rows are painted (CACHE_PAINT_CLOUD wipe).
             if (!_recoveringFromRootListingFailure
-                && CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds))
+                && PreferOnlineUiCache.ShouldFallbackToHubAfterListingSoftFail(
+                    CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds),
+                    hasPaintedListingRows: Items.Count > 0))
             {
                 _recoveringFromRootListingFailure = true;
                 try

@@ -1,4 +1,5 @@
 using ProtoLink.Communicator.Windows.Services.Cloud;
+using ProtoLink.Communicator.Windows.Utilities;
 using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
@@ -54,5 +55,29 @@ public class CloudListingDiskCacheTests : IDisposable
         Assert.Equal("Notes", loaded[0].Name);
         Assert.True(loaded[0].IsFolder);
         Assert.Empty(_cache.TryLoad(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void SickPaint_Policy_OpensLastOpenWhenListingDiskPresent()
+    {
+        var myCloud = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var child = Guid.Parse("ad27dde0-f6e0-42b8-be6a-95aa5716ed58");
+        _cache.SaveAsap(myCloud, new[]
+        {
+            new CloudListingDiskCache.CachedListingItem(
+                child,
+                "folder-ad27dde0",
+                IsFolder: true,
+                MimeType: null,
+                UpdateTimeUtc: DateTime.UtcNow)
+        });
+
+        var loaded = _cache.TryLoad(myCloud);
+        Assert.True(PreferOnlineUiCache.ShouldOpenLastOpenFromListingDisk(loaded.Count > 0));
+        Assert.False(
+            PreferOnlineUiCache.ShouldFallbackToHubAfterListingSoftFail(
+                isKnownCloudRoot: true,
+                hasPaintedListingRows: loaded.Count > 0));
+        Assert.Equal(child, loaded[0].Id);
     }
 }

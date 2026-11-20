@@ -59,6 +59,25 @@ public class PreferOnlineUiCacheTests
         Assert.Equal(expectedClear, PreferOnlineUiCache.ShouldClearChromeForLoad(hasCache));
 
     [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void OpenLastOpenFromListingDisk_WhenPayloadExists(bool hasListing, bool expected) =>
+        Assert.Equal(expected, PreferOnlineUiCache.ShouldOpenLastOpenFromListingDisk(hasListing));
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void FallbackToHubAfterListingSoftFail_SkipsWhenPainted(
+        bool isKnownRoot,
+        bool hasPaintedRows,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            PreferOnlineUiCache.ShouldFallbackToHubAfterListingSoftFail(isKnownRoot, hasPaintedRows));
+
+    [Theory]
     [InlineData(2, 2, true)]
     [InlineData(3, 2, true)]
     [InlineData(1, 2, false)]

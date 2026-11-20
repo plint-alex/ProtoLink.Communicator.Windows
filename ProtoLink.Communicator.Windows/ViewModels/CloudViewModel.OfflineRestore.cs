@@ -3,6 +3,7 @@ using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
+using ProtoLink.Communicator.Windows.Utilities;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -58,7 +59,7 @@ public partial class CloudViewModel
         }
         catch
         {
-            // EnsureRootAsync will retry / create.
+            // Sick Api: LastOpen listing-disk open / EnsureRoot soft-fail below.
         }
 
         var lastId = _settingsService.LoadSettings().LastOpenCloudEntityId;
@@ -79,7 +80,7 @@ public partial class CloudViewModel
                             _myCloudRootId == Guid.Empty ? null : _myCloudRootId,
                             _knownCloudRootIds.Count))
                     {
-                        await EnsureRootAsync();
+                        await EnsureRootOrListingDiskAsync(id);
                         return;
                     }
 
@@ -91,11 +92,65 @@ public partial class CloudViewModel
             }
             catch
             {
-                // Silent fallback to root — no ErrorDetailDialog (AT-C7).
+                // Silent — prefer listing-disk LastOpen before EnsureRoot (CACHE_PAINT_CLOUD).
             }
+
+            if (await TryOpenLastOpenFromListingDiskAsync(id).ConfigureAwait(true))
+                return;
         }
 
-        await EnsureRootAsync();
+        await EnsureRootOrListingDiskAsync(lastId);
+    }
+
+    /// <summary>
+    /// EnsureRoot when Api is reachable; on sick soft-fail open LastOpen from listing disk
+    /// (never leave blank Loading with CurrentEntity null).
+    /// </summary>
+    private async Task EnsureRootOrListingDiskAsync(Guid? lastOpenId)
+    {
+        try
+        {
+            await EnsureRootAsync().ConfigureAwait(true);
+        }
+        catch
+        {
+            if (lastOpenId is { } id
+                && await TryOpenLastOpenFromListingDiskAsync(id).ConfigureAwait(true))
+                return;
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Sick/cold: open LastOpen folder from CloudListingDiskCache without Api ancestry resolve.
+    /// </summary>
+    private async Task<bool> TryOpenLastOpenFromListingDiskAsync(Guid lastOpenId)
+    {
+        if (lastOpenId == Guid.Empty) return false;
+        var cached = _listingDiskCache.TryLoad(lastOpenId);
+        if (!PreferOnlineUiCache.ShouldOpenLastOpenFromListingDisk(cached.Count > 0))
+            return false;
+
+        if (_myCloudRootId == Guid.Empty || _myCloudRootId == lastOpenId)
+        {
+            _myCloudRootId = lastOpenId;
+            _knownCloudRootIds.Add(lastOpenId);
+            _folderTreeCodes[lastOpenId] = CloudEntityCodes.CloudRoot;
+        }
+        else
+        {
+            _folderTreeCodes.TryAdd(lastOpenId, CloudEntityCodes.CloudFolder);
+        }
+
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        var open = CloudEntityRestore.BuildOfflineMyCloudOpen(
+            lastOpenId,
+            ShareSheetStrings.CloudHub(lang),
+            ShareSheetStrings.MyCloud(lang));
+        _history.Clear();
+        _locations.Clear();
+        await OpenAsync(open.Entity, open.Breadcrumb, pushHistory: false).ConfigureAwait(true);
+        return true;
     }
 
     private async Task<(CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb)?> TryResolveEntityPathAsync(

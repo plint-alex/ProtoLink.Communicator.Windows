@@ -37,6 +37,22 @@ public static class PreferOnlineUiCache
     /// <summary>Paint disk/memory cache before waiting on network when a prior payload exists.</summary>
     public static bool ShouldPaintCacheBeforeOnline(bool hasCachedPayload) => hasCachedPayload;
 
+    /// <summary>
+    /// Cold Cloud LastOpen: when Api resolve fails/sick and a listing disk payload exists for
+    /// LastOpen, open that folder offline so TryPaintListingFromDisk can run (not blank Loading).
+    /// </summary>
+    public static bool ShouldOpenLastOpenFromListingDisk(bool hasListingDiskPayload) =>
+        ShouldPaintCacheBeforeOnline(hasListingDiskPayload);
+
+    /// <summary>
+    /// After listing soft-fail, do not EnsureRoot/hub-fallback when last-good rows are painted —
+    /// hub navigate would wipe Cloud sick paint (CACHE_PAINT_CLOUD).
+    /// </summary>
+    public static bool ShouldFallbackToHubAfterListingSoftFail(
+        bool isKnownCloudRoot,
+        bool hasPaintedListingRows) =>
+        isKnownCloudRoot && !hasPaintedListingRows;
+
     /// <summary>Write/refresh local cache immediately when Api returns success (not deferred to idle/shutdown).</summary>
     public static bool ShouldWriteCacheAsap(bool onlineFetchSucceeded) => onlineFetchSucceeded;
 

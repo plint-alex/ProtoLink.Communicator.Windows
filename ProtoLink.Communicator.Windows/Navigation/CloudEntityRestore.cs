@@ -82,4 +82,21 @@ public static class CloudEntityRestore
 
         return (resultEntity, crumbs);
     }
+
+    /// <summary>
+    /// Sick/cold LastOpen when Api ancestry is unavailable but listing disk has rows for
+    /// <paramref name="folderId"/>: open as My Cloud under the hub so listing paint can run.
+    /// </summary>
+    public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb) BuildOfflineMyCloudOpen(
+        Guid folderId,
+        string hubName,
+        string myCloudName)
+    {
+        var entity = new CloudEntityRef(folderId, CloudEntityKind.Folder, myCloudName, null);
+        var breadcrumb = new[]
+        {
+            new CloudBreadcrumbEntry { Index = 0, Id = folderId, Name = myCloudName }
+        };
+        return WithCloudHub(entity, breadcrumb, hubName, myCloudName);
+    }
 }
