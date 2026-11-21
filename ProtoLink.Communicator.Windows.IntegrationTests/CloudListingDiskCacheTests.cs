@@ -80,4 +80,32 @@ public class CloudListingDiskCacheTests : IDisposable
                 hasPaintedListingRows: loaded.Count > 0));
         Assert.Equal(child, loaded[0].Id);
     }
+
+    [Fact]
+    public void RemoveRemoteIds_DropsDeletedFromParentAndDeletesFolderCache()
+    {
+        var parent = Guid.Parse("11111111-1111-4111-8111-111111111111");
+        var keep = Guid.Parse("22222222-2222-4222-8222-222222222222");
+        var gone = Guid.Parse("33333333-3333-4333-8333-333333333333");
+        var goneChild = Guid.Parse("44444444-4444-4444-8444-444444444444");
+        _cache.SaveAsap(parent, new[]
+        {
+            new CloudListingDiskCache.CachedListingItem(
+                keep, "Keep", IsFolder: true, MimeType: null, UpdateTimeUtc: DateTime.UtcNow),
+            new CloudListingDiskCache.CachedListingItem(
+                gone, "Gone", IsFolder: true, MimeType: null, UpdateTimeUtc: DateTime.UtcNow)
+        });
+        _cache.SaveAsap(gone, new[]
+        {
+            new CloudListingDiskCache.CachedListingItem(
+                goneChild, "Nested", IsFolder: false, MimeType: "text/plain", UpdateTimeUtc: DateTime.UtcNow)
+        });
+
+        var touched = _cache.RemoveRemoteIds(new[] { gone, goneChild });
+        Assert.True(touched >= 2);
+        var kids = _cache.TryLoad(parent);
+        Assert.Single(kids);
+        Assert.Equal(keep, kids[0].Id);
+        Assert.Empty(_cache.TryLoad(gone));
+    }
 }

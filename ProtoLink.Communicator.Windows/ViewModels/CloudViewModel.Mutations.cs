@@ -191,6 +191,7 @@ public partial class CloudViewModel
                 // Soft Ready paints sync-meta children when GetEntities times out — purge so
                 // deleted ids cannot resurrect after a successful Cloud soft-hide (E10 regress).
                 _listingMetaStore.RemoveByRemoteIds(deletedIds);
+                _listingDiskCache.RemoveRemoteIds(deletedIds);
                 foreach (var id in deletedIds)
                     _deletedRemoteIds.Add(id);
 

@@ -101,6 +101,62 @@ public sealed class CloudListingDiskCache
         }
     }
 
+    /// <summary>
+    /// After E10 Cloud delete: drop deleted ids from every cached parent listing and remove
+    /// listing files for deleted folders so Soft Ready / sick paint cannot resurrect them.
+    /// </summary>
+    public int RemoveRemoteIds(IEnumerable<Guid> remoteIds)
+    {
+        var set = remoteIds as HashSet<Guid> ?? remoteIds.ToHashSet();
+        if (set.Count == 0) return 0;
+        lock (_io)
+        {
+            var touched = 0;
+            try
+            {
+                if (!Directory.Exists(_root)) return 0;
+                foreach (var id in set)
+                {
+                    var folderPath = PathFor(id);
+                    if (File.Exists(folderPath))
+                    {
+                        try { File.Delete(folderPath); touched++; }
+                        catch { /* best-effort */ }
+                    }
+                }
+
+                foreach (var file in Directory.EnumerateFiles(_root, "listing-*.json"))
+                {
+                    try
+                    {
+                        var dto = JsonSerializer.Deserialize<ListingFile>(File.ReadAllText(file), JsonOptions);
+                        if (dto?.Items == null || dto.Items.Count == 0) continue;
+                        var before = dto.Items.Count;
+                        dto.Items = dto.Items.Where(i => !set.Contains(i.Id)).ToList();
+                        if (dto.Items.Count == before) continue;
+                        touched += before - dto.Items.Count;
+                        if (dto.Items.Count == 0)
+                            File.Delete(file);
+                        else
+                        {
+                            dto.SavedUtc = DateTime.UtcNow;
+                            File.WriteAllText(file, JsonSerializer.Serialize(dto, JsonOptions));
+                        }
+                    }
+                    catch
+                    {
+                        // Best-effort per file.
+                    }
+                }
+            }
+            catch
+            {
+                // Best-effort.
+            }
+            return touched;
+        }
+    }
+
     private string PathFor(Guid folderId) =>
         Path.Combine(_root, $"listing-{folderId:N}.json");
 
