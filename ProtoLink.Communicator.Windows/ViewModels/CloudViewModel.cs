@@ -1218,8 +1218,9 @@ public partial class CloudViewModel : ViewModelBase
                 return;
 
             var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            // Keep sync-meta leaf when IncludeValues still lacks Name (empty-folder / folder-guid class).
             var fresh = (list ?? new List<GetEntitiesResult>())
-                .Select(e => ToListItem(e, syncedIds))
+                .Select(e => ToListItem(e, syncedIds, ResolveListingMetaName))
                 .OrderByDescending(x => x.IsFolder)
                 .ThenByDescending(x => x.UpdateTime)
                 .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)

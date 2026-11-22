@@ -216,7 +216,28 @@ public class CloudApiService
         if (id == Guid.Empty)
             throw new InvalidOperationException(
                 "AddEntity returned an empty id. Sign in again or check that the API accepted the request.");
+
+        // CloudFolder Name can be missing on the current version after create (live API / values
+        // race) → GetDisplayName falls back to folder-{guid} and Sync materializes that path.
+        // Same belt as AddFileAsync Name re-assert for CloudFile.
+        if (string.Equals(code, CloudEntityCodes.CloudFolder, StringComparison.Ordinal)
+            && ShouldReassertDisplayName(id, displayName, isFolder: true))
+        {
+            await AddValueAsync(id, displayName!);
+        }
+
         return id;
+    }
+
+    /// <summary>
+    /// True when <paramref name="displayName"/> is a real user name that should be written
+    /// (or re-written) as NAME_TYPE — not blank and not the synthetic folder-/file-{id} fallback.
+    /// </summary>
+    public static bool ShouldReassertDisplayName(Guid entityId, string? displayName, bool isFolder)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return false;
+        var synthetic = isFolder ? $"folder-{entityId:N}" : $"file-{entityId:N}";
+        return !string.Equals(displayName.Trim(), synthetic, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task AddValueAsync(Guid entityId, string value)

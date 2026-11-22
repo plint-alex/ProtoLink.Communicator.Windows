@@ -62,6 +62,16 @@ public class CloudInteractiveListingTests
     }
 
     [Fact]
+    public void ShouldReassertDisplayName_RealFolderName_NotSynthetic()
+    {
+        var id = Guid.Parse("12984c41-556d-46ed-84e3-0a524d58c899");
+        Assert.True(CloudApiService.ShouldReassertDisplayName(id, "User_Test_1", isFolder: true));
+        Assert.False(CloudApiService.ShouldReassertDisplayName(id, $"folder-{id:N}", isFolder: true));
+        Assert.False(CloudApiService.ShouldReassertDisplayName(id, "  ", isFolder: true));
+        Assert.False(CloudApiService.ShouldReassertDisplayName(id, null, isFolder: true));
+    }
+
+    [Fact]
     public void LeafName_KeepsCase_AndTakesLastSegment()
     {
         Assert.Equal("AgentTeamVerify", CloudInteractiveListing.LeafName(@"Notes\AgentTeamVerify"));
