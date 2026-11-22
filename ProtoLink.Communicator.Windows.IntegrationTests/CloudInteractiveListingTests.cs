@@ -47,6 +47,42 @@ public class CloudInteractiveListingTests
     }
 
     [Fact]
+    public void ResolveAlternateFolderName_PrefersMeta_ThenMapping_ThenUi()
+    {
+        var id = Guid.Parse("321e6beb-1c55-48ca-9a02-5b4405212959");
+        Assert.Equal(
+            "FromMeta",
+            CloudInteractiveListing.ResolveAlternateFolderName(id, "FromMeta", "User_Test_1", "UiName"));
+        Assert.Equal(
+            "User_Test_1",
+            CloudInteractiveListing.ResolveAlternateFolderName(id, null, "User_Test_1", "UiName"));
+        Assert.Equal(
+            "UiName",
+            CloudInteractiveListing.ResolveAlternateFolderName(id, "  ", null, "UiName"));
+        Assert.Null(
+            CloudInteractiveListing.ResolveAlternateFolderName(
+                id, null, null, $"folder-{id:N}"));
+    }
+
+    [Fact]
+    public void ResolveRowName_UsesMappingName_ViaAlternateResolver()
+    {
+        var id = Guid.Parse("321e6beb-1c55-48ca-9a02-5b4405212959");
+        var entity = new GetEntitiesResult
+        {
+            Id = id,
+            Code = CloudEntityCodes.CloudFolder
+        };
+
+        var name = CloudInteractiveListing.ResolveRowName(
+            entity,
+            rid => CloudInteractiveListing.ResolveAlternateFolderName(
+                rid, syncMetaLeafName: null, mappingCloudFolderName: "User_Test_1"));
+        Assert.Equal("User_Test_1", name);
+        Assert.False(CloudInteractiveListing.IsSyntheticCloudDisplayName(entity, name));
+    }
+
+    [Fact]
     public void ResolveRowName_FallsBackToSynthetic_WhenNoValuesOrMeta()
     {
         var id = Guid.Parse("99999999-8888-7777-6666-555555555555");

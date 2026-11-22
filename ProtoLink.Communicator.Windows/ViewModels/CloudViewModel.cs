@@ -1105,7 +1105,16 @@ public partial class CloudViewModel : ViewModelBase
     private string? ResolveListingMetaName(Guid remoteId)
     {
         var meta = _listingMetaStore.FindByRemoteId(remoteId);
-        return meta == null ? null : CloudInteractiveListing.LeafName(meta.RelativePath);
+        var leaf = meta == null ? null : CloudInteractiveListing.LeafName(meta.RelativePath);
+        var mappingName = SyncMappings
+            .FirstOrDefault(m => m.CloudFolderId == remoteId)
+            ?.CloudFolderName;
+        var listed = Items.FirstOrDefault(i => i.Id == remoteId && i.IsFolder)?.Name;
+        return CloudInteractiveListing.ResolveAlternateFolderName(
+            remoteId,
+            leaf,
+            mappingName,
+            listed);
     }
 
     /// <summary>
@@ -1228,6 +1237,8 @@ public partial class CloudViewModel : ViewModelBase
             ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: false);
             FilteredItems.Refresh();
+            // Values-light tree cache never re-fetches IncludeValues — push hydrate Names into it.
+            ApplyHydratedNamesToFolderTree(fresh);
         }
         catch (Exception ex) when (ApiExceptionHelper.IsExpectedConnectivityFailure(ex))
         {

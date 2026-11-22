@@ -13,7 +13,8 @@ namespace ProtoLink.Communicator.Windows.Services;
 public static class CloudInteractiveListing
 {
     /// <summary>
-    /// Prefer StringValues name when present; else sync-meta RelativePath leaf; else synthetic
+    /// Prefer StringValues name when present; else alternate (sync-meta leaf / mapping
+    /// <c>CloudFolderName</c> / already-hydrated UI); else synthetic
     /// <c>folder-{id}</c> / <c>file-{id}</c> from <see cref="CloudApiService.GetDisplayName"/>.
     /// </summary>
     public static string ResolveRowName(
@@ -29,6 +30,27 @@ public static class CloudInteractiveListing
             return fromMeta.Trim();
 
         return fromValues;
+    }
+
+    /// <summary>
+    /// Values-light alternate name: sync-meta leaf, then mapping <c>CloudFolderName</c>,
+    /// then a non-synthetic UI name already known (listing hydrate). Used by tree + listing
+    /// so Folders tree never sticks on <c>folder-{id}</c> when map/Api Name is known.
+    /// </summary>
+    public static string? ResolveAlternateFolderName(
+        Guid remoteId,
+        string? syncMetaLeafName,
+        string? mappingCloudFolderName,
+        string? knownUiName = null)
+    {
+        if (!string.IsNullOrWhiteSpace(syncMetaLeafName))
+            return syncMetaLeafName.Trim();
+        if (!string.IsNullOrWhiteSpace(mappingCloudFolderName))
+            return mappingCloudFolderName.Trim();
+        if (!string.IsNullOrWhiteSpace(knownUiName)
+            && !string.Equals(knownUiName.Trim(), $"folder-{remoteId:N}", StringComparison.OrdinalIgnoreCase))
+            return knownUiName.Trim();
+        return null;
     }
 
     public static bool IsSyntheticCloudDisplayName(GetEntitiesResult entity, string displayName)

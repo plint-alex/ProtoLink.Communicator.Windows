@@ -229,4 +229,77 @@ public static class CloudFolderTree
             set.Add(rootId);
         return set;
     }
+
+    /// <summary>
+    /// After listing IncludeValues hydrate (or mapping Name resolve): replace synthetic
+    /// <c>folder-{id}</c> labels in the values-light tree cache so Folders tree catches up
+    /// without a wipe. Only updates ids already present in names or children.
+    /// </summary>
+    public static bool ApplyHumanNames(
+        IDictionary<Guid, string> namesById,
+        IDictionary<Guid, IReadOnlyList<Node>> childrenByParent,
+        IEnumerable<(Guid Id, string Name)> humanNames)
+    {
+        if (namesById == null || childrenByParent == null || humanNames == null)
+            return false;
+
+        var map = new Dictionary<Guid, string>();
+        foreach (var (id, name) in humanNames)
+        {
+            if (id == Guid.Empty || string.IsNullOrWhiteSpace(name)) continue;
+            map[id] = name.Trim();
+        }
+
+        if (map.Count == 0) return false;
+
+        var changed = false;
+        foreach (var (id, name) in map)
+        {
+            var inNames = namesById.ContainsKey(id);
+            var inChildren = false;
+            if (!inNames)
+            {
+                foreach (var kids in childrenByParent.Values)
+                {
+                    if (kids == null) continue;
+                    foreach (var k in kids)
+                    {
+                        if (k.Id != id) continue;
+                        inChildren = true;
+                        break;
+                    }
+
+                    if (inChildren) break;
+                }
+            }
+
+            if (!inNames && !inChildren) continue;
+            if (namesById.TryGetValue(id, out var cur) && string.Equals(cur, name, StringComparison.Ordinal))
+                continue;
+            namesById[id] = name;
+            changed = true;
+        }
+
+        if (!changed) return false;
+
+        foreach (var parentId in childrenByParent.Keys.ToList())
+        {
+            var kids = childrenByParent[parentId];
+            if (kids == null || kids.Count == 0) continue;
+            List<Node>? next = null;
+            for (var i = 0; i < kids.Count; i++)
+            {
+                var k = kids[i];
+                if (!map.TryGetValue(k.Id, out var n) || string.Equals(k.Name, n, StringComparison.Ordinal))
+                    continue;
+                next ??= kids.ToList();
+                next[i] = k with { Name = n };
+            }
+
+            if (next != null)
+                childrenByParent[parentId] = next;
+        }
+
+        return true;
+    }
 }

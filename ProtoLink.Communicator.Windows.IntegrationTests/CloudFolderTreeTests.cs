@@ -425,4 +425,55 @@ public class CloudFolderTreeTests
         // ShowFolderTree ≡ rows.Count > 0 — listing catch must leave non-empty chrome.
         Assert.True(rows.Count > 0);
     }
+
+    [Fact]
+    public void ApplyHumanNames_ReplacesSyntheticTreeLabel_AndChildNode()
+    {
+        var root = Guid.Parse("ba9266e9-ac45-46f3-9b6d-cdde2f4e2d35");
+        var folder = Guid.Parse("321e6beb-1c55-48ca-9a02-5b4405212959");
+        var synthetic = $"folder-{folder:N}";
+        var names = new Dictionary<Guid, string>
+        {
+            [root] = "Cloud",
+            [folder] = synthetic
+        };
+        var children = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [root] = new[] { new CloudFolderTree.Node(folder, synthetic) }
+        };
+
+        Assert.True(CloudFolderTree.ApplyHumanNames(
+            names,
+            children,
+            new[] { (folder, "User_Test_1") }));
+        Assert.Equal("User_Test_1", names[folder]);
+        Assert.Equal("User_Test_1", children[root][0].Name);
+
+        var visible = CloudFolderTree.ProjectVisible(
+            new CloudFolderTree.Node(root, names[root]),
+            children,
+            expandedIds: new HashSet<Guid> { root },
+            loadedParentIds: new HashSet<Guid> { root },
+            selectedId: folder);
+        Assert.Equal(2, visible.Count);
+        Assert.Equal("User_Test_1", visible[1].Name);
+    }
+
+    [Fact]
+    public void ApplyHumanNames_IgnoresUnknownIds_AndNoOpWhenUnchanged()
+    {
+        var root = Guid.NewGuid();
+        var known = Guid.NewGuid();
+        var names = new Dictionary<Guid, string> { [root] = "Cloud", [known] = "Keep" };
+        var children = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [root] = new[] { new CloudFolderTree.Node(known, "Keep") }
+        };
+
+        Assert.False(CloudFolderTree.ApplyHumanNames(
+            names,
+            children,
+            new[] { (Guid.NewGuid(), "Ghost"), (known, "Keep") }));
+        Assert.Equal("Keep", names[known]);
+    }
 }

@@ -421,7 +421,8 @@ public partial class CloudViewModel
         }
 
         // Values-light: do not stack IncludeValues with interactive listing / hydrate (1.0.93 FAIL).
-        // ResolveRowName fills sync-meta leaf names; synthetic folder-{id} is OK until hydrate.
+        // ResolveRowName uses sync-meta / SyncMappings.CloudFolderName / hydrated listing Names;
+        // synthetic folder-{id} is OK only until hydrate ApplyHydratedNamesToFolderTree.
         var list = await _api.GetEntitiesAsync(
             new[] { parentId },
             includeValues: false,
@@ -449,6 +450,20 @@ public partial class CloudViewModel
 
         _folderTreeChildren[parentId] = folderKids;
         _folderTreeLoaded.Add(parentId);
+    }
+
+    /// <summary>
+    /// Listing IncludeValues hydrate updates the contents panel but historically never touched
+    /// <see cref="_folderTreeNames"/>. Push non-synthetic folder Names into the tree cache.
+    /// </summary>
+    private void ApplyHydratedNamesToFolderTree(IEnumerable<CloudItemViewModel> items)
+    {
+        var human = items
+            .Where(i => i.IsFolder && !string.IsNullOrWhiteSpace(i.Name))
+            .Where(i => !string.Equals(i.Name, $"folder-{i.Id:N}", StringComparison.OrdinalIgnoreCase))
+            .Select(i => (i.Id, i.Name));
+        if (CloudFolderTree.ApplyHumanNames(_folderTreeNames, _folderTreeChildren, human))
+            RebuildFolderTreeRows();
     }
 
     private void RebuildFolderTreeRows()
