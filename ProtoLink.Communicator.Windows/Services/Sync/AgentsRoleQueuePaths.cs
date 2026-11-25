@@ -84,6 +84,14 @@ internal static class AgentsRoleQueuePaths
     }
 
     /// <summary>
+    /// AutoPush must not upload AgentTeam queue churn under a mapped MyNotesFolder
+    /// (1.0.118: continuous Uploading… + LastSync missing while roles/inbox rewrite).
+    /// Same path class as Force prune protection.
+    /// </summary>
+    public static bool ShouldSkipLocalPush(string relativePath) =>
+        MatchesOpenQueueOrAgentsRolesAncestor(relativePath);
+
+    /// <summary>
     /// True for Agents ancestors and for role queues
     /// (<c>…/Agents/roles/&lt;role&gt;/{todo,progress,hold,done}</c>) or mailbox queues
     /// (<c>…/Agents/inbox|outbox/{todo,done}</c>) and their descendants.

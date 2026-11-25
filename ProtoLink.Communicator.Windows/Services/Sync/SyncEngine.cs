@@ -98,11 +98,31 @@ public sealed partial class SyncEngine
         {
             foreach (var mapping in ready)
             {
-                ct.ThrowIfCancellationRequested();
-                var dirty = new HashSet<string>(StringComparer.Ordinal);
-                applied += await ApplyLocalPhaseAsync(
-                    mapping, dirty, skipSizeUpdates: false, remoteInMapping: new List<RemoteLocated>(), ct);
-                _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
+                var started = false;
+                try
+                {
+                    ct.ThrowIfCancellationRequested();
+                    started = true;
+                    var dirty = new HashSet<string>(StringComparer.Ordinal);
+                    // Exclude Agents role/mailbox queues so Autopush settles under mapped
+                    // MyNotesFolder while AgentTeam rewrites task HTML (1.0.118 churn class).
+                    applied += await ApplyLocalPhaseAsync(
+                        mapping,
+                        dirty,
+                        skipSizeUpdates: false,
+                        remoteInMapping: new List<RemoteLocated>(),
+                        ct,
+                        excludeAgentsQueues: true);
+                    _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Budget/preempt: still stamp LastSync once this mapping's push started so
+                    // a 60s AutoPush cancel cannot leave the live map without a LastSync key.
+                    if (started)
+                        _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
+                    throw;
+                }
             }
         });
         return applied;
@@ -395,13 +415,28 @@ public sealed partial class SyncEngine
         HashSet<string> dirty,
         bool skipSizeUpdates,
         List<RemoteLocated> remoteInMapping,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool excludeAgentsQueues = false)
     {
         var applied = 0;
         // Reconcile: ApplyCompare already hash-verified content — size/structure snapshot only.
         // Push: need ContentHash so same-size local edits still classify as Updated.
-        var snap = SnapshotFs(mapping.LocalRootPath, computeContentHashes: !skipSizeUpdates);
+        Func<string, bool>? skipPath = excludeAgentsQueues
+            ? AgentsRoleQueuePaths.ShouldSkipLocalPush
+            : null;
+        var snap = SnapshotFs(
+            mapping.LocalRootPath,
+            computeContentHashes: !skipSizeUpdates,
+            skipRelativePath: skipPath);
         var meta = _store.GetAll(mapping.Id);
+        if (excludeAgentsQueues)
+        {
+            // Pair snap+meta filters so skipped Agents paths do not classify as Removed.
+            meta = meta
+                .Where(m => !AgentsRoleQueuePaths.ShouldSkipLocalPush(m.RelativePath))
+                .ToList();
+        }
+
         var changes = _localClassifier.Classify(snap, meta);
         // Cloud can list the same display name twice (or multi-parent graphs); keep newest.
         var remoteByPath = remoteInMapping
@@ -1225,8 +1260,12 @@ public sealed partial class SyncEngine
     /// Legacy per-directory recursive GetFiles was O(dirs×files) and starved Sync on large trees.
     /// When <paramref name="computeContentHashes"/> is false (reconcile local phase), skip SHA-256 —
     /// content convergence already ran in ApplyCompare; hashing ~675MB MyNotesFolder again starved LastSync.
+    /// <paramref name="skipRelativePath"/> omits matching paths (AutoPush Agents queue exclude).
     /// </summary>
-    public static List<FsEntry> SnapshotFs(string rootPath, bool computeContentHashes = true)
+    public static List<FsEntry> SnapshotFs(
+        string rootPath,
+        bool computeContentHashes = true,
+        Func<string, bool>? skipRelativePath = null)
     {
         var result = new List<FsEntry>();
         if (!Directory.Exists(rootPath)) return result;
@@ -1238,6 +1277,7 @@ public sealed partial class SyncEngine
             foreach (var dir in Directory.GetDirectories(rootFull, "*", SearchOption.AllDirectories))
             {
                 var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, dir));
+                if (skipRelativePath?.Invoke(rel) == true) continue;
                 folderSizes[rel] = 0;
             }
         }
@@ -1260,6 +1300,7 @@ public sealed partial class SyncEngine
         foreach (var file in files)
         {
             var rel = SyncPathUtil.Normalize(Path.GetRelativePath(rootFull, file));
+            if (skipRelativePath?.Invoke(rel) == true) continue;
             try
             {
                 var info = new FileInfo(file);
@@ -1292,6 +1333,8 @@ public sealed partial class SyncEngine
                 var parent = SyncPathUtil.ParentOf(rel);
                 while (!string.IsNullOrEmpty(parent))
                 {
+                    if (skipRelativePath?.Invoke(parent) == true)
+                        break;
                     folderSizes[parent] = folderSizes.GetValueOrDefault(parent) + info.Length;
                     parent = SyncPathUtil.ParentOf(parent);
                 }

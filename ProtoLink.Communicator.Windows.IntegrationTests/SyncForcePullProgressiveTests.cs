@@ -34,6 +34,8 @@ public class SyncForcePullProgressiveTests
             "Protolink.ru/Agents/roles/frontend-developer/done/P1-old/index.html"));
         Assert.False(AgentsRoleQueuePaths.MatchesOpenQueueOrAgentsRolesAncestor(
             "Protolink.ru/Agents/docs/ops/index.html"));
+        Assert.True(AgentsRoleQueuePaths.ShouldSkipLocalPush(
+            "Protolink.ru/Agents/roles/frontend-developer/todo/P1-task/index.html"));
         Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
             "Protolink.ru/Agents/roles/fe/todo/ghost-shell"));
         Assert.True(AgentsRoleQueuePaths.ShouldSkipFolderMaterialize(
