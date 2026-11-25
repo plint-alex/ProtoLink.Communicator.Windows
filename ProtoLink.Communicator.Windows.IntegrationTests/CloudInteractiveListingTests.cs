@@ -287,4 +287,44 @@ public class CloudInteractiveListingTests
             known,
             maxRows: 10));
     }
+
+    [Fact]
+    public void BuildSoftReadyRowsFromMappings_MyCloudRootId_WhenKnownSetEmpty()
+    {
+        // 1.0.117: known set empty after kind-parent discover timeout → mapping Soft Ready no-op.
+        var cloudRoot = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var mapId = Guid.Parse("c01a45a2-d82c-4376-a6f1-35e798dba95f");
+        var rows = CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
+            cloudRoot,
+            new[] { (mapId, "MyNotesFolder") },
+            knownCloudRootIds: new HashSet<Guid>(),
+            maxRows: 10,
+            myCloudRootId: cloudRoot);
+        Assert.Single(rows);
+        Assert.Equal(mapId, rows[0].Id);
+
+        Assert.Empty(CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
+            cloudRoot,
+            new[] { (mapId, "MyNotesFolder") },
+            knownCloudRootIds: new HashSet<Guid>(),
+            maxRows: 10,
+            myCloudRootId: Guid.Empty));
+    }
+
+    [Fact]
+    public void PreferApiOrSoftReady_EmptyApiUsesSoftReady()
+    {
+        var soft = new[] { "MyNotesFolder" };
+        Assert.Equal(soft, CloudInteractiveListing.PreferApiOrSoftReady(Array.Empty<string>(), soft));
+        Assert.Equal(new[] { "ApiKid" }, CloudInteractiveListing.PreferApiOrSoftReady(new[] { "ApiKid" }, soft));
+        Assert.Empty(CloudInteractiveListing.PreferApiOrSoftReady(Array.Empty<string>(), Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void ShouldKeepListingOverEmptyHydrate_SoftReadyNotBlanked()
+    {
+        Assert.True(CloudInteractiveListing.ShouldKeepListingOverEmptyHydrate(paintedCount: 1, hydrateCount: 0));
+        Assert.False(CloudInteractiveListing.ShouldKeepListingOverEmptyHydrate(paintedCount: 0, hydrateCount: 0));
+        Assert.False(CloudInteractiveListing.ShouldKeepListingOverEmptyHydrate(paintedCount: 1, hydrateCount: 2));
+    }
 }

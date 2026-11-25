@@ -354,6 +354,45 @@ public partial class CloudViewModel
             cacheSnap: SnapshotFolderTreeCache());
     }
 
+    /// <summary>
+    /// Soft Ready / empty-Api paint: stub Folders chrome immediately and seed CloudRoot children
+    /// from listing rows so TreeItems &gt; 0 before RefreshFolderTreeAsync GetEntities (1.0.117 FAIL).
+    /// </summary>
+    private void SeedFolderTreeFromSoftReadyItems(
+        Guid listedFolderId,
+        IReadOnlyList<CloudItemViewModel> items)
+    {
+        EnsureFolderTreeChromeOnListingSoftFail();
+        if (_folderTreeRootId is not { } root || root == Guid.Empty)
+            return;
+        if (listedFolderId != root)
+            return;
+
+        var folderKids = items
+            .Where(i => i.IsFolder && !i.IsVirtualEntry && i.Id != Guid.Empty)
+            .Select(i => new CloudFolderTree.Node(i.Id, string.IsNullOrWhiteSpace(i.Name) ? i.Id.ToString("N")[..8] : i.Name))
+            .ToList();
+        if (folderKids.Count == 0)
+            return;
+
+        if (_folderTreeLoaded.Contains(root)
+            && _folderTreeChildren.TryGetValue(root, out var existing)
+            && existing is { Count: > 0 })
+            return;
+
+        foreach (var n in folderKids)
+        {
+            _folderTreeNames[n.Id] = n.Name;
+            _folderTreeCodes.TryAdd(n.Id, CloudEntityCodes.CloudFolder);
+        }
+
+        _folderTreeChildren[root] = folderKids;
+        _folderTreeLoaded.Add(root);
+        _folderTreeExpanded.Add(root);
+        _folderTreeFolderCount = Math.Max(_folderTreeFolderCount, folderKids.Count);
+        RebuildFolderTreeRows();
+    }
+
     private FolderTreeCacheSnapshot SnapshotFolderTreeCache() =>
         new(
             _folderTreeChildren.ToDictionary(kv => kv.Key, kv => kv.Value),

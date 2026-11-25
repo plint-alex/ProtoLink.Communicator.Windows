@@ -787,6 +787,14 @@ public partial class CloudViewModel : ViewModelBase
                     .ThenByDescending(x => x.UpdateTime)
                     .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                // Android preferApiOrSoftReady: empty GetEntities success still Soft-Readies
+                // (WIN_CLOUD_SOFTREADY_EMPTY_LISTING on 1.0.117 — catch-only Soft Ready missed this).
+                if (fresh.Count == 0)
+                {
+                    var soft = TryBuildSoftReadyItems(folderId);
+                    if (soft is { Count: > 0 })
+                        fresh = soft;
+                }
             }
 
             // User may have navigated away / newer Refresh superseded this load.
@@ -803,7 +811,11 @@ public partial class CloudViewModel : ViewModelBase
                 StatusText = "Ready";
             // Serialize post-paint work: tree first (values-light), then soft values hydrate.
             if (!CloudVirtualNodes.IsVirtual(folderId))
+            {
+                if (fresh.Count > 0)
+                    SeedFolderTreeFromSoftReadyItems(folderId, fresh);
                 _ = ContinueAfterListingReadyAsync(folderId, selectedId, loadGen);
+            }
             else
                 ScheduleFolderSizeRefresh();
         }
@@ -812,7 +824,8 @@ public partial class CloudViewModel : ViewModelBase
             if (loadGen != _listingLoadGeneration)
                 return; // superseded Refresh — do not paint Waiting over a newer in-flight load
 
-            // Soft Ready from sync-meta when mapped Notes exist — sticks past GetEntities timeout.
+            // Soft Ready from sync-meta / mappings — sticks past GetEntities timeout.
+            // Do not early-return before NotifyListingChrome (IsEmpty stayed true on 1.0.117 Soft Ready).
             if (!CloudVirtualNodes.IsVirtual(folderId)
                 && TryApplySyncMetaSoftReady(folderId, selectedId, folderChanged))
             {
@@ -820,48 +833,55 @@ public partial class CloudViewModel : ViewModelBase
                 ClearNetworkBanner();
                 if (!IsForceProgressStatus(_statusText))
                     StatusText = "Ready";
+                SeedFolderTreeFromSoftReadyItems(folderId, Items.ToList());
                 _ = ContinueAfterListingReadyAsync(folderId, selectedId, loadGen);
-                return;
             }
-
-            // Sick connection: if chrome was cleared, paint last-good disk listing before banner.
-            if (Items.Count == 0
-                && !CloudVirtualNodes.IsVirtual(folderId)
-                && TryPaintListingFromDisk(folderId, selectedId, reset: true))
+            else
             {
-                _listedFolderId = folderId;
-            }
+                // Sick connection: if chrome was cleared, paint last-good disk listing before banner.
+                if (Items.Count == 0
+                    && !CloudVirtualNodes.IsVirtual(folderId)
+                    && TryPaintListingFromDisk(folderId, selectedId, reset: true))
+                {
+                    _listedFolderId = folderId;
+                }
 
-            // Keep last list (MergeListing not called); show offline banner (AT-C6).
-            // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
-            // Keep last-good Folders tree chrome on listing soft-fail — ClearFolderTree here
-            // stranded ShowFolderTree=false while contents later recovered (1.0.90 Session-1).
-            // First paint: RefreshFolderTreeAsync only runs on success — paint stub when empty
-            // so Waiting for network still shows Folders column (1.0.91 Session-1 FAIL).
-            EnsureFolderTreeChromeOnListingSoftFail();
-            ReportCaughtException(ex, asNetworkFailure: true);
-            // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
-            // Never hub-fallback when last-good listing rows are painted (CACHE_PAINT_CLOUD wipe).
-            if (!_recoveringFromRootListingFailure
-                && PreferOnlineUiCache.ShouldFallbackToHubAfterListingSoftFail(
-                    CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds),
-                    hasPaintedListingRows: Items.Count > 0))
-            {
-                _recoveringFromRootListingFailure = true;
-                try
+                // Keep last list (MergeListing not called); show offline banner (AT-C6).
+                // Banner stays hidden while Force progress status is active (ShowNetworkBanner).
+                // Keep last-good Folders tree chrome on listing soft-fail — ClearFolderTree here
+                // stranded ShowFolderTree=false while contents later recovered (1.0.90 Session-1).
+                // First paint: RefreshFolderTreeAsync only runs on success — paint stub when empty
+                // so Waiting for network still shows Folders column (1.0.91 Session-1 FAIL).
+                EnsureFolderTreeChromeOnListingSoftFail();
+                ReportCaughtException(ex, asNetworkFailure: true);
+                // Duplicate/bloated CloudRoot listing timeout → hub so Refresh can recover (not stuck on Drive).
+                // Never hub-fallback when last-good listing rows are painted (CACHE_PAINT_CLOUD wipe).
+                if (!_recoveringFromRootListingFailure
+                    && PreferOnlineUiCache.ShouldFallbackToHubAfterListingSoftFail(
+                        CloudRootSelection.ShouldFallbackToHubAfterListingFailure(folderId, _knownCloudRootIds),
+                        hasPaintedListingRows: Items.Count > 0))
                 {
-                    await EnsureRootAsync().ConfigureAwait(true);
-                }
-                catch
-                {
-                    // Banner stays; user can Retry / Refresh.
-                }
-                finally
-                {
-                    _recoveringFromRootListingFailure = false;
+                    _recoveringFromRootListingFailure = true;
+                    try
+                    {
+                        await EnsureRootAsync().ConfigureAwait(true);
+                    }
+                    catch
+                    {
+                        // Banner stays; user can Retry / Refresh.
+                    }
+                    finally
+                    {
+                        _recoveringFromRootListingFailure = false;
+                    }
                 }
             }
         }
+        NotifyListingChrome();
+    }
+
+    private void NotifyListingChrome()
+    {
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsSharedWithMeListing));
         OnPropertyChanged(nameof(IsSharedByMeListing));
@@ -1183,7 +1203,7 @@ public partial class CloudViewModel : ViewModelBase
         }
     }
 
-    private bool TryApplySyncMetaSoftReady(Guid folderId, Guid? selectedId, bool reset)
+    private List<CloudItemViewModel>? TryBuildSoftReadyItems(Guid folderId)
     {
         var metaKids = _listingMetaStore.FindChildrenByParentRemoteId(folderId)
             .Where(c => !_deletedRemoteIds.Contains(c.RemoteId));
@@ -1194,15 +1214,18 @@ public partial class CloudViewModel : ViewModelBase
         // After sync-meta quarantine: CloudRoot Soft Ready had 0 meta kids while Api/map kids exist.
         if (rows.Count == 0)
         {
+            _folderTreeCodes.TryGetValue(folderId, out var folderCode);
             rows = CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
                 folderId,
                 SyncMappings.Select(m => (m.CloudFolderId, m.CloudFolderName ?? "")),
                 _knownCloudRootIds,
-                CloudApiService.InteractiveListingMaxRows);
+                CloudApiService.InteractiveListingMaxRows,
+                myCloudRootId: _myCloudRootId,
+                folderCode: folderCode);
         }
 
         if (rows.Count == 0)
-            return false;
+            return null;
 
         var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
         var fresh = rows
@@ -1216,7 +1239,13 @@ public partial class CloudViewModel : ViewModelBase
                 UpdateTime = r.UpdateTime
             })
             .ToList();
-        if (fresh.Count == 0)
+        return fresh.Count == 0 ? null : fresh;
+    }
+
+    private bool TryApplySyncMetaSoftReady(Guid folderId, Guid? selectedId, bool reset)
+    {
+        var fresh = TryBuildSoftReadyItems(folderId);
+        if (fresh is not { Count: > 0 })
             return false;
         ApplyCheapItemSizes(fresh);
         MergeListing(fresh, selectedId, reset: reset);
@@ -1292,6 +1321,9 @@ public partial class CloudViewModel : ViewModelBase
                 .ThenByDescending(x => x.UpdateTime)
                 .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            // Never blank Soft Ready / values-light Ready when values page returns [] (1.0.117 wipe).
+            if (CloudInteractiveListing.ShouldKeepListingOverEmptyHydrate(Items.Count, fresh.Count))
+                return;
             ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: false);
             FilteredItems.Refresh();

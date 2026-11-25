@@ -120,6 +120,46 @@ public static class CloudInteractiveListing
     }
 
     /// <summary>
+    /// Android <c>preferApiOrSoftReady</c>: Api kids always win; Soft Ready paints when Api is empty
+    /// (timeout race / sick GetEntities returning []). Catch-path Soft Ready alone is not enough.
+    /// </summary>
+    public static IReadOnlyList<T> PreferApiOrSoftReady<T>(
+        IReadOnlyList<T>? apiRows,
+        IReadOnlyList<T>? softReadyRows)
+    {
+        if (apiRows is { Count: > 0 })
+            return apiRows;
+        return softReadyRows is { Count: > 0 }
+            ? softReadyRows
+            : Array.Empty<T>();
+    }
+
+    /// <summary>
+    /// IncludeValues hydrate must not blank Soft Ready / values-light Ready when the values
+    /// page returns [] (Android <c>mergeHydrateById</c> empty→keep light).
+    /// </summary>
+    public static bool ShouldKeepListingOverEmptyHydrate(int paintedCount, int hydrateCount) =>
+        paintedCount > 0 && hydrateCount == 0;
+
+    /// <summary>
+    /// CloudRoot for mapping Soft Ready: known set, My Cloud id, or legacy Code=CloudRoot.
+    /// Known-only missed LastOpen Soft Ready when kind-parent discover timed out under AutoPush.
+    /// </summary>
+    public static bool IsCloudRootForMappingSoftReady(
+        Guid folderRemoteId,
+        IReadOnlySet<Guid>? knownCloudRootIds,
+        Guid myCloudRootId = default,
+        string? folderCode = null)
+    {
+        if (folderRemoteId == Guid.Empty) return false;
+        if (myCloudRootId != Guid.Empty && myCloudRootId == folderRemoteId)
+            return true;
+        if (CloudEntityClassify.IsCloudRootCode(folderCode))
+            return true;
+        return knownCloudRootIds != null && knownCloudRootIds.Contains(folderRemoteId);
+    }
+
+    /// <summary>
     /// Soft Ready when sync-meta is empty/quarantined under a CloudRoot: paint mapped folders
     /// so CloudRoot Soft Ready is not sticky-empty while Api kids exist (WIN_CLOUD_SOFTREADY_EMPTY_LISTING).
     /// </summary>
@@ -127,13 +167,14 @@ public static class CloudInteractiveListing
         Guid folderRemoteId,
         IEnumerable<(Guid CloudFolderId, string CloudFolderName)> mappings,
         IReadOnlySet<Guid>? knownCloudRootIds,
-        int maxRows)
+        int maxRows,
+        Guid myCloudRootId = default,
+        string? folderCode = null)
     {
         if (folderRemoteId == Guid.Empty || maxRows < 1 || mappings == null)
             return Array.Empty<(Guid, string, bool, DateTime)>();
 
-        var isCloudRoot = knownCloudRootIds != null && knownCloudRootIds.Contains(folderRemoteId);
-        if (!isCloudRoot)
+        if (!IsCloudRootForMappingSoftReady(folderRemoteId, knownCloudRootIds, myCloudRootId, folderCode))
             return Array.Empty<(Guid, string, bool, DateTime)>();
 
         return mappings
