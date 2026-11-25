@@ -63,17 +63,27 @@ public sealed class JsonSyncMetadataStore
                 using (var reader = new StreamReader(fs))
                     text = reader.ReadToEnd();
 
+                // Truncated FileMode.Create left multi-MB 0x00 files — not recoverable JSON.
+                if (string.IsNullOrWhiteSpace(text) || text[0] == '\0')
+                {
+                    QuarantineCorruptUnlocked();
+                    return;
+                }
+
                 var dto = JsonSerializer.Deserialize<FileDto>(text);
                 if (dto == null) return;
                 _items = dto.Items.ToDictionary(i => Key(i.MappingId, i.RelativePath), i => i);
                 _lastSync = dto.LastSync ?? new Dictionary<string, DateTime>();
                 return;
             }
-            catch (JsonException ex)
+            catch (JsonException)
             {
-                throw new SyncException(
-                    $"Corrupt sync metadata at '{_filePath}'. Fix or delete the file, then use Force Download.",
-                    inner: ex);
+                // Quarantine + empty: Force Download / next sync rebuilds meta. Throwing SyncException
+                // aborted Push and cold paths forever until a human deleted the file.
+                QuarantineCorruptUnlocked();
+                _items = new Dictionary<string, SyncItemMeta>(StringComparer.Ordinal);
+                _lastSync = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+                return;
             }
             catch (IOException ex)
             {
@@ -88,6 +98,24 @@ public sealed class JsonSyncMetadataStore
         _ = lastIo;
     }
 
+    /// <summary>
+    /// Move unreadable meta aside so the next save can recreate the live path.
+    /// Best-effort — IO failure leaves the file; atomic save still replaces it later.
+    /// </summary>
+    private void QuarantineCorruptUnlocked()
+    {
+        try
+        {
+            if (!File.Exists(_filePath)) return;
+            var bak = $"{_filePath}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}.bak";
+            File.Move(_filePath, bak);
+        }
+        catch (IOException)
+        {
+            // ignore — empty in-memory state still lets sync continue
+        }
+    }
+
     private void SaveUnlocked()
     {
         var dto = new FileDto
@@ -97,23 +125,41 @@ public sealed class JsonSyncMetadataStore
         };
         // Compact JSON: indented 27k-item MyNotesFolder meta is ~13MB and ~1s+ per rewrite.
         var json = JsonSerializer.Serialize(dto);
+        var tmpPath = _filePath + ".tmp";
         Exception? lastIo = null;
         for (var attempt = 0; attempt < 3; attempt++)
         {
             try
             {
-                using var fs = new FileStream(
-                    _filePath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.Read);
-                using var writer = new StreamWriter(fs);
-                writer.Write(json);
+                // Write temp to completion first. FileMode.Create on the live path truncates
+                // immediately; crash mid-write left ~16MB of 0x00 → SyncException on next Load.
+                using (var fs = new FileStream(
+                           tmpPath,
+                           FileMode.Create,
+                           FileAccess.Write,
+                           FileShare.None))
+                using (var writer = new StreamWriter(fs))
+                    writer.Write(json);
+
+                if (File.Exists(_filePath))
+                    File.Replace(tmpPath, _filePath, destinationBackupFileName: null);
+                else
+                    File.Move(tmpPath, _filePath);
                 return;
             }
             catch (IOException ex)
             {
                 lastIo = ex;
+                try
+                {
+                    if (File.Exists(tmpPath))
+                        File.Delete(tmpPath);
+                }
+                catch (IOException)
+                {
+                    // leave stale tmp for next attempt cleanup
+                }
+
                 Thread.Sleep(20 * (attempt + 1));
             }
         }
