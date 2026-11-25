@@ -176,7 +176,7 @@ public partial class CloudViewModel
                         {
                             var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false);
                             return (kids ?? new List<GetEntitiesResult>())
-                                .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code))
+                                .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code, c.TypeEntityId))
                                 .ToList();
                         },
                         id => _api.DeleteEntityAsync(id),

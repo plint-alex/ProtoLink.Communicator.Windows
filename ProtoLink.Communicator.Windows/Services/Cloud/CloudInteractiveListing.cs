@@ -57,7 +57,8 @@ public static class CloudInteractiveListing
     {
         if (CloudApiService.IsSyntheticCloudFileDisplayName(entity, displayName))
             return true;
-        return entity.Code == CloudEntityCodes.CloudFolder
+        return CloudEntityClassify.IsFolder(entity.TypeEntityId, entity.Code)
+               && !CloudEntityClassify.IsCloudRootCode(entity.Code)
                && string.Equals(displayName, $"folder-{entity.Id:N}", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -66,12 +67,11 @@ public static class CloudInteractiveListing
     /// Live FAIL: twin 0bc549dd ~132 files beat folder-rich 898c1453 when raw .Count was used.
     /// </summary>
     public static int FolderChildCount(IEnumerable<GetEntitiesResult> children) =>
-        children.Count(e =>
-            e.Code == CloudEntityCodes.CloudFolder || e.Code == CloudEntityCodes.CloudRoot);
+        children.Count(e => CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code));
 
     /// <summary>CloudFile children only — used with <see cref="HealRichnessScore"/>.</summary>
     public static int FileChildCount(IEnumerable<GetEntitiesResult> children) =>
-        children.Count(e => e.Code == CloudEntityCodes.CloudFile);
+        children.Count(e => CloudEntityClassify.IsFile(e.TypeEntityId, e.Code));
 
     /// <summary>
     /// SameNamed heal score: folders×10 − files so near-clone junk twin
@@ -115,6 +115,37 @@ public static class CloudInteractiveListing
             .OrderByDescending(x => x.Item3)
             .ThenByDescending(x => x.Item4)
             .ThenBy(x => x.Item2, StringComparer.OrdinalIgnoreCase)
+            .Take(maxRows)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Soft Ready when sync-meta is empty/quarantined under a CloudRoot: paint mapped folders
+    /// so CloudRoot Soft Ready is not sticky-empty while Api kids exist (WIN_CLOUD_SOFTREADY_EMPTY_LISTING).
+    /// </summary>
+    public static IReadOnlyList<(Guid Id, string Name, bool IsFolder, DateTime UpdateTime)> BuildSoftReadyRowsFromMappings(
+        Guid folderRemoteId,
+        IEnumerable<(Guid CloudFolderId, string CloudFolderName)> mappings,
+        IReadOnlySet<Guid>? knownCloudRootIds,
+        int maxRows)
+    {
+        if (folderRemoteId == Guid.Empty || maxRows < 1 || mappings == null)
+            return Array.Empty<(Guid, string, bool, DateTime)>();
+
+        var isCloudRoot = knownCloudRootIds != null && knownCloudRootIds.Contains(folderRemoteId);
+        if (!isCloudRoot)
+            return Array.Empty<(Guid, string, bool, DateTime)>();
+
+        return mappings
+            .Where(m => m.CloudFolderId != Guid.Empty && m.CloudFolderId != folderRemoteId)
+            .Select(m => (
+                m.CloudFolderId,
+                string.IsNullOrWhiteSpace(m.CloudFolderName)
+                    ? $"folder-{m.CloudFolderId:N}"
+                    : m.CloudFolderName.Trim(),
+                true,
+                DateTime.MinValue))
+            .OrderBy(x => x.Item2, StringComparer.OrdinalIgnoreCase)
             .Take(maxRows)
             .ToList();
     }

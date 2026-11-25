@@ -78,7 +78,8 @@ public partial class CloudViewModel
                             openCode,
                             open.Entity.Id,
                             _myCloudRootId == Guid.Empty ? null : _myCloudRootId,
-                            _knownCloudRootIds.Count))
+                            _knownCloudRootIds.Count,
+                            entityIsKnownCloudRoot: _knownCloudRootIds.Contains(open.Entity.Id)))
                     {
                         await EnsureRootOrListingDiskAsync(id);
                         return;
@@ -179,7 +180,8 @@ public partial class CloudViewModel
             return null;
         }
 
-        if (!CloudEntityRestore.IsNavigableCloudCode(entity.Code))
+        var knownRoot = _knownCloudRootIds.Contains(entity.Id);
+        if (!CloudEntityRestore.IsNavigableCloudEntity(entity.TypeEntityId, entity.Code, knownRoot))
             return null;
 
         var chain = new List<CloudEntityRestore.AncestorNode>();
@@ -197,17 +199,22 @@ public partial class CloudViewModel
 
         for (var guard = 0; guard < 64; guard++)
         {
-            var display = current.Code == CloudEntityCodes.CloudRoot
+            var parents = await _api.GetParentEntitiesAsync(current.Id, includeValues: false);
+            var isRoot = CloudEntityClassify.IsCloudRootCode(current.Code)
+                         || _knownCloudRootIds.Contains(current.Id)
+                         || parents.Any(p => p.Id == CloudEntityCodes.RootKindEntityId);
+
+            var chainCode = isRoot ? CloudEntityCodes.CloudRoot : (current.Code ?? "");
+            var display = isRoot
                 ? "Cloud"
                 : CloudInteractiveListing.ResolveRowName(current, ResolveListingMetaName);
-            chain.Insert(0, new CloudEntityRestore.AncestorNode(current.Id, current.Code ?? "", display));
-            _folderTreeCodes[current.Id] = current.Code ?? "";
-            if (current.Code == CloudEntityCodes.CloudRoot)
+            chain.Insert(0, new CloudEntityRestore.AncestorNode(current.Id, chainCode, display));
+            _folderTreeCodes[current.Id] = chainCode;
+            if (isRoot)
                 break;
 
-            var parents = await _api.GetParentEntitiesAsync(current.Id, includeValues: false);
             var parent = CloudMainParent.PickParent(currentMainParentId, parents);
-            if (parent == null || !CloudEntityRestore.IsCloudFolderOrRoot(parent.Code))
+            if (parent == null || !await IsCloudTreeAncestorAsync(parent).ConfigureAwait(true))
                 return null;
 
             Guid? nextMain = null;
@@ -229,7 +236,7 @@ public partial class CloudViewModel
         if (open is null) return null;
 
         // Remember ancestor CloudRoot for tree codes; do not override canonical My Cloud when duplicates exist.
-        if (chain[0].Code == CloudEntityCodes.CloudRoot)
+        if (CloudEntityClassify.IsCloudRootCode(chain[0].Code))
         {
             _knownCloudRootIds.Add(chain[0].Id);
             _folderTreeCodes[chain[0].Id] = CloudEntityCodes.CloudRoot;
@@ -247,6 +254,25 @@ public partial class CloudViewModel
             open.Value.Breadcrumb,
             ShareSheetStrings.CloudHub(lang),
             ShareSheetStrings.MyCloud(lang));
+    }
+
+    /// <summary>Folder/root ancestor after Code=name (TypeEntityId, known root, or RootKind parent).</summary>
+    private async Task<bool> IsCloudTreeAncestorAsync(GetEntitiesResult node)
+    {
+        if (CloudEntityRestore.IsCloudFolderOrRoot(node.TypeEntityId, node.Code))
+            return true;
+        if (CloudEntityClassify.IsCloudRootCode(node.Code) || _knownCloudRootIds.Contains(node.Id))
+            return true;
+        try
+        {
+            var parents = await _api.GetParentEntitiesAsync(node.Id, includeValues: false)
+                .ConfigureAwait(true);
+            return parents.Any(p => p.Id == CloudEntityCodes.RootKindEntityId);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void PersistLastOpenCloudEntityId(Guid entityId)

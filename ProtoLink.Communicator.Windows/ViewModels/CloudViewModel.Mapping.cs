@@ -221,26 +221,18 @@ public partial class CloudViewModel
         if (_authService.CurrentToken == null) return;
         var userId = _authService.CurrentToken.UserId;
         var list = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false).ConfigureAwait(true);
-        var roots = (list ?? new List<GetEntitiesResult>())
-            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
-            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
-            .ToList();
-
-        _knownCloudRootIds.Clear();
-        foreach (var r in roots)
-            _knownCloudRootIds.Add(r.Id);
-
-        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
         // Create-then-map prefers newest non-mapped root (not LastOpen Drive).
+        var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+        var roots = _knownCloudRootIds
+            .Select(id => new CloudRootSelection.Candidate(id, DateTime.UtcNow))
+            .ToList();
         var wizardRoot = CloudRootSelection.PickWizardCreateParentRoot(roots, mapped);
         if (wizardRoot is { } id && id != Guid.Empty)
         {
             _myCloudRootId = id;
             _folderTreeCodes[id] = CloudEntityCodes.CloudRoot;
-            return;
         }
-
-        await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
     }
 
     private Guid ResolveWizardParentFolderId()

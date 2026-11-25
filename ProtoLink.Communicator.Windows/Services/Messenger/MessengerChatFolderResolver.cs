@@ -97,13 +97,13 @@ public sealed class MessengerChatFolderResolver
         var siblings = await _api.GetEntitiesAsync(new[] { chatsId }, includeValues: true)
             .ConfigureAwait(false);
         var siblingNames = siblings
-            .Where(e => e.Code == CloudEntityCodes.CloudFolder)
+            .Where(e => CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code))
             .Select(CloudApiService.GetDisplayName)
             .ToList();
 
         var folderName = ChatFolderNaming.ChooseFolderName(partnerDisplayName, partnerUserId, siblingNames);
         var existing = siblings.FirstOrDefault(e =>
-            e.Code == CloudEntityCodes.CloudFolder
+            CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code)
             && string.Equals(CloudApiService.GetDisplayName(e), folderName, StringComparison.OrdinalIgnoreCase));
 
         Guid folderId;
@@ -131,13 +131,29 @@ public sealed class MessengerChatFolderResolver
 
     private async Task<Guid> EnsureCloudRootAsync(Guid ownerUserId)
     {
+        var byId = new Dictionary<Guid, CloudRootSelection.Candidate>();
         var underUser = await _api.GetEntitiesAsync(new[] { ownerUserId }, includeValues: false)
             .ConfigureAwait(false);
-        var candidates = underUser
-            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
-            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
-            .ToList();
-        var picked = CloudRootSelection.PickCanonical(candidates);
+        foreach (var e in underUser)
+        {
+            if (!CloudEntityClassify.IsCloudRootCode(e.Code)) continue;
+            byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+        }
+
+        try
+        {
+            foreach (var e in await _api.GetMyCloudRootsAsync(ownerUserId).ConfigureAwait(false))
+            {
+                if (e.Id == Guid.Empty || byId.ContainsKey(e.Id)) continue;
+                byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+            }
+        }
+        catch
+        {
+            // Soft-fail: legacy Code filter alone.
+        }
+
+        var picked = CloudRootSelection.PickCanonical(byId.Values.ToList());
         if (picked is { } id && id != Guid.Empty)
             return id;
         return await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { ownerUserId })
@@ -149,7 +165,7 @@ public sealed class MessengerChatFolderResolver
         var children = await _api.GetEntitiesAsync(new[] { parentId }, includeValues: true)
             .ConfigureAwait(false);
         var hit = children.FirstOrDefault(e =>
-            e.Code == CloudEntityCodes.CloudFolder
+            CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code)
             && string.Equals(CloudApiService.GetDisplayName(e), name, StringComparison.OrdinalIgnoreCase));
         if (hit != null)
             return hit.Id;

@@ -139,11 +139,10 @@ public sealed class CloudPickerViewModel : ViewModelBase
                 {
                     Id = e.Id,
                     Name = CloudApiService.GetDisplayName(e),
-                    IsFolder = e.Code == CloudEntityCodes.CloudFolder
-                               || e.Code == CloudEntityCodes.CloudRoot,
+                    IsFolder = CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code),
                     MimeType = CloudApiService.GetMimeType(e),
                     UpdateTime = e.UpdateTime,
-                    Subtitle = e.Code == CloudEntityCodes.CloudFolder || e.Code == CloudEntityCodes.CloudRoot
+                    Subtitle = CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code)
                         ? "Folder"
                         : TypeSubtitle(e),
                     CanSelect = true
@@ -204,13 +203,29 @@ public sealed class CloudPickerViewModel : ViewModelBase
 
     private async Task<Guid> ResolveCloudRootAsync()
     {
+        var byId = new Dictionary<Guid, CloudRootSelection.Candidate>();
         var underUser = await _api.GetEntitiesAsync(new[] { _myUserId }, includeValues: false)
             .ConfigureAwait(true);
-        var candidates = underUser
-            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
-            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
-            .ToList();
-        var picked = CloudRootSelection.PickCanonical(candidates);
+        foreach (var e in underUser)
+        {
+            if (!CloudEntityClassify.IsCloudRootCode(e.Code)) continue;
+            byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+        }
+
+        try
+        {
+            foreach (var e in await _api.GetMyCloudRootsAsync(_myUserId).ConfigureAwait(true))
+            {
+                if (e.Id == Guid.Empty || byId.ContainsKey(e.Id)) continue;
+                byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+            }
+        }
+        catch
+        {
+            // Soft-fail: legacy Code filter alone.
+        }
+
+        var picked = CloudRootSelection.PickCanonical(byId.Values.ToList());
         if (picked is { } id && id != Guid.Empty)
             return id;
         return await _api.AddEntityAsync(CloudEntityCodes.CloudRoot, new[] { _myUserId })

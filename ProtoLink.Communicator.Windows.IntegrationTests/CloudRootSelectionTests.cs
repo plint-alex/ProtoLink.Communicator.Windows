@@ -144,6 +144,35 @@ public class CloudRootSelectionTests
     }
 
     [Fact]
+    public void PickCanonicalPreferringRichness_EmptyPreferredLosesToRicher()
+    {
+        var healthy = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var emptyTwin = Guid.Parse("3e5a2d6e-27ca-4c8b-89e6-e3cb253c05d6");
+        var roots = new[]
+        {
+            new CloudRootSelection.Candidate(emptyTwin, new DateTime(2026, 11, 18, 0, 0, 0, DateTimeKind.Utc)),
+            new CloudRootSelection.Candidate(healthy, new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc))
+        };
+        var counts = new Dictionary<Guid, int> { [emptyTwin] = 0, [healthy] = 24 };
+        Assert.Equal(healthy, CloudRootSelection.PickCanonicalPreferringRichness(
+            roots, preferredId: emptyTwin, folderChildCountByRemoteId: counts));
+        Assert.Equal(emptyTwin, CloudRootSelection.PickCanonicalPreferringRichness(
+            roots, preferredId: emptyTwin,
+            folderChildCountByRemoteId: new Dictionary<Guid, int> { [emptyTwin] = 2, [healthy] = 24 }));
+    }
+
+    [Fact]
+    public void ShouldSkipLastOpenCloudRoot_KnownRootWithoutLegacyCode()
+    {
+        var healthy = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var drive = Guid.Parse("3e5a2d6e-27ca-4c8b-89e6-e3cb253c05d6");
+        Assert.True(CloudRootSelection.ShouldSkipLastOpenCloudRoot(
+            "Облако", drive, healthy, cloudRootCountUnderUser: 2, entityIsKnownCloudRoot: true));
+        Assert.False(CloudRootSelection.ShouldSkipLastOpenCloudRoot(
+            "Облако", drive, healthy, cloudRootCountUnderUser: 2, entityIsKnownCloudRoot: false));
+    }
+
+    [Fact]
     public void IsNotesRootPath_NormalizesTrailingSeparators()
     {
         var root = Path.Combine(Path.GetTempPath(), "ProtoLinkNotesRootTest");

@@ -91,7 +91,7 @@ public sealed partial class SyncEngine
         }
 
         var rootCloud = rootKids
-            .Where(c => c.Code is CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudFile)
+            .Where(c => CloudEntityClassify.IsCloudFolderOrFile(c.TypeEntityId, c.Code))
             .ToList();
         if (rootCloud.Count == 0)
             throw new SyncException("Force download found no remote files in this folder.");
@@ -169,8 +169,8 @@ public sealed partial class SyncEngine
             {
                 foreach (var child in structureCache.GetValueOrDefault(folderId) ?? new List<GetEntitiesResult>())
                 {
-                    var isFolder = child.Code == CloudEntityCodes.CloudFolder;
-                    var isFile = child.Code == CloudEntityCodes.CloudFile;
+                    var isFolder = CloudEntityClassify.IsFolder(child.TypeEntityId, child.Code);
+                    var isFile = CloudEntityClassify.IsFile(child.TypeEntityId, child.Code);
                     if (!isFolder && !isFile) continue;
 
                     var name = CloudApiService.GetDisplayName(child);

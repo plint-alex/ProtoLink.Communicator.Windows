@@ -8,11 +8,11 @@ namespace ProtoLink.Communicator.Windows.Services;
 /// </summary>
 public static class CloudFolderDelete
 {
-    public readonly record struct ChildRef(Guid Id, string? Code);
+    public readonly record struct ChildRef(Guid Id, string? Code, Guid? TypeEntityId = null);
 
     /// <summary>
-    /// Depth-first: delete CloudFile children, recurse CloudFolder children, then delete
-    /// <paramref name="folderId"/>. Skips self-id rows and non CloudFile/CloudFolder codes.
+    /// Depth-first: delete file children, recurse folder children, then delete
+    /// <paramref name="folderId"/>. Skips self-id rows and non cloud folder/file rows.
     /// </summary>
     public static async Task DeleteFolderRecursiveAsync(
         Guid folderId,
@@ -26,12 +26,12 @@ public static class CloudFolderDelete
             if (c.Id == folderId)
                 continue;
 
-            if (string.Equals(c.Code, CloudEntityCodes.CloudFile, StringComparison.Ordinal))
+            if (CloudEntityClassify.IsFile(c.TypeEntityId, c.Code))
             {
                 await deleteEntity(c.Id).ConfigureAwait(false);
                 deletedIds?.Add(c.Id);
             }
-            else if (string.Equals(c.Code, CloudEntityCodes.CloudFolder, StringComparison.Ordinal))
+            else if (CloudEntityClassify.IsFolder(c.TypeEntityId, c.Code))
             {
                 await DeleteFolderRecursiveAsync(c.Id, listChildren, deleteEntity, deletedIds)
                     .ConfigureAwait(false);

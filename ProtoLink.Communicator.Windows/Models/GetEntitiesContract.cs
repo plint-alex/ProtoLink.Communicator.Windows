@@ -10,6 +10,12 @@ public class GetEntitiesContract
     public bool IncludeValues { get; set; }
 
     /// <summary>
+    /// When true with multiple ParentIds, match children of ANY parent (OR).
+    /// Default false = historical AND (my CloudRoots = root kind + folder kind + me).
+    /// </summary>
+    public bool ParentIdsMatchAny { get; set; }
+
+    /// <summary>
     /// Optional conversation scope for Message entities: 1 id (self-chat) or 2 ids (pair).
     /// Server filters sender:/receiver: both directions, newest-first. Omit for legacy global list.
     /// </summary>

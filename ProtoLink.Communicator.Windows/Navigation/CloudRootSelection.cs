@@ -39,6 +39,48 @@ public static class CloudRootSelection
     }
 
     /// <summary>
+    /// Same pool as <see cref="PickCanonical"/>, but empty preferred/LastOpen loses to a richer
+    /// CloudRoot (folder-child counts). Android Soft Ready empty-listing cousin.
+    /// </summary>
+    public static Guid? PickCanonicalPreferringRichness(
+        IReadOnlyList<Candidate> roots,
+        IReadOnlySet<Guid>? mappedCloudFolderIds = null,
+        Guid? preferredId = null,
+        IReadOnlyDictionary<Guid, int>? folderChildCountByRemoteId = null)
+    {
+        if (roots == null || roots.Count == 0) return null;
+        mappedCloudFolderIds ??= new HashSet<Guid>();
+        folderChildCountByRemoteId ??= new Dictionary<Guid, int>();
+
+        var nonMapped = roots.Where(r => !mappedCloudFolderIds.Contains(r.Id)).ToList();
+        var pool = nonMapped.Count > 0 ? nonMapped : roots.ToList();
+
+        int CountOf(Guid id) =>
+            folderChildCountByRemoteId.TryGetValue(id, out var n) ? Math.Max(0, n) : 0;
+
+        if (preferredId is { } pref && pref != Guid.Empty && pool.Any(c => c.Id == pref))
+        {
+            var prefCount = CountOf(pref);
+            var richer = pool
+                .Select(c => (c.Id, Count: CountOf(c.Id)))
+                .Where(x => x.Id != pref && x.Count > prefCount)
+                .OrderByDescending(x => x.Count)
+                .ThenBy(x => x.Id)
+                .FirstOrDefault();
+            if (prefCount > 0 || richer.Id == Guid.Empty)
+                return pref;
+            return richer.Id;
+        }
+
+        return pool
+            .OrderByDescending(c => CountOf(c.Id))
+            .ThenBy(c => c.CreationTime)
+            .ThenBy(c => c.Id)
+            .First()
+            .Id;
+    }
+
+    /// <summary>
     /// Preferred My Cloud id: LastOpen when it is itself a known CloudRoot (ops/healthy root),
     /// else the current in-memory My Cloud id when still under the user.
     /// </summary>
@@ -96,14 +138,16 @@ public static class CloudRootSelection
 
     /// <summary>
     /// Cold-start LastOpen: do not restore onto a non-canonical CloudRoot when the account has duplicates.
+    /// Code=name roots: pass <paramref name="entityIsKnownCloudRoot"/> when Code is no longer CloudRoot.
     /// </summary>
     public static bool ShouldSkipLastOpenCloudRoot(
         string? entityCode,
         Guid entityId,
         Guid? canonicalCloudRootId,
-        int cloudRootCountUnderUser) =>
+        int cloudRootCountUnderUser,
+        bool entityIsKnownCloudRoot = false) =>
         cloudRootCountUnderUser > 1
-        && IsCloudRootCode(entityCode)
+        && (IsCloudRootCode(entityCode) || entityIsKnownCloudRoot)
         && canonicalCloudRootId is { } c
         && c != Guid.Empty
         && entityId != c;

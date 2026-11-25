@@ -947,7 +947,7 @@ public sealed partial class SyncEngine
         if (warm)
         {
             var cloudKids = children
-                .Where(c => c.Code == CloudEntityCodes.CloudFolder || c.Code == CloudEntityCodes.CloudFile)
+                .Where(c => CloudEntityClassify.IsCloudFolderOrFile(c.TypeEntityId, c.Code))
                 .ToList();
             var allKnown = cloudKids.Count > 0 && cloudKids.All(c => metaByRemoteId.ContainsKey(c.Id));
             // Empty folder listing is fine with meta-name mode (nothing to name).
@@ -975,8 +975,8 @@ public sealed partial class SyncEngine
             foreach (var child in children)
             {
                 ct.ThrowIfCancellationRequested();
-                var isFolder = child.Code == CloudEntityCodes.CloudFolder;
-                var isFile = child.Code == CloudEntityCodes.CloudFile;
+                var isFolder = CloudEntityClassify.IsFolder(child.TypeEntityId, child.Code);
+                var isFile = CloudEntityClassify.IsFile(child.TypeEntityId, child.Code);
                 if (!isFolder && !isFile) continue;
                 if (!visitedIds.Add(child.Id)) continue;
 
@@ -1056,8 +1056,8 @@ public sealed partial class SyncEngine
                 kids = new List<RemoteEntryInfo>();
                 foreach (var e in entities)
                 {
-                    var isFolderCode = e.Code == CloudEntityCodes.CloudFolder;
-                    var isFileCode = e.Code == CloudEntityCodes.CloudFile;
+                    var isFolderCode = CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code);
+                    var isFileCode = CloudEntityClassify.IsFile(e.TypeEntityId, e.Code);
                     if (!isFolderCode && !isFileCode) continue;
                     var name = CloudApiService.GetDisplayName(e);
                     if (string.IsNullOrEmpty(name)) continue;

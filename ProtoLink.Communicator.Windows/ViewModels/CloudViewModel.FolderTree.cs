@@ -435,7 +435,7 @@ public partial class CloudViewModel
 
         var folderKids = new List<CloudFolderTree.Node>();
         foreach (var e in (list ?? new List<GetEntitiesResult>())
-                 .Where(x => CloudFolderTree.IsFolderTreeCode(x.Code))
+                 .Where(x => CloudFolderTree.IsFolderTreeEntity(x.TypeEntityId, x.Code))
                  .OrderBy(x => CloudInteractiveListing.ResolveRowName(x, ResolveListingMetaName),
                      StringComparer.OrdinalIgnoreCase))
         {

@@ -21,7 +21,11 @@ public static class CloudFolderTree
         bool IsLoading);
 
     public static bool IsFolderTreeCode(string? code) =>
-        code is Core.CloudEntityCodes.CloudFolder or Core.CloudEntityCodes.CloudRoot;
+        Core.CloudEntityClassify.IsFolder(typeEntityId: null, code);
+
+    /// <summary>Folder-tree row when TypeEntityId and/or legacy Code is available.</summary>
+    public static bool IsFolderTreeEntity(Guid? typeEntityId, string? code) =>
+        Core.CloudEntityClassify.IsFolder(typeEntityId, code);
 
     /// <summary>
     /// Tree root from breadcrumb: prefer CloudRoot id when present; else first non-virtual crumb;

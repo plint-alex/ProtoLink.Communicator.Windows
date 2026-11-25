@@ -218,14 +218,13 @@ public partial class MessengerViewModel
 
             var entity = entities[0];
             var title = CloudApiService.GetDisplayName(entity);
-            var typeName = entity.Code switch
-            {
-                CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot => "Folder",
-                CloudEntityCodes.CloudFile => "File",
-                _ => entity.Code ?? "Entity"
-            };
+            var typeName = CloudEntityClassify.IsFolder(entity.TypeEntityId, entity.Code)
+                ? "Folder"
+                : CloudEntityClassify.IsFile(entity.TypeEntityId, entity.Code)
+                    ? "File"
+                    : entity.Code ?? "Entity";
             BitmapImage? thumb = null;
-            if (entity.Code == CloudEntityCodes.CloudFile
+            if (CloudEntityClassify.IsFile(entity.TypeEntityId, entity.Code)
                 && MessengerAttachmentRender.LooksLikeImageMime(CloudApiService.GetMimeType(entity)))
             {
                 var img = await _cloudApi.TryGetImageBytesAsync(card.EntityId, 96, 96).ConfigureAwait(true);

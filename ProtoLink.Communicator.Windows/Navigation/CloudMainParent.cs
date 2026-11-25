@@ -1,3 +1,4 @@
+using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
 
 namespace ProtoLink.Communicator.Windows.Navigation;
@@ -7,7 +8,7 @@ public static class CloudMainParent
 {
     /// <summary>
     /// Prefer the parent whose id equals <paramref name="mainParentId"/>; else first navigable Cloud folder/root;
-    /// else first row.
+    /// else first non-kind/seed row.
     /// </summary>
     public static GetEntitiesResult? PickParent(
         Guid? mainParentId,
@@ -25,9 +26,25 @@ public static class CloudMainParent
 
         foreach (var p in parents)
         {
-            if (CloudEntityRestore.IsCloudFolderOrRoot(p.Code)) return p;
+            if (CloudEntityRestore.IsCloudFolderOrRoot(p.TypeEntityId, p.Code)
+                || CloudEntityClassify.IsCloudRootCode(p.Code))
+                return p;
+        }
+
+        foreach (var p in parents)
+        {
+            if (IsKindOrSeedParent(p.Id)) continue;
+            return p;
         }
 
         return parents[0];
     }
+
+    private static bool IsKindOrSeedParent(Guid id) =>
+        id == CloudEntityCodes.RootKindEntityId
+        || id == CloudEntityCodes.FolderKindEntityId
+        || id == CloudEntityCodes.TypeCloudFolderId
+        || id == CloudEntityCodes.TypeCloudFileId
+        || id == CloudEntityCodes.NameTypeId
+        || id == CloudEntityCodes.MimeTypeId;
 }

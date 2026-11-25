@@ -10,6 +10,10 @@ public class GetEntitiesResult
     [JsonPropertyName("code")]
     public string? Code { get; set; }
 
+    /// <summary>Cube type id — typeCloudFolder / typeCloudFile (Code is display name).</summary>
+    [JsonPropertyName("typeEntityId")]
+    public Guid? TypeEntityId { get; set; }
+
     [JsonPropertyName("version")]
     public int Version { get; set; }
 

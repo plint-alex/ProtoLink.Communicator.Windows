@@ -654,16 +654,37 @@ public partial class CloudViewModel : ViewModelBase
     /// Resolve My Cloud among possibly duplicate user CloudRoots. Prefers non-mapped roots so a bloated
     /// Drive-style CloudRoot mapped to NotesRoot cannot become the hub “My Cloud” target. When mappings
     /// are empty, prefer LastOpen if it is a known CloudRoot (not earliest CreationTime alone).
+    /// After Code=name: discover via kind-parent AND (root+folder+me) plus legacy Code=CloudRoot.
+    /// Empty preferred loses to richer folder-child counts (Android Soft Ready cousin).
     /// </summary>
     private async Task ApplyCanonicalCloudRootFromUserChildrenAsync(
         IReadOnlyList<GetEntitiesResult>? underUser,
         Guid userId)
     {
-        var roots = (underUser ?? Array.Empty<GetEntitiesResult>())
-            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
-            .Select(e => new CloudRootSelection.Candidate(e.Id, e.CreationTime))
-            .ToList();
+        var byId = new Dictionary<Guid, CloudRootSelection.Candidate>();
+        foreach (var e in underUser ?? Array.Empty<GetEntitiesResult>())
+        {
+            if (!CloudEntityClassify.IsCloudRootCode(e.Code)) continue;
+            byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+        }
 
+        try
+        {
+            var kindRoots = await _api.GetMyCloudRootsAsync(userId, includeValues: false)
+                .ConfigureAwait(true);
+            foreach (var e in kindRoots ?? new List<GetEntitiesResult>())
+            {
+                if (e.Id == Guid.Empty) continue;
+                if (!byId.ContainsKey(e.Id))
+                    byId[e.Id] = new CloudRootSelection.Candidate(e.Id, e.CreationTime);
+            }
+        }
+        catch
+        {
+            // Soft-fail: legacy Code filter alone (pre-kind-parent Api).
+        }
+
+        var roots = byId.Values.ToList();
         _knownCloudRootIds.Clear();
         foreach (var r in roots)
             _knownCloudRootIds.Add(r.Id);
@@ -672,11 +693,37 @@ public partial class CloudViewModel : ViewModelBase
         var lastOpen = _settingsService.LoadSettings().LastOpenCloudEntityId;
         var preferred = CloudRootSelection.ResolvePreferredCloudRootId(
             _knownCloudRootIds, lastOpen, _myCloudRootId);
-        var picked = CloudRootSelection.PickCanonical(roots, mapped, preferred);
+
+        Dictionary<Guid, int>? counts = null;
+        if (roots.Count > 1)
+        {
+            counts = new Dictionary<Guid, int>();
+            foreach (var r in roots)
+            {
+                try
+                {
+                    var kids = await _api.GetEntitiesAsync(
+                        new[] { r.Id },
+                        includeValues: false,
+                        maxPages: 1,
+                        pageSize: CloudApiService.InteractiveListingPageSize).ConfigureAwait(true);
+                    counts[r.Id] = CloudInteractiveListing.FolderChildCount(kids ?? new List<GetEntitiesResult>());
+                }
+                catch
+                {
+                    counts[r.Id] = 0;
+                }
+            }
+        }
+
+        var picked = CloudRootSelection.PickCanonicalPreferringRichness(
+            roots, mapped, preferred, counts);
         if (picked is { } id && id != Guid.Empty)
         {
             _myCloudRootId = id;
             _folderTreeCodes[id] = CloudEntityCodes.CloudRoot;
+            if (preferred is { } pref && pref != id)
+                PersistLastOpenCloudEntityId(id);
             return;
         }
 
@@ -937,7 +984,7 @@ public partial class CloudViewModel : ViewModelBase
         }
 
         var byId = found
-            .Where(e => CloudEntityRestore.IsNavigableCloudCode(e.Code))
+            .Where(e => CloudEntityRestore.IsNavigableCloudEntity(e.TypeEntityId, e.Code))
             .ToDictionary(e => e.Id);
         var fresh = new List<CloudItemViewModel>();
         var pruned = new List<CloudRecentEntry>();
@@ -946,7 +993,7 @@ public partial class CloudViewModel : ViewModelBase
             if (!byId.TryGetValue(entry.EntityId, out var entity))
                 continue;
             var name = CloudApiService.GetDisplayName(entity);
-            var isFolder = entity.Code is CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot;
+            var isFolder = CloudEntityClassify.IsFolder(entity.TypeEntityId, entity.Code);
             fresh.Add(new CloudItemViewModel
             {
                 Id = entity.Id,
@@ -987,7 +1034,7 @@ public partial class CloudViewModel : ViewModelBase
         var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
         var fresh = new List<CloudItemViewModel>();
         foreach (var e in list
-                     .OrderByDescending(x => x.Code == CloudEntityCodes.CloudFolder)
+                     .OrderByDescending(x => CloudEntityClassify.IsFolder(x.TypeEntityId, x.Code))
                      .ThenByDescending(x => x.UpdateTime)
                      .ThenBy(x => CloudApiService.GetDisplayName(x), StringComparer.OrdinalIgnoreCase))
         {
@@ -1002,12 +1049,13 @@ public partial class CloudViewModel : ViewModelBase
             var caption = ShareSheetStrings.SharedRowSubtitle(lang, creatorName, canWrite);
             _shareRootCaptions[e.Id] = caption;
             _shareRootCanWrite[e.Id] = canWrite;
+            var isFolder = CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code);
             fresh.Add(new CloudItemViewModel
             {
                 Id = e.Id,
                 Name = CloudApiService.GetDisplayName(e),
-                IsFolder = e.Code is CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot,
-                IsSynced = e.Code == CloudEntityCodes.CloudFolder && syncedIds.Contains(e.Id),
+                IsFolder = isFolder,
+                IsSynced = isFolder && syncedIds.Contains(e.Id),
                 IsShareRoot = true,
                 CanWriteShare = canWrite,
                 SubtitleOverride = caption,
@@ -1068,12 +1116,9 @@ public partial class CloudViewModel : ViewModelBase
                 : meta is not null
                     ? CloudApiService.GetDisplayName(meta)
                     : root.EntityId.ToString("N")[..8];
-            var isFolder = meta?.Code switch
-            {
-                CloudEntityCodes.CloudFile => false,
-                CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot => true,
-                _ => true
-            };
+            var isFolder = meta is null
+                || CloudEntityClassify.IsFolder(meta.TypeEntityId, meta.Code)
+                || !CloudEntityClassify.IsFile(meta.TypeEntityId, meta.Code);
             var peopleNames = root.PeoplePreview
                 .Select(p => p.DisplayName)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
@@ -1146,11 +1191,22 @@ public partial class CloudViewModel : ViewModelBase
             folderId,
             metaKids,
             CloudApiService.InteractiveListingMaxRows);
+        // After sync-meta quarantine: CloudRoot Soft Ready had 0 meta kids while Api/map kids exist.
+        if (rows.Count == 0)
+        {
+            rows = CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
+                folderId,
+                SyncMappings.Select(m => (m.CloudFolderId, m.CloudFolderName ?? "")),
+                _knownCloudRootIds,
+                CloudApiService.InteractiveListingMaxRows);
+        }
+
         if (rows.Count == 0)
             return false;
 
         var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
         var fresh = rows
+            .Where(r => !_deletedRemoteIds.Contains(r.Id))
             .Select(r => new CloudItemViewModel
             {
                 Id = r.Id,
@@ -1160,6 +1216,8 @@ public partial class CloudViewModel : ViewModelBase
                 UpdateTime = r.UpdateTime
             })
             .ToList();
+        if (fresh.Count == 0)
+            return false;
         ApplyCheapItemSizes(fresh);
         MergeListing(fresh, selectedId, reset: reset);
         return true;
@@ -1251,7 +1309,7 @@ public partial class CloudViewModel : ViewModelBase
         HashSet<Guid> syncedIds,
         Func<Guid, string?>? syncMetaLeafNameByRemoteId = null)
     {
-        var isFolder = e.Code == CloudEntityCodes.CloudFolder;
+        var isFolder = CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code);
         return new CloudItemViewModel
         {
             Id = e.Id,

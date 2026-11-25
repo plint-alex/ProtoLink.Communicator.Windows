@@ -52,14 +52,31 @@ public class SameNamedCloudFolderHealRunner
                 }
 
                 var parent = CloudMainParent.PickParent(mainParentId, parents);
-                if (parent == null || !CloudEntityRestore.IsCloudFolderOrRoot(parent.Code))
-                    continue;
+                if (parent == null) continue;
+                // Code=name CloudRoot has no TypeEntityId — accept Type folder, legacy Code, or RootKind on parent.
+                var parentIsTree = CloudEntityRestore.IsCloudFolderOrRoot(parent.TypeEntityId, parent.Code)
+                    || CloudEntityClassify.IsCloudRootCode(parent.Code);
+                if (!parentIsTree)
+                {
+                    try
+                    {
+                        var parentParents = await _api.GetParentEntitiesAsync(parent.Id, includeValues: false)
+                            .ConfigureAwait(false);
+                        parentIsTree = parentParents.Any(p => p.Id == CloudEntityCodes.RootKindEntityId);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                }
+
+                if (!parentIsTree) continue;
 
                 parentByMapped[m.CloudFolderId] = parent.Id;
-                var root = parents.FirstOrDefault(p => p.Code == CloudEntityCodes.CloudRoot);
+                var root = parents.FirstOrDefault(p => CloudEntityClassify.IsCloudRootCode(p.Code));
                 if (root != null)
                     ancestorRootByMapped[m.CloudFolderId] = root.Id;
-                else if (parent.Code == CloudEntityCodes.CloudRoot)
+                else if (CloudEntityClassify.IsCloudRootCode(parent.Code) || parentIsTree)
                     ancestorRootByMapped[m.CloudFolderId] = parent.Id;
             }
             catch
@@ -181,7 +198,7 @@ public class SameNamedCloudFolderHealRunner
         var outList = new List<SameNamedCloudFolderHeal.Sibling>();
         foreach (var e in children)
         {
-            if (e.Code != CloudEntityCodes.CloudFolder && e.Code != CloudEntityCodes.CloudRoot)
+            if (!CloudEntityClassify.IsFolder(e.TypeEntityId, e.Code))
                 continue;
             outList.Add(ToSibling(e));
         }
@@ -195,12 +212,25 @@ public class SameNamedCloudFolderHealRunner
     {
         if (userId == Guid.Empty) return Array.Empty<SameNamedCloudFolderHeal.Sibling>();
         cancellationToken.ThrowIfCancellationRequested();
+        var byId = new Dictionary<Guid, SameNamedCloudFolderHeal.Sibling>();
         var children = await _api.GetEntitiesAsync(new[] { userId }, includeValues: true)
             .ConfigureAwait(false);
-        return children
-            .Where(e => e.Code == CloudEntityCodes.CloudRoot)
-            .Select(ToSibling)
-            .ToList();
+        foreach (var e in children.Where(e => CloudEntityClassify.IsCloudRootCode(e.Code)))
+            byId[e.Id] = ToSibling(e);
+        try
+        {
+            foreach (var e in await _api.GetMyCloudRootsAsync(userId, includeValues: true).ConfigureAwait(false))
+            {
+                if (e.Id == Guid.Empty || byId.ContainsKey(e.Id)) continue;
+                byId[e.Id] = ToSibling(e);
+            }
+        }
+        catch
+        {
+            // Soft-fail: legacy Code filter alone.
+        }
+
+        return byId.Values.ToList();
     }
 
     private async Task<IReadOnlyList<SameNamedCloudFolderHeal.Sibling>> EnrichDuplicateSiblingChildCountsAsync(

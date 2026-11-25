@@ -20,16 +20,17 @@ public static class CloudEntityRestore
 
     /// <summary>
     /// Build open target from an ancestor chain ordered CloudRoot → … → entity (inclusive).
-    /// Returns null when the chain is empty or does not start at CloudRoot.
+    /// Returns null when the chain is empty or does not start at CloudRoot
+    /// (legacy Code or normalized <see cref="CloudEntityCodes.CloudRoot"/> marker).
     /// </summary>
     public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb)? BuildOpenTarget(
         IReadOnlyList<AncestorNode> chainRootToEntity)
     {
         if (chainRootToEntity.Count == 0) return null;
-        if (chainRootToEntity[0].Code != CloudEntityCodes.CloudRoot) return null;
+        if (!CloudEntityClassify.IsCloudRootCode(chainRootToEntity[0].Code)) return null;
 
         var entityNode = chainRootToEntity[^1];
-        var isFile = entityNode.Code == CloudEntityCodes.CloudFile;
+        var isFile = CloudEntityClassify.IsFile(typeEntityId: null, entityNode.Code);
         var folderNodes = isFile
             ? chainRootToEntity.Take(chainRootToEntity.Count - 1).ToList()
             : chainRootToEntity.ToList();
@@ -43,21 +44,30 @@ public static class CloudEntityRestore
             {
                 Index = i,
                 Id = n.Id,
-                Name = n.Code == CloudEntityCodes.CloudRoot ? "Cloud" : n.Name
+                Name = CloudEntityClassify.IsCloudRootCode(n.Code) ? "Cloud" : n.Name
             });
         }
 
         Guid? parentId = chainRootToEntity.Count >= 2 ? chainRootToEntity[^2].Id : null;
         var kind = isFile ? CloudEntityKind.File : CloudEntityKind.Folder;
-        var name = entityNode.Code == CloudEntityCodes.CloudRoot ? "Cloud" : entityNode.Name;
+        var name = CloudEntityClassify.IsCloudRootCode(entityNode.Code) ? "Cloud" : entityNode.Name;
         return (new CloudEntityRef(entityNode.Id, kind, name, parentId), breadcrumb);
     }
 
     public static bool IsCloudFolderOrRoot(string? code) =>
-        code is CloudEntityCodes.CloudRoot or CloudEntityCodes.CloudFolder;
+        CloudEntityClassify.IsFolder(typeEntityId: null, code);
+
+    public static bool IsCloudFolderOrRoot(Guid? typeEntityId, string? code) =>
+        CloudEntityClassify.IsFolder(typeEntityId, code);
 
     public static bool IsNavigableCloudCode(string? code) =>
-        code is CloudEntityCodes.CloudRoot or CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudFile;
+        CloudEntityClassify.IsNavigableCloudEntity(typeEntityId: null, code);
+
+    public static bool IsNavigableCloudEntity(
+        Guid? typeEntityId,
+        string? code,
+        bool isKnownCloudRoot = false) =>
+        CloudEntityClassify.IsNavigableCloudEntity(typeEntityId, code, isKnownCloudRoot);
 
     /// <summary>
     /// Prepend the Cloud hub so My Cloud stays a sibling of Shared with me after cold restore (AT-S17).

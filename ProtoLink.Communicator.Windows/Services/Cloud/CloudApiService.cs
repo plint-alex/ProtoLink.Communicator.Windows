@@ -74,6 +74,26 @@ public class CloudApiService
         }, maxPages, pageSize);
     }
 
+    /// <summary>
+    /// My CloudRoots after Code=name: AND(root kind, folder kind, owning user).
+    /// Legacy Code=CloudRoot under-user rows are merged by callers.
+    /// </summary>
+    public async Task<List<GetEntitiesResult>> GetMyCloudRootsAsync(Guid userId, bool includeValues = false)
+    {
+        if (userId == Guid.Empty) return new List<GetEntitiesResult>();
+        return await GetEntitiesPagedAsync(new GetEntitiesContract
+        {
+            ParentIds = new[]
+            {
+                CloudEntityCodes.RootKindEntityId,
+                CloudEntityCodes.FolderKindEntityId,
+                userId
+            },
+            ParentIdsMatchAny = false,
+            IncludeValues = includeValues
+        });
+    }
+
     /// <summary>S6 Shared with me: caller's direct share roots (AT-S17).</summary>
     public async Task<List<GetEntitiesResult>> GetSharedWithMeAsync(bool includeValues = true)
     {
@@ -123,6 +143,7 @@ public class CloudApiService
                 ParentIds = template.ParentIds,
                 IdsToFindParents = template.IdsToFindParents,
                 IncludeValues = template.IncludeValues,
+                ParentIdsMatchAny = template.ParentIdsMatchAny,
                 SharedWithMe = template.SharedWithMe,
                 ConversationUserIds = template.ConversationUserIds,
                 Skip = skip,
@@ -698,9 +719,16 @@ public class CloudApiService
         if (!string.IsNullOrEmpty(otherNonMimeString))
             return otherNonMimeString;
 
-        if (entity.Code == CloudEntityCodes.CloudFile)
+        // Code=display name (Api) — do not replace with folder-{id}/file-{id}.
+        if (!string.IsNullOrEmpty(entity.Code)
+            && entity.Code is not (
+                CloudEntityCodes.CloudFile or CloudEntityCodes.CloudFolder or CloudEntityCodes.CloudRoot))
+            return entity.Code;
+
+        if (CloudEntityClassify.IsFile(entity.TypeEntityId, entity.Code))
             return $"file-{entity.Id:N}";
-        if (entity.Code == CloudEntityCodes.CloudFolder)
+        if (CloudEntityClassify.IsFolder(entity.TypeEntityId, entity.Code)
+            && !CloudEntityClassify.IsCloudRootCode(entity.Code))
             return $"folder-{entity.Id:N}";
         return entity.Code ?? entity.Id.ToString();
     }
@@ -710,7 +738,7 @@ public class CloudApiService
     /// Sync must not use that label as a real on-disk filename or it will miss matches and create duplicate cloud files.
     /// </summary>
     public static bool IsSyntheticCloudFileDisplayName(GetEntitiesResult entity, string displayName) =>
-        entity.Code == CloudEntityCodes.CloudFile
+        CloudEntityClassify.IsFile(entity.TypeEntityId, entity.Code)
         && string.Equals(displayName, $"file-{entity.Id:N}", StringComparison.OrdinalIgnoreCase);
 
     private static string? ValueAsTrimmedString(object? value)

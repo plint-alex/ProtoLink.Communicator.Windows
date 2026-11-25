@@ -264,4 +264,27 @@ public class CloudInteractiveListingTests
         Assert.Equal(fileId, rows[1].Id);
         Assert.Equal("zzz.txt", rows[1].Name);
     }
+
+    [Fact]
+    public void BuildSoftReadyRowsFromMappings_CloudRootPaintsMappedFolders()
+    {
+        var cloudRoot = Guid.Parse("8aec679c-a389-46b9-8105-8a5b238ee979");
+        var mapId = Guid.Parse("c01a45a2-d82c-4376-a6f1-35e798dba95f");
+        var known = new HashSet<Guid> { cloudRoot };
+        var rows = CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
+            cloudRoot,
+            new[] { (mapId, "MyNotesFolder") },
+            known,
+            maxRows: 10);
+        Assert.Single(rows);
+        Assert.Equal(mapId, rows[0].Id);
+        Assert.Equal("MyNotesFolder", rows[0].Name);
+        Assert.True(rows[0].IsFolder);
+
+        Assert.Empty(CloudInteractiveListing.BuildSoftReadyRowsFromMappings(
+            mapId,
+            new[] { (mapId, "MyNotesFolder") },
+            known,
+            maxRows: 10));
+    }
 }
