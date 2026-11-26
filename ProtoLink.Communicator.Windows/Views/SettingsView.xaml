@@ -78,20 +78,21 @@
                 <Border Background="{DynamicResource PanelCardBackground}"
                         BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1" Padding="16,12">
                     <StackPanel>
-                        <TextBlock Text="Notes root folder" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" Text="{Binding NotesRootPath, UpdateSourceTrigger=PropertyChanged}"
-                                     Style="{DynamicResource AppTextBox}" Margin="0,0,8,0"
-                                     AutomationProperties.Name="Notes root folder"/>
-                            <Button Grid.Column="1" Content="Browse" Click="OnNotesBrowseClick"
-                                    Style="{DynamicResource GhostButton}" VerticalAlignment="Center"
-                                    AutomationProperties.Name="Browse Notes root folder"/>
-                        </Grid>
-                        <TextBlock Text="Local folder for offline Notes (subfolders with index.html). Required for the Notes tab."
+                        <TextBlock Text="Notes root folders" Margin="0,0,0,6" Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                        <ListBox ItemsSource="{Binding NotesRootPaths}"
+                                 SelectedItem="{Binding SelectedNotesRootPath, Mode=TwoWay}"
+                                 MinHeight="56" MaxHeight="120"
+                                 Margin="0,0,0,8"
+                                 AutomationProperties.Name="Notes root folders"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Add folder" Click="OnNotesBrowseClick"
+                                    Style="{DynamicResource GhostButton}" Margin="0,0,8,0"
+                                    AutomationProperties.Name="Add Notes root folder"/>
+                            <Button Content="Remove from list" Command="{Binding RemoveNotesRootCommand}"
+                                    Style="{DynamicResource GhostButton}"
+                                    AutomationProperties.Name="Remove Notes root from list"/>
+                        </StackPanel>
+                        <TextBlock Text="Local folders for offline Notes (subfolders with index.html). Remove drops the path from this list only — files on disk stay."
                                    Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
                                    Foreground="{DynamicResource ForegroundMutedBrush}"/>
                     </StackPanel>

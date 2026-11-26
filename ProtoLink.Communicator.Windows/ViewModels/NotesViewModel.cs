@@ -49,13 +49,33 @@ public partial class NotesViewModel : ViewModelBase
         _fsService = new NotesFileSystemService();
         _renderer = new EditableMarkdownRenderer();
         _titleRename = new NotesPageTitleRenameService(_fileService, _fsService);
-        _rootPath = _settingsService.LoadSettings().NotesRootPath;
-        NewFolderCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => !NeedsNotesRoot);
+        ApplyRootFromSettings(reloadTree: false);
+        NewFolderCommand = new RelayCommand(
+            _ => RaiseRequestNewFolder(),
+            _ => !NeedsNotesRoot && !SelectedNotesRootMissing);
         CreateFirstNoteCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => IsNotesEmpty);
         ChooseNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
+        AddNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
+        RemoveNotesRootCommand = new RelayCommand(
+            _ => RemoveNotesRootPath(SelectedNotesRoot?.Path ?? _rootPath),
+            _ => SelectedNotesRoot != null || !string.IsNullOrWhiteSpace(_rootPath));
         AddNotesRootToCloudCommand = new RelayCommand(
-            _ => RequestAddNotesRootToCloud?.Invoke(_rootPath!),
-            _ => ShowMapToCloudNudge);
+            _ =>
+            {
+                var path = SelectedNotesRoot?.Path ?? _rootPath;
+                if (!string.IsNullOrWhiteSpace(path))
+                    RequestAddNotesRootToCloud?.Invoke(path);
+            },
+            _ => ShowMapToCloudNudge || (SelectedNotesRoot?.ShowNotInCloudCue ?? false));
+        MapSelectedNotesRootCommand = new RelayCommand(
+            _ =>
+            {
+                var path = SelectedNotesRoot?.Path ?? _rootPath;
+                if (!string.IsNullOrWhiteSpace(path))
+                    RequestAddNotesRootToCloud?.Invoke(path);
+            },
+            _ => SelectedNotesRoot?.ShowNotInCloudCue == true
+                 || (!string.IsNullOrWhiteSpace(_rootPath) && ShowMapToCloudNudge));
         RefreshCommand = new RelayCommand(_ => RefreshTree());
         OpenSiblingFileCommand = new RelayCommand(
             p => OpenSiblingPath(p as string),
@@ -67,6 +87,31 @@ public partial class NotesViewModel : ViewModelBase
     }
 
     public string? RootPath { get => _rootPath; private set { _rootPath = value; OnPropertyChanged(); } }
+
+    /// <summary>E11: ordered Notes roots for the multi-root chrome.</summary>
+    public ObservableCollection<NotesRootItemViewModel> NotesRoots { get; } = new();
+
+    private NotesRootItemViewModel? _selectedNotesRoot;
+    public NotesRootItemViewModel? SelectedNotesRoot
+    {
+        get => _selectedNotesRoot;
+        set
+        {
+            if (ReferenceEquals(_selectedNotesRoot, value)) return;
+            if (value != null && !string.IsNullOrWhiteSpace(value.Path)
+                && !NotesRootSettings.PathsEqual(value.Path, _rootPath))
+            {
+                SelectNotesRootPath(value.Path);
+                return;
+            }
+
+            _selectedNotesRoot = value;
+            OnPropertyChanged();
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    public bool HasConfiguredNotesRoots => NotesRoots.Count > 0;
     public TreeItemViewModel? TreeRoot
     {
         get => _treeRoot;
@@ -78,18 +123,26 @@ public partial class NotesViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Notes root unset or folder missing — must not look like “no notes yet”.</summary>
-    public bool NeedsNotesRoot =>
-        string.IsNullOrWhiteSpace(_rootPath) || !Directory.Exists(_rootPath);
+    /// <summary>No Notes roots configured — must not look like “no notes yet”.</summary>
+    public bool NeedsNotesRoot => NotesRoots.Count == 0;
+
+    /// <summary>Selected root path missing on disk (roots list may still be non-empty).</summary>
+    public bool SelectedNotesRootMissing =>
+        !NeedsNotesRoot
+        && (string.IsNullOrWhiteSpace(_rootPath) || !Directory.Exists(_rootPath));
+
+    /// <summary>Setup CTA: no roots, or selected root folder missing.</summary>
+    public bool ShowNotesRootSetup => NeedsNotesRoot || SelectedNotesRootMissing;
 
     /// <summary>Root is configured but has no child note folders yet.</summary>
     public bool IsNotesEmpty =>
         !NeedsNotesRoot
+        && !SelectedNotesRootMissing
         && _treeRoot != null
         && _treeRoot.Children.Count == 0;
 
     /// <summary>Show the Notes tree (not setup / empty states).</summary>
-    public bool ShowNotesTree => !NeedsNotesRoot && !IsNotesEmpty;
+    public bool ShowNotesTree => !NeedsNotesRoot && !SelectedNotesRootMissing && !IsNotesEmpty;
 
     /// <summary>E6: Notes root set but not covered by any Cloud mapping LocalPath.</summary>
     public bool ShowMapToCloudNudge { get; private set; }
@@ -146,7 +199,10 @@ public partial class NotesViewModel : ViewModelBase
     public ICommand NewFolderCommand { get; }
     public ICommand CreateFirstNoteCommand { get; }
     public ICommand ChooseNotesRootCommand { get; }
+    public ICommand AddNotesRootCommand { get; }
+    public ICommand RemoveNotesRootCommand { get; }
     public ICommand AddNotesRootToCloudCommand { get; }
+    public ICommand MapSelectedNotesRootCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand OpenSiblingFileCommand { get; }
     public event Action? TreeRefreshed;
@@ -224,25 +280,23 @@ public partial class NotesViewModel : ViewModelBase
 
     public void ReloadFromSettings()
     {
-        _rootPath = _settingsService.LoadSettings().NotesRootPath;
-        OnPropertyChanged(nameof(RootPath));
-        NotifyNotesListStateChanged();
-        RefreshTree();
-        RefreshMapToCloudNudge();
+        ApplyRootFromSettings(reloadTree: true);
         NotesRootPathChanged?.Invoke();
     }
 
     /// <summary>Recompute E6 Notes→Cloud nudge after mappings change (or Notes root change).</summary>
     public void RefreshMapToCloudNudge()
     {
+        RefreshNotesRootsCloudCues();
+
         var covered = false;
-        if (!NeedsNotesRoot && _syncStore != null)
+        if (!NeedsNotesRoot && !SelectedNotesRootMissing && _syncStore != null)
         {
             var paths = _syncStore.Load().Select(m => m.LocalPath);
             covered = LocalPathCoverage.IsCoveredByAnyMappingRoot(_rootPath, paths);
         }
 
-        var show = !NeedsNotesRoot && !covered;
+        var show = !NeedsNotesRoot && !SelectedNotesRootMissing && !covered;
         if (ShowMapToCloudNudge == show)
         {
             OnPropertyChanged(nameof(MapToCloudNudgeText));
@@ -256,26 +310,177 @@ public partial class NotesViewModel : ViewModelBase
         CommandManager.InvalidateRequerySuggested();
     }
 
-    /// <summary>Persist Notes root from the Notes setup CTA (Settings Browse uses SettingsViewModel).</summary>
-    public void SetNotesRootPath(string path)
+    /// <summary>
+    /// Persist Notes root from the Notes setup CTA. E11: adds the folder (or selects if already listed).
+    /// Does not delete disk; Settings Browse uses the same Add path.
+    /// </summary>
+    public void SetNotesRootPath(string path) => AddNotesRootPath(path);
+
+    /// <summary>E11: add an existing folder to the Notes roots list and select it.</summary>
+    public void AddNotesRootPath(string path)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (!NotesRootSettings.TryNormalize(path, out var full))
             return;
-        var full = Path.GetFullPath(path.Trim());
+
         var settings = _settingsService.LoadSettings();
-        settings.NotesRootPath = full;
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        var existed = roots.Any(r => string.Equals(r, full, StringComparison.OrdinalIgnoreCase));
+        if (!existed)
+            roots.Add(full);
+
+        NotesRootSettings.Write(settings, roots, full);
         _settingsService.SaveSettings(settings);
+        ReloadFromSettings();
+        StatusText = !Directory.Exists(full)
+            ? "Notes folder not found. Choose another path."
+            : existed
+                ? $"Notes folder: {full}"
+                : $"Added Notes folder: {full}";
+    }
+
+    /// <summary>E11: select a configured root; tree/editor follow it; persists last-selected.</summary>
+    public void SelectNotesRootPath(string path)
+    {
+        if (!NotesRootSettings.TryNormalize(path, out var full))
+            return;
+
+        var settings = _settingsService.LoadSettings();
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        if (!roots.Any(r => string.Equals(r, full, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        if (NotesRootSettings.PathsEqual(full, _rootPath))
+        {
+            RefreshNotesRootsCollection(roots, full);
+            return;
+        }
+
+        NotesRootSettings.Write(settings, roots, full);
+        _settingsService.SaveSettings(settings);
+        CurrentPagePath = null;
+        _currentHtml = string.Empty;
+        _htmlSyncedToDisk = string.Empty;
+        CancelPendingSave();
         ReloadFromSettings();
         StatusText = Directory.Exists(full)
             ? $"Notes folder: {full}"
             : "Notes folder not found. Choose another path.";
     }
 
+    /// <summary>
+    /// E11: remove from Notes roots list only — never deletes disk files/folders.
+    /// </summary>
+    public void RemoveNotesRootPath(string? path)
+    {
+        if (!NotesRootSettings.TryNormalize(path, out var full))
+            return;
+
+        var settings = _settingsService.LoadSettings();
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        var idx = roots.FindIndex(r => string.Equals(r, full, StringComparison.OrdinalIgnoreCase));
+        if (idx < 0) return;
+
+        var next = NotesRootSettings.PreferNeighborAfterRemove(roots, idx);
+        roots.RemoveAt(idx);
+        NotesRootSettings.Write(settings, roots, next);
+        _settingsService.SaveSettings(settings);
+
+        if (NotesRootSettings.PathsEqual(full, _rootPath) || roots.Count == 0)
+        {
+            CurrentPagePath = null;
+            _currentHtml = string.Empty;
+            _htmlSyncedToDisk = string.Empty;
+            CancelPendingSave();
+        }
+
+        ReloadFromSettings();
+        StatusText = roots.Count == 0
+            ? "Notes folder removed from list (files on disk kept)."
+            : $"Removed from Notes list (files kept): {full}";
+    }
+
+    private void ApplyRootFromSettings(bool reloadTree)
+    {
+        var settings = _settingsService.LoadSettings();
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        var selected = NotesRootSettings.ResolveSelected(settings, roots);
+        // Persist migrated shape when legacy-only settings are loaded with a root.
+        if (roots.Count > 0
+            && (settings.NotesRootPaths == null || settings.NotesRootPaths.Count == 0
+                || !string.Equals(settings.NotesRootPath, selected, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(settings.LastSelectedNotesRootPath, selected, StringComparison.OrdinalIgnoreCase)))
+        {
+            NotesRootSettings.Write(settings, roots, selected);
+            _settingsService.SaveSettings(settings);
+        }
+
+        _rootPath = selected;
+        OnPropertyChanged(nameof(RootPath));
+        RefreshNotesRootsCollection(roots, selected);
+        NotifyNotesListStateChanged();
+        if (reloadTree)
+            RefreshTree();
+        else
+            RefreshMapToCloudNudge();
+    }
+
+    private void RefreshNotesRootsCollection(IReadOnlyList<string> roots, string? selected)
+    {
+        NotesRoots.Clear();
+        IEnumerable<string?> mappingPaths = _syncStore != null
+            ? _syncStore.Load().Select(m => (string?)m.LocalPath)
+            : Enumerable.Empty<string?>();
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        var notInCloud = ShareSheetStrings.NotInCloudYet(lang);
+
+        NotesRootItemViewModel? selectedItem = null;
+        foreach (var root in roots)
+        {
+            var name = Path.GetFileName(root);
+            if (string.IsNullOrEmpty(name)) name = root;
+            var covered = LocalPathCoverage.IsCoveredByAnyMappingRoot(root, mappingPaths);
+            var item = new NotesRootItemViewModel(root, name)
+            {
+                IsSelected = NotesRootSettings.PathsEqual(root, selected),
+                ShowNotInCloudCue = !covered,
+                ToolTip = covered ? root : $"{notInCloud} — {root}"
+            };
+            NotesRoots.Add(item);
+            if (item.IsSelected)
+                selectedItem = item;
+        }
+
+        _selectedNotesRoot = selectedItem;
+        OnPropertyChanged(nameof(SelectedNotesRoot));
+        OnPropertyChanged(nameof(HasConfiguredNotesRoots));
+    }
+
+    private void RefreshNotesRootsCloudCues()
+    {
+        if (NotesRoots.Count == 0) return;
+        IEnumerable<string?> mappingPaths = _syncStore != null
+            ? _syncStore.Load().Select(m => (string?)m.LocalPath)
+            : Enumerable.Empty<string?>();
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        var notInCloud = ShareSheetStrings.NotInCloudYet(lang);
+        foreach (var item in NotesRoots)
+        {
+            var covered = LocalPathCoverage.IsCoveredByAnyMappingRoot(item.Path, mappingPaths);
+            item.ShowNotInCloudCue = !covered;
+            item.ToolTip = covered ? item.Path : $"{notInCloud} — {item.Path}";
+        }
+
+        CommandManager.InvalidateRequerySuggested();
+    }
+
     private void NotifyNotesListStateChanged()
     {
         OnPropertyChanged(nameof(NeedsNotesRoot));
+        OnPropertyChanged(nameof(SelectedNotesRootMissing));
+        OnPropertyChanged(nameof(ShowNotesRootSetup));
         OnPropertyChanged(nameof(IsNotesEmpty));
         OnPropertyChanged(nameof(ShowNotesTree));
+        OnPropertyChanged(nameof(HasConfiguredNotesRoots));
         RefreshMapToCloudNudge();
         CommandManager.InvalidateRequerySuggested();
     }

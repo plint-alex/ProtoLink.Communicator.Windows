@@ -28,7 +28,10 @@ public class NotesViewModelRootStateTests
         var settings = new MemorySettingsService(new AppSettings { NotesRootPath = missing });
         var vm = new NotesViewModel(settings);
 
-        Assert.True(vm.NeedsNotesRoot);
+        // Path is configured (E11 list) but missing on disk — setup CTA, not “no notes yet”.
+        Assert.False(vm.NeedsNotesRoot);
+        Assert.True(vm.SelectedNotesRootMissing);
+        Assert.True(vm.ShowNotesRootSetup);
         Assert.False(vm.IsNotesEmpty);
         Assert.False(vm.ShowNotesTree);
     }

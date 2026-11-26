@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -22,12 +24,14 @@ public class SettingsViewModel : ViewModelBase
     private string _apiBaseAddress;
     private string _publicSiteBaseUrl;
     private string? _notesRootPath;
+    private string? _selectedNotesRootPath;
     private string _theme;
     private string? _uiLanguage;
     private string _apiVersionText = "Loading…";
     private string? _copyMyIdFeedback;
 
     public IReadOnlyList<string> ThemeOptions { get; } = new[] { ThemeManager.Light, ThemeManager.Dark };
+    public ObservableCollection<string> NotesRootPaths { get; } = new();
 
     public SettingsViewModel(ISettingsService settingsService, IAuthService authService, ITokenService tokenService, HttpClient httpClient, ILogger logger)
     {
@@ -39,11 +43,14 @@ public class SettingsViewModel : ViewModelBase
         var settings = _settingsService.LoadSettings();
         _apiBaseAddress = settings.ApiBaseAddress;
         _publicSiteBaseUrl = settings.PublicSiteBaseUrl;
-        _notesRootPath = settings.NotesRootPath;
+        LoadNotesRootsFrom(settings);
         _theme = ThemeManager.Normalize(settings.Theme);
         _uiLanguage = settings.UiLanguage;
 
         SaveCommand = new RelayCommand(_ => SaveSettings());
+        RemoveNotesRootCommand = new RelayCommand(
+            _ => RemoveSelectedNotesRoot(),
+            _ => !string.IsNullOrWhiteSpace(SelectedNotesRootPath));
         LogOffCommand = new RelayCommand(_ => LogOff(), _ => _authService.IsAuthenticated);
         CloseCommand = new RelayCommand(_ => OnCloseRequested?.Invoke());
         RefreshApiVersionCommand = new RelayCommand(_ => _ = LoadApiVersionAsync());
@@ -76,7 +83,37 @@ public class SettingsViewModel : ViewModelBase
 
     public string ApiBaseAddress { get => _apiBaseAddress; set { _apiBaseAddress = value; OnPropertyChanged(); } }
     public string PublicSiteBaseUrl { get => _publicSiteBaseUrl; set { _publicSiteBaseUrl = value; OnPropertyChanged(); } }
-    public string? NotesRootPath { get => _notesRootPath; set { _notesRootPath = value; OnPropertyChanged(); } }
+
+    /// <summary>Legacy/selected Notes root mirror for FolderPicker initial path.</summary>
+    public string? NotesRootPath
+    {
+        get => _notesRootPath;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                _notesRootPath = value;
+                OnPropertyChanged();
+                return;
+            }
+
+            AddNotesRootPath(value);
+        }
+    }
+
+    public string? SelectedNotesRootPath
+    {
+        get => _selectedNotesRootPath;
+        set
+        {
+            if (string.Equals(_selectedNotesRootPath, value, StringComparison.OrdinalIgnoreCase)) return;
+            _selectedNotesRootPath = value;
+            _notesRootPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(NotesRootPath));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
 
     public string Theme
     {
@@ -104,6 +141,7 @@ public class SettingsViewModel : ViewModelBase
     public LoginViewModel LoginViewModel { get; }
     public AddContactViewModel AddContactViewModel { get; }
     public ICommand SaveCommand { get; }
+    public ICommand RemoveNotesRootCommand { get; }
     public ICommand LogOffCommand { get; }
     public ICommand CloseCommand { get; }
     public ICommand RefreshApiVersionCommand { get; }
@@ -152,19 +190,53 @@ public class SettingsViewModel : ViewModelBase
         }
     }
 
+    public void AddNotesRootPath(string path)
+    {
+        if (!NotesRootSettings.TryNormalize(path, out var full)) return;
+        if (!NotesRootPaths.Any(r => string.Equals(r, full, StringComparison.OrdinalIgnoreCase)))
+            NotesRootPaths.Add(full);
+        SelectedNotesRootPath = full;
+    }
+
+    private void RemoveSelectedNotesRoot()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedNotesRootPath)) return;
+        var idx = -1;
+        for (var i = 0; i < NotesRootPaths.Count; i++)
+        {
+            if (string.Equals(NotesRootPaths[i], SelectedNotesRootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                idx = i;
+                break;
+            }
+        }
+
+        if (idx < 0) return;
+        var next = NotesRootSettings.PreferNeighborAfterRemove(NotesRootPaths.ToList(), idx);
+        NotesRootPaths.RemoveAt(idx);
+        SelectedNotesRootPath = next;
+    }
+
+    private void LoadNotesRootsFrom(AppSettings settings)
+    {
+        NotesRootPaths.Clear();
+        foreach (var r in NotesRootSettings.ResolveRoots(settings))
+            NotesRootPaths.Add(r);
+        _selectedNotesRootPath = NotesRootSettings.ResolveSelected(settings, NotesRootPaths.ToList());
+        _notesRootPath = _selectedNotesRootPath;
+        OnPropertyChanged(nameof(SelectedNotesRootPath));
+        OnPropertyChanged(nameof(NotesRootPath));
+    }
+
     private void SaveSettings()
     {
-        // Preserve fields not edited on this page (UiLanguage, LastOpenCloudEntityId).
+        // Preserve fields not edited on this page (UiLanguage, LastOpenCloudEntityId, MessengerChatFolderIds).
         var existing = _settingsService.LoadSettings();
-        _settingsService.SaveSettings(new AppSettings
-        {
-            Theme = Theme,
-            ApiBaseAddress = ApiBaseAddress,
-            PublicSiteBaseUrl = PublicSiteBaseUrl,
-            NotesRootPath = NotesRootPath,
-            UiLanguage = existing.UiLanguage,
-            LastOpenCloudEntityId = existing.LastOpenCloudEntityId
-        });
+        NotesRootSettings.Write(existing, NotesRootPaths, SelectedNotesRootPath);
+        existing.Theme = Theme;
+        existing.ApiBaseAddress = ApiBaseAddress;
+        existing.PublicSiteBaseUrl = PublicSiteBaseUrl;
+        _settingsService.SaveSettings(existing);
         OnSettingsSaved?.Invoke();
         _ = LoadApiVersionAsync();
     }

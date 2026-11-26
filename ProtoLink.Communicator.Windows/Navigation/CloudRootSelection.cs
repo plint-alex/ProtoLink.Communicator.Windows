@@ -178,4 +178,17 @@ public static class CloudRootSelection
             return false;
         }
     }
+
+    /// <summary>True when localPath equals any configured Notes root (E11 multi-root).</summary>
+    public static bool IsNotesRootPath(string? localPath, IEnumerable<string?>? notesRootPaths)
+    {
+        if (notesRootPaths == null) return false;
+        foreach (var root in notesRootPaths)
+        {
+            if (IsNotesRootPath(localPath, root))
+                return true;
+        }
+
+        return false;
+    }
 }

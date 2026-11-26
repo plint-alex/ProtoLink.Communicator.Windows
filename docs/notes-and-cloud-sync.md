@@ -100,7 +100,7 @@ Messenger uses the same SignalR hub for inbound commands (`message_sent`, etc.) 
 ## Related code
 
 - Windows Notes: `NotesViewModel`, `NotesView` + `NotesIndexFileWatcher`
-- Windows Notes root: `AppSettings.NotesRootPath`. When unset or missing, Notes shows **Choose a Notes folder** (not “No notes yet”); Settings → Notes root folder Browse uses `FolderPicker` (`OpenFolderDialog`). Browse/edit stay offline on the local tree. When the Notes root is set but **not** under any Cloud mapping, Notes shows a one-line nudge to the same E6 wizard (no sync badges).
+- Windows Notes roots (E11): ordered `AppSettings.NotesRootPaths` + `LastSelectedNotesRootPath` (legacy single `NotesRootPath` migrates to a one-item list on load/save). Notes chrome Add/Remove/Select; Remove drops the path from the list only (disk kept). Per-root muted **Not in Cloud yet** cue when outside any mapping (`LocalPathCoverage`); Map opens the existing E6 wizard. Spec: Agents `docs/features/entity-navigation/notes-multi-folder-roots`. When no roots, Notes shows **Choose a Notes folder** (not “No notes yet”). Browse/edit stay offline for every root without login.
 - Windows Cloud: `CloudMappedSyncCoordinator`, `SyncEngine.PushLocalChangesAsync` / `ReconcileAllAsync`
 - Android Notes: `MainViewModel` persist + disk poller → `requestLocalPush`
 - Android Cloud: `:sync` `SyncEngine`, `requestFullSync` / `requestLocalPush`, Settings force actions

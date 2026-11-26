@@ -110,9 +110,10 @@ public partial class CloudViewModel
             code = CloudEntityCodes.CloudRoot;
         if (CloudRootSelection.ShouldRefuseMapping(code, cloudFolderId, _knownCloudRootIds))
         {
-            var lang = _settingsService.LoadSettings().UiLanguage;
-            var notesRoot = _settingsService.LoadSettings().NotesRootPath;
-            var isNotes = CloudRootSelection.IsNotesRootPath(localPath, notesRoot);
+            var settings = _settingsService.LoadSettings();
+            var lang = settings.UiLanguage;
+            var notesRoots = NotesRootSettings.ResolveRoots(settings);
+            var isNotes = CloudRootSelection.IsNotesRootPath(localPath, notesRoots);
             System.Windows.MessageBox.Show(
                 isNotes
                     ? MapLocalFolderStrings.RefuseNotesRootOntoCloudRoot(lang)
