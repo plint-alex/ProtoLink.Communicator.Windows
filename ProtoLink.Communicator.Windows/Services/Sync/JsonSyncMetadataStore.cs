@@ -336,6 +336,41 @@ public sealed class JsonSyncMetadataStore
     }
 
     /// <summary>
+    /// Drop meta rows under <paramref name="mappingId"/> whose relative path equals
+    /// <paramref name="relativePathPrefix"/> or is a descendant. Returns removed RemoteIds
+    /// (AT-CFD-6: covering parent map must not keep twin rows for a deleted dedicated mirror).
+    /// </summary>
+    public IReadOnlyList<Guid> RemoveByRelativePathPrefix(string mappingId, string relativePathPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(mappingId)) return Array.Empty<Guid>();
+        var prefix = SyncPathUtil.Normalize(relativePathPrefix ?? "").TrimEnd('/');
+        if (string.IsNullOrEmpty(prefix)) return Array.Empty<Guid>();
+        EnsureLoaded();
+        lock (_gate)
+        {
+            var removed = new List<Guid>();
+            var keys = new List<string>();
+            foreach (var kv in _items)
+            {
+                if (!string.Equals(kv.Value.MappingId, mappingId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var path = SyncPathUtil.Normalize(kv.Value.RelativePath);
+                if (path != prefix && !path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                keys.Add(kv.Key);
+                if (kv.Value.RemoteId != Guid.Empty)
+                    removed.Add(kv.Value.RemoteId);
+            }
+
+            foreach (var k in keys)
+                _items.Remove(k);
+            if (keys.Count > 0)
+                MarkDirtyOrSaveUnlocked();
+            return removed;
+        }
+    }
+
+    /// <summary>
     /// Drop sync-meta rows whose <see cref="SyncItemMeta.RemoteId"/> is in
     /// <paramref name="remoteIds"/>. Used after Cloud delete so Soft Ready cannot resurrect
     /// soft-hidden entities when GetEntities times out (E10 / AT-CFD Win regress).

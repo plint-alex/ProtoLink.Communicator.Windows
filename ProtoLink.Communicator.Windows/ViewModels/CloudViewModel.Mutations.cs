@@ -161,13 +161,16 @@ public partial class CloudViewModel
 
             StatusText = "Deleting…";
             // Disk may have dedicated maps written after start (AT-CFD inject / heal) — merge before mirror resolve.
-            CloudSyncMappingsMerge.AddMissing(SyncMappings, _syncStore.Load());
+            CloudSyncMappingsMerge.UnionFromStore(SyncMappings, _syncStore.Load());
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
             var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
             var deletedIds = new HashSet<Guid>();
             _mappedSync.SuspendMappedRootWatchers();
             try
             {
+                // Release Sync file handles under parent maps before Directory.Delete (AT-CFD-6).
+                await _mappedSync.CancelAndWaitIdleAsync(TimeSpan.FromSeconds(8));
+
                 if (item.IsFolder)
                 {
                     // Leaf-first recursive DeleteEntity (defense-in-depth vs Api cascade).
@@ -204,8 +207,20 @@ public partial class CloudViewModel
                     _deletedRemoteIds.Add(id);
                 PurgeDeletedFromFolderTree(deletedIds);
 
+                // Covering parent maps (MyNotesFolder) may hold twin meta for the same local tree —
+                // drop those rows so Soft Ready / Compare cannot treat the path as still synced.
+                if (!string.IsNullOrWhiteSpace(localMirror))
+                    PurgeCoveringParentMetaForMirror(localMirror);
+
                 // NFR-SYNC-1: mirror IO soft-fails; Cloud tree already deleted.
-                CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);
+                // Serialize with Sync disk ops; retries inside DeleteLocalMirror.
+                await MappedFolderIoGate.RunSyncAsync(() =>
+                    CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror));
+
+                // Prevent parent-map SeedInventory / ForcePull from rematerializing the tree.
+                if (!string.IsNullOrWhiteSpace(localMirror))
+                    Services.Sync.DeletedLocalMirrorTombstones.Remember(localMirror);
+
                 if (wasMappedRoot)
                     RemoveMappingQuiet(item.Id);
 
@@ -224,6 +239,44 @@ public partial class CloudViewModel
         catch (Exception ex)
         {
             ReportCaughtException(ex);
+        }
+    }
+
+    /// <summary>
+    /// When a dedicated map path sits under another mapping (MyNotesFolder), drop that relative
+    /// prefix from sync-meta so Soft Ready / Compare cannot keep the deleted tree "alive".
+    /// </summary>
+    private void PurgeCoveringParentMetaForMirror(string localMirror)
+    {
+        string fullMirror;
+        try { fullMirror = Path.GetFullPath(localMirror); }
+        catch { fullMirror = localMirror; }
+
+        foreach (var map in SyncMappings.ToList())
+        {
+            if (string.IsNullOrWhiteSpace(map.LocalPath)) continue;
+            string fullRoot;
+            try { fullRoot = Path.GetFullPath(map.LocalPath); }
+            catch { continue; }
+
+            if (string.Equals(fullRoot, fullMirror, StringComparison.OrdinalIgnoreCase))
+            {
+                _listingMetaStore.ClearMapping(map.CloudFolderId.ToString("N"));
+                continue;
+            }
+
+            var rootPrefix = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                             + Path.DirectorySeparatorChar;
+            if (!fullMirror.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var rel = Path.GetRelativePath(fullRoot, fullMirror).Replace('\\', '/');
+            if (string.IsNullOrWhiteSpace(rel) || rel.StartsWith("..", StringComparison.Ordinal))
+                continue;
+
+            var twinIds = _listingMetaStore.RemoveByRelativePathPrefix(map.CloudFolderId.ToString("N"), rel);
+            foreach (var id in twinIds)
+                _deletedRemoteIds.Add(id);
         }
     }
 

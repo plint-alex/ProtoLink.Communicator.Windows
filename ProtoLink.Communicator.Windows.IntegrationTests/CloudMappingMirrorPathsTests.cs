@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Services.Sync;
 using ProtoLink.Communicator.Windows.ViewModels;
 using Xunit;
 
@@ -9,6 +10,11 @@ namespace ProtoLink.Communicator.Windows.IntegrationTests;
 [Trait("Category", "Offline")]
 public class CloudMappingMirrorPathsTests
 {
+    public CloudMappingMirrorPathsTests()
+    {
+        DeletedLocalMirrorTombstones.ClearForTests();
+    }
+
     [Fact]
     public void AddMissing_MergesStoreDedicatedMap_WithoutDroppingParent()
     {
@@ -171,5 +177,36 @@ public class CloudMappingMirrorPathsTests
         var path = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, crumbs, mappings);
         Assert.True(CloudMappingMirrorPaths.DeleteLocalMirror(item, path));
         Assert.False(Directory.Exists(localRoot));
+    }
+
+    [Fact]
+    public void UnionFromStore_RefreshesStaleLocalPath_ForExistingId()
+    {
+        var mapId = Guid.NewGuid();
+        var stale = Path.Combine(Path.GetTempPath(), "pl-cfd-stale-" + Guid.NewGuid().ToString("N"));
+        var fresh = Path.Combine(Path.GetTempPath(), "pl-cfd-fresh-" + Guid.NewGuid().ToString("N"));
+        var live = new ObservableCollection<CloudSyncMapping>
+        {
+            new() { CloudFolderId = mapId, LocalPath = stale, CloudFolderName = "Old" }
+        };
+        var store = new[]
+        {
+            new CloudSyncMapping { CloudFolderId = mapId, LocalPath = fresh, CloudFolderName = "AT-CFD-map" }
+        };
+
+        Assert.Equal(1, CloudSyncMappingsMerge.UnionFromStore(live, store));
+        Assert.Single(live);
+        Assert.Equal(fresh, live[0].LocalPath);
+        Assert.Equal("AT-CFD-map", live[0].CloudFolderName);
+    }
+
+    [Fact]
+    public void DeletedLocalMirrorTombstones_BlocksDescendantPaths()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-cfd-tomb-" + Guid.NewGuid().ToString("N"));
+        DeletedLocalMirrorTombstones.Remember(root);
+        Assert.True(DeletedLocalMirrorTombstones.IsUnderTombstone(root));
+        Assert.True(DeletedLocalMirrorTombstones.IsUnderTombstone(Path.Combine(root, "nested", "a.txt")));
+        Assert.False(DeletedLocalMirrorTombstones.IsUnderTombstone(Path.Combine(Path.GetTempPath(), "other")));
     }
 }

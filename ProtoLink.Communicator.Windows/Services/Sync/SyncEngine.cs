@@ -356,6 +356,8 @@ public sealed partial class SyncEngine
                 loc.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             if (loc.Entry.IsFolder)
             {
+                if (DeletedLocalMirrorTombstones.IsUnderTombstone(full))
+                    continue;
                 try { Directory.CreateDirectory(full); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -944,6 +946,7 @@ public sealed partial class SyncEngine
                 {
                     if (!cross.Any(e => e.MappingId == mapping.Id && e.Entry.Id == add.Remote.Id)) break;
                     var full = ToFull(mapping.LocalRootPath, add.RelativePath);
+                    if (DeletedLocalMirrorTombstones.IsUnderTombstone(full)) break;
                     try
                     {
                         if (add.Remote.IsFolder)

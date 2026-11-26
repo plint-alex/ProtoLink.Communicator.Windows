@@ -182,6 +182,31 @@ public sealed class CloudMappedSyncCoordinator
             Interlocked.Exchange(ref _cloudMutationSuspend, 0);
     }
 
+    /// <summary>
+    /// Cancel in-flight exclusive Sync/AutoPush and wait until the lane is free so
+    /// <c>DeleteLocalMirror</c> is not blocked by open file handles (AT-CFD-6 localGone).
+    /// </summary>
+    public async Task CancelAndWaitIdleAsync(TimeSpan timeout)
+    {
+        CancelExclusiveWork();
+        var deadline = DateTime.UtcNow + (timeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(5) : timeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            CancelExclusiveWork();
+            if (Volatile.Read(ref _syncActive) == 0
+                && await _syncMutex.WaitAsync(0).ConfigureAwait(false))
+            {
+                _syncMutex.Release();
+                return;
+            }
+
+            await Task.Delay(40).ConfigureAwait(false);
+        }
+
+        // Best-effort: proceed even if Sync is sticky — DeleteLocalMirror retries soft-fail.
+        CancelExclusiveWork();
+    }
+
     public void RestartFileWatchers() { }
 
     public Task RunFolderSynchronizeAsync(Guid folderId, string localPath) =>

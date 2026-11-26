@@ -347,6 +347,9 @@ public sealed partial class SyncEngine
         var path = SyncPathUtil.Normalize(loc.RelativePath);
         lock (remotePaths) remotePaths.Add(path);
         var full = ToFull(mapping.LocalRootPath, path);
+        // Dedicated map Delete tombstone — do not rematerialize under parent maps (AT-CFD-6).
+        if (DeletedLocalMirrorTombstones.IsUnderTombstone(full))
+            return 0;
 
         if (loc.Entry.IsFolder)
         {

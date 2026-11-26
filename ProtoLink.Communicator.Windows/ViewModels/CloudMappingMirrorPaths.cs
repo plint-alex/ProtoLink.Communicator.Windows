@@ -107,31 +107,60 @@ public static class CloudMappingMirrorPaths
     /// <summary>
     /// Removes the local mirror path when present. Missing path is a no-op.
     /// NFR-SYNC-1: IO failures soft-fail (log + return false) so Cloud delete is not aborted.
+    /// Retries briefly — Sync may still hold shared handles under a parent map (AT-CFD-6).
     /// </summary>
     /// <returns>True when nothing to do or delete succeeded; false on soft-failed IO.</returns>
-    public static bool DeleteLocalMirror(CloudItemViewModel item, string? fullPath)
+    public static bool DeleteLocalMirror(CloudItemViewModel item, string? fullPath, int attempts = 5)
     {
         if (string.IsNullOrEmpty(fullPath)) return true;
-        try
+        if (attempts < 1) attempts = 1;
+        Exception? last = null;
+        for (var i = 0; i < attempts; i++)
         {
-            if (item.IsFolder)
+            try
             {
-                if (!Directory.Exists(fullPath)) return true;
-                Directory.Delete(fullPath, recursive: true);
-            }
-            else
-            {
-                if (!File.Exists(fullPath)) return true;
-                File.Delete(fullPath);
-            }
+                if (item.IsFolder)
+                {
+                    if (!Directory.Exists(fullPath)) return true;
+                    ClearReadOnlyRecursive(fullPath);
+                    Directory.Delete(fullPath, recursive: true);
+                }
+                else
+                {
+                    if (!File.Exists(fullPath)) return true;
+                    var fi = new FileInfo(fullPath);
+                    if (fi.Exists && fi.IsReadOnly) fi.IsReadOnly = false;
+                    File.Delete(fullPath);
+                }
 
-            return true;
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                last = ex;
+                if (i < attempts - 1)
+                    System.Threading.Thread.Sleep(40 * (i + 1));
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+
+        System.Diagnostics.Debug.WriteLine(
+            $"DeleteLocalMirror soft-fail: {last?.GetType().Name}: {last?.Message} path={fullPath}");
+        return false;
+    }
+
+    private static void ClearReadOnlyRecursive(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"DeleteLocalMirror soft-fail: {ex.GetType().Name}: {ex.Message} path={fullPath}");
-            return false;
+            try
+            {
+                var fi = new FileInfo(file);
+                if (fi.IsReadOnly) fi.IsReadOnly = false;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort; Directory.Delete will soft-fail if still locked.
+            }
         }
     }
 }
