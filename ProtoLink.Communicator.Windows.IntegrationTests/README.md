@@ -20,6 +20,7 @@ dotnet test ProtoLink.Communicator.Windows.IntegrationTests --filter Category=Of
 | `NoteRemoteIdResolverTests` | AT-N5: mapped path → RemoteId; outside → null; SyncPathUtil case/separators |
 | `NotesViewModelCopyIdTests` | Notes tree Copy id: TryResolveRemoteId via INoteRemoteIdResolver (null when unsynced) |
 | `CloudCopyIdTests` | Cloud Copy id: FormatEntityIdForClipboard Guid D + Copy id labels; virtual hubs flagged |
+| `MessengerCopyIdTests` | M13 message bubble Copy id: CopyIdLabel EN/RU ≠ contact label; CanExecute Empty/date/lasting gate |
 | `WindowsExplorerTests` | Notes Open in Explorer: `/select,"path"` args; missing path returns false |
 | `EntityLinksTests` | AT-C4 / AT-X1: `{base}/{id:D}`, `?lang=` only when UI language set |
 | `CloudFilePreviewTests` | AT-C2: extension → preview kind; local mirror pick |

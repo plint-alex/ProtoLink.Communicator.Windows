@@ -67,6 +67,9 @@ public partial class MessengerViewModel : ViewModelBase
         CopyContactIdCommand = new RelayCommand(
             p => CopyContactId(ResolveContactForCopy(p)),
             p => ShareAccountStrings.FormatUserIdForClipboard(ResolveContactForCopy(p)?.Id ?? Guid.Empty) != null);
+        CopyIdCommand = new RelayCommand(
+            p => CopyMessageId(p as MessageViewModel),
+            p => CanCopyMessageId(p as MessageViewModel));
         OpenContactInformationCommand = new RelayCommand(
             p => OpenContactInformation(ResolveContactForCopy(p)),
             p => TryBuildContactInformationUrl(ResolveContactForCopy(p)) != null);
@@ -108,6 +111,8 @@ public partial class MessengerViewModel : ViewModelBase
     public string ChatHeaderTitle => SelectedContact?.Name ?? "Select a chat";
 
     public string CopyContactIdLabel => ShareAccountStrings.CopyContactIdLabel(_uiLanguage);
+    /// <summary>Message bubble menu — same wording as Notes/Cloud Copy id (not Copy contact id).</summary>
+    public string CopyIdLabel => ShareAccountStrings.CopyIdLabel(_uiLanguage);
     public string ContactInformationLabel => ShareAccountStrings.ContactInformationLabel(_uiLanguage);
 
     /// <summary>Brief clipboard feedback (Copied); cleared when id unresolved or after delay.</summary>
@@ -268,6 +273,8 @@ public partial class MessengerViewModel : ViewModelBase
     public ICommand BackToContactsCommand { get; }
     /// <summary>Parameter: <see cref="Contact"/> from list context menu, or null → selected chat.</summary>
     public ICommand CopyContactIdCommand { get; }
+    /// <summary>Parameter: lasting <see cref="MessageViewModel"/> from bubble ContextMenu (M13).</summary>
+    public ICommand CopyIdCommand { get; }
     /// <summary>Parameter: <see cref="Contact"/> from list context menu, or null → selected chat.</summary>
     public ICommand OpenContactInformationCommand { get; }
 
@@ -299,7 +306,35 @@ public partial class MessengerViewModel : ViewModelBase
         {
             System.Windows.Clipboard.SetText(text);
             StatusText = ShareAccountStrings.CopiedLabel(_uiLanguage);
-            _ = ClearCopyContactIdFeedbackAsync();
+            _ = ClearCopiedFeedbackAsync();
+        }
+        catch
+        {
+            StatusText = null;
+        }
+    }
+
+    /// <summary>True when bubble has a lasting message EntityId (not date chip / optimistic Empty).</summary>
+    public static bool CanCopyMessageId(MessageViewModel? message) =>
+        message is { IsDateSeparator: false }
+        && ShareAccountStrings.FormatEntityIdForClipboard(message.EntityId) != null;
+
+    private void CopyMessageId(MessageViewModel? message)
+    {
+        if (!CanCopyMessageId(message))
+        {
+            StatusText = null;
+            return;
+        }
+
+        var text = ShareAccountStrings.FormatEntityIdForClipboard(message!.EntityId);
+        if (text == null) return;
+
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            StatusText = ShareAccountStrings.CopiedLabel(_uiLanguage);
+            _ = ClearCopiedFeedbackAsync();
         }
         catch
         {
@@ -321,7 +356,7 @@ public partial class MessengerViewModel : ViewModelBase
         }
     }
 
-    private async Task ClearCopyContactIdFeedbackAsync()
+    private async Task ClearCopiedFeedbackAsync()
     {
         await Task.Delay(2000);
         if (StatusText == ShareAccountStrings.CopiedLabel(_uiLanguage))

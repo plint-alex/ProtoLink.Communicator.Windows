@@ -245,8 +245,9 @@
                                                Foreground="{DynamicResource ChatDateChipForegroundBrush}"/>
                                 </Border>
 
-                                <!-- Message bubble -->
-                                <Grid Margin="4,2" MaxWidth="520">
+                                <!-- Message bubble (M13 Copy id ContextMenu; Tag = MessengerViewModel) -->
+                                <Grid Margin="4,2" MaxWidth="520"
+                                      Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}">
                                     <Grid.Style>
                                         <Style TargetType="Grid">
                                             <Setter Property="HorizontalAlignment" Value="Left"/>
@@ -262,6 +263,14 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Grid.Style>
+                                    <Grid.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="{Binding PlacementTarget.Tag.CopyIdLabel, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      Command="{Binding PlacementTarget.Tag.CopyIdCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                      AutomationProperties.Name="Copy id"/>
+                                        </ContextMenu>
+                                    </Grid.ContextMenu>
                                     <Border CornerRadius="12" Padding="10,8">
                                         <Border.Style>
                                             <Style TargetType="Border">
