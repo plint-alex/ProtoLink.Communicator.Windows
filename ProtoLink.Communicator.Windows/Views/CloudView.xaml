@@ -187,7 +187,9 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Offline / status banners (UX Pattern 5; replaces permanent status bar) -->
+                <!-- Offline / status banners (UX Pattern 5): reserved status row — quiet Ready stays
+                     visible so Grid.Row=2 listing does not jump idle↔busy (approach A). Network strip
+                     swaps with status when offline; Force progress still beats network. -->
                 <StackPanel Grid.Row="1">
                     <Border Padding="12,8" Background="{DynamicResource AccentSoftBrush}"
                             BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"

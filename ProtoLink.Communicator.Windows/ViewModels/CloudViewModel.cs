@@ -320,13 +320,14 @@ public partial class CloudViewModel : ViewModelBase
     /// Hidden while a Force lock-wait / download status is active so UIA and the user still see
     /// Force progress (tester FAIL 1.0.85 — network banner masked Waiting for sync lock…).
     /// </remarks>
-    public bool ShowNetworkBanner => _showNetworkBanner && !IsForceProgressStatus(_statusText);
+    public bool ShowNetworkBanner => ComputeShowNetworkBanner(_showNetworkBanner, _statusText);
 
-    /// <summary>Transient sync/copy/error line (replaces the permanent status bar).</summary>
-    public bool ShowStatusBanner =>
-        !string.IsNullOrWhiteSpace(_statusText)
-        && !string.Equals(_statusText, "Ready", StringComparison.Ordinal)
-        && (!_showNetworkBanner || IsForceProgressStatus(_statusText));
+    /// <summary>
+    /// Reserved status chrome (approach A): stays visible for Ready/idle/empty so the list pane
+    /// does not jump when status flips idle↔busy. Hidden only when the network banner owns the
+    /// strip (unless Force progress wins — tester FAIL 1.0.85–1.0.87).
+    /// </summary>
+    public bool ShowStatusBanner => ComputeShowStatusBanner(_statusText, _showNetworkBanner);
 
     public bool HasErrorDetails => _lastError != null;
 
@@ -805,7 +806,7 @@ public partial class CloudViewModel : ViewModelBase
             PersistListingDiskAsap(folderId, fresh);
             _listedFolderId = folderId;
             ClearNetworkBanner();
-            // Navigate sets Loading even when quiet — clear so ShowStatusBanner hides.
+            // Navigate sets Loading even when quiet — settle to quiet Ready (reserved chrome stays).
             // Never clobber Force lock-wait / Force download… (tester FAIL 1.0.87).
             if (!IsForceProgressStatus(_statusText))
                 StatusText = "Ready";
@@ -1478,4 +1479,15 @@ public partial class CloudViewModel : ViewModelBase
                || status.StartsWith("Force download", StringComparison.OrdinalIgnoreCase)
                || status.StartsWith("Force upload", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Network strip visible only when flagged and Force progress is not owning status.</summary>
+    internal static bool ComputeShowNetworkBanner(bool networkBannerFlag, string? statusText) =>
+        networkBannerFlag && !IsForceProgressStatus(statusText);
+
+    /// <summary>
+    /// Reserved status strip: visible for Ready/idle so layout height stays stable; yields to
+    /// network banner unless Force progress must stay painted.
+    /// </summary>
+    internal static bool ComputeShowStatusBanner(string? statusText, bool networkBannerFlag) =>
+        !networkBannerFlag || IsForceProgressStatus(statusText);
 }
