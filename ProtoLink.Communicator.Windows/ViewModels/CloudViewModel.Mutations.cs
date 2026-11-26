@@ -164,39 +164,26 @@ public partial class CloudViewModel
             CloudSyncMappingsMerge.UnionFromStore(SyncMappings, _syncStore.Load());
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
             var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
+            // Known local subtree ids (UI tree / Soft Ready meta / listing) — purge after
+            // single-root DeleteEntity; do not N+1 GetEntities+DeleteEntity (Api cascade).
             var deletedIds = new HashSet<Guid>();
+            if (item.IsFolder)
+                CollectKnownLocalSubtreeIds(item.Id, deletedIds);
+            else
+                deletedIds.Add(item.Id);
+
             _mappedSync.SuspendMappedRootWatchers();
             try
             {
                 // Release Sync file handles under parent maps before Directory.Delete (AT-CFD-6).
                 await _mappedSync.CancelAndWaitIdleAsync(TimeSpan.FromSeconds(8));
 
-                if (item.IsFolder)
-                {
-                    // Leaf-first recursive DeleteEntity (defense-in-depth vs Api cascade).
-                    // Fail-closed: GetEntities throw/null aborts — never soft-hide parent alone.
-                    await CloudFolderDelete.DeleteFolderRecursiveAsync(
-                        item.Id,
-                        async id =>
-                        {
-                            var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false);
-                            if (kids == null)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Cloud folder delete listing failed under {id:D}; aborting to avoid promote.");
-                            }
-                            return kids
-                                .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code, c.TypeEntityId))
-                                .ToList();
-                        },
-                        id => _api.DeleteEntityAsync(id),
-                        deletedIds);
-                }
-                else
-                {
-                    await _api.DeleteEntityAsync(item.Id);
-                    deletedIds.Add(item.Id);
-                }
+                // One DeleteEntity on root — Api cascade soft-hides Cloud subtree (prod ≥1.0.92).
+                // Fail-closed: if this throws, do not pretend gone / purge as success.
+                await CloudFolderDelete.DeleteSingleRootAsync(
+                    item.Id,
+                    id => _api.DeleteEntityAsync(id),
+                    deletedIds);
 
                 // Soft Ready paints sync-meta children when GetEntities times out — purge so
                 // deleted ids cannot resurrect after a successful Cloud soft-hide (E10 regress).
@@ -240,6 +227,50 @@ public partial class CloudViewModel
         {
             ReportCaughtException(ex);
         }
+    }
+
+    /// <summary>
+    /// Gather folder/file ids under <paramref name="rootId"/> from local UI tree cache,
+    /// Soft Ready sync-meta, and the current listing — no GetEntities. Used to purge after
+    /// single-root DeleteEntity (Api cascade owns the remote subtree).
+    /// </summary>
+    private void CollectKnownLocalSubtreeIds(Guid rootId, HashSet<Guid> into)
+    {
+        CloudFolderDelete.CollectKnownSubtreeIds(
+            rootId,
+            id =>
+            {
+                var list = new List<CloudFolderDelete.ChildRef>();
+                if (_folderTreeChildren.TryGetValue(id, out var nodes) && nodes != null)
+                {
+                    foreach (var n in nodes)
+                        list.Add(new CloudFolderDelete.ChildRef(
+                            n.Id, CloudEntityCodes.CloudFolder, CloudEntityCodes.TypeCloudFolderId));
+                }
+
+                foreach (var m in _listingMetaStore.FindChildrenByParentRemoteId(id))
+                {
+                    if (m.RemoteId == Guid.Empty) continue;
+                    list.Add(new CloudFolderDelete.ChildRef(
+                        m.RemoteId,
+                        m.IsFolder ? CloudEntityCodes.CloudFolder : CloudEntityCodes.CloudFile,
+                        m.IsFolder ? CloudEntityCodes.TypeCloudFolderId : CloudEntityCodes.TypeCloudFileId));
+                }
+
+                if (ListedFolderId == id)
+                {
+                    foreach (var row in Items)
+                    {
+                        list.Add(new CloudFolderDelete.ChildRef(
+                            row.Id,
+                            row.IsFolder ? CloudEntityCodes.CloudFolder : CloudEntityCodes.CloudFile,
+                            row.IsFolder ? CloudEntityCodes.TypeCloudFolderId : CloudEntityCodes.TypeCloudFileId));
+                    }
+                }
+
+                return list;
+            },
+            into);
     }
 
     /// <summary>

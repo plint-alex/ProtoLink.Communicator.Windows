@@ -5,10 +5,54 @@ using Xunit;
 
 namespace ProtoLink.Communicator.Windows.IntegrationTests;
 
-/// <summary>E10 / AT-CFD offline: recursive delete order + sync-meta purge so Soft Ready cannot resurrect.</summary>
+/// <summary>E10 / AT-CFD offline: single-root delete + known-subtree collect + recursive test helper + Soft Ready purge.</summary>
 [Trait("Category", "Offline")]
 public class CloudFolderDeleteTests
 {
+    [Fact]
+    public async Task DeleteSingleRoot_CallsDeleteEntityOnce()
+    {
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var order = new List<Guid>();
+        var deleted = new HashSet<Guid>();
+        await CloudFolderDelete.DeleteSingleRootAsync(
+            root,
+            id =>
+            {
+                order.Add(id);
+                return Task.CompletedTask;
+            },
+            deleted);
+        Assert.Equal(new[] { root }, order);
+        Assert.Equal(new HashSet<Guid> { root }, deleted);
+    }
+
+    [Fact]
+    public void CollectKnownSubtreeIds_WalksLocalCacheOnly()
+    {
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var file1 = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var sub = Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        var file2 = Guid.Parse("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        var tree = new Dictionary<Guid, List<CloudFolderDelete.ChildRef>>
+        {
+            [root] =
+            [
+                new(file1, CloudEntityCodes.CloudFile),
+                new(sub, CloudEntityCodes.CloudFolder),
+            ],
+            [sub] = [new(file2, CloudEntityCodes.CloudFile)]
+        };
+
+        var into = new HashSet<Guid>();
+        CloudFolderDelete.CollectKnownSubtreeIds(
+            root,
+            id => tree.TryGetValue(id, out var kids) ? kids : Array.Empty<CloudFolderDelete.ChildRef>(),
+            into);
+
+        Assert.Equal(new HashSet<Guid> { root, file1, sub, file2 }, into);
+    }
+
     [Fact]
     public async Task DeleteFolderRecursive_DepthFirst_FilesThenFoldersThenSelf()
     {

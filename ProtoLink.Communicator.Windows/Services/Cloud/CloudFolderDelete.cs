@@ -3,19 +3,80 @@ using ProtoLink.Communicator.Windows.Core;
 namespace ProtoLink.Communicator.Windows.Services;
 
 /// <summary>
-/// E10 Cloud folder delete — leaf-first recursive DeleteEntity (defense-in-depth while/after
-/// Api CloudFolder cascade). Children must never promote to the deleted folder’s level.
-/// Mirrors Android <c>CloudFolderDelete.deleteFolderRecursive</c>.
+/// E10 Cloud folder delete — production path is <strong>single-root</strong>
+/// <c>DeleteEntity</c> (Api cascade soft-hides the Cloud subtree). Local Soft Ready /
+/// listing meta / tombstones are purged from <em>known UI/cache</em> ids — never via
+/// extra DeleteEntity RTTs. Recursive helper remains for offline unit tests only.
+/// Mirrors Android <c>CloudFolderDelete</c>.
 /// </summary>
 public static class CloudFolderDelete
 {
     public readonly record struct ChildRef(Guid Id, string? Code, Guid? TypeEntityId = null);
 
     /// <summary>
-    /// Depth-first: delete file children, recurse folder children, then delete
-    /// <paramref name="folderId"/>. Skips self-id rows and non cloud folder/file rows.
-    /// Fail-closed: if <paramref name="listChildren"/> throws or returns null, aborts
-    /// without deleting <paramref name="folderId"/> (do not soft-hide parent alone → promote).
+    /// Production delete: one DeleteEntity on <paramref name="rootId"/>; Api cascade
+    /// owns the Cloud subtree. Adds <paramref name="rootId"/> to <paramref name="deletedIds"/>.
+    /// Fail-closed: if delete throws, caller must not pretend gone / soft-hide locally alone.
+    /// </summary>
+    public static async Task DeleteSingleRootAsync(
+        Guid rootId,
+        Func<Guid, Task> deleteEntity,
+        ICollection<Guid>? deletedIds = null)
+    {
+        await deleteEntity(rootId).ConfigureAwait(false);
+        deletedIds?.Add(rootId);
+    }
+
+    /// <summary>
+    /// BFS over <em>local</em> known children (folder-tree cache / sync-meta / listing) —
+    /// no HTTP. Collects folder + file ids under <paramref name="rootId"/> into
+    /// <paramref name="into"/> (includes root). Used after single-root DeleteEntity to
+    /// purge Soft Ready / disk cache / tombstones without re-walking the Api.
+    /// </summary>
+    public static void CollectKnownSubtreeIds(
+        Guid rootId,
+        Func<Guid, IEnumerable<ChildRef>> knownChildren,
+        ICollection<Guid> into)
+    {
+        ArgumentNullException.ThrowIfNull(knownChildren);
+        ArgumentNullException.ThrowIfNull(into);
+
+        var seen = new HashSet<Guid>();
+        var queue = new Queue<Guid>();
+
+        void Remember(Guid id)
+        {
+            if (!seen.Add(id)) return;
+            into.Add(id);
+        }
+
+        Remember(rootId);
+        queue.Enqueue(rootId);
+
+        while (queue.Count > 0)
+        {
+            var parent = queue.Dequeue();
+            IEnumerable<ChildRef> kids;
+            try { kids = knownChildren(parent) ?? Array.Empty<ChildRef>(); }
+            catch { continue; }
+
+            foreach (var c in kids)
+            {
+                if (c.Id == Guid.Empty || c.Id == parent)
+                    continue;
+                if (!seen.Add(c.Id))
+                    continue;
+                into.Add(c.Id);
+                if (CloudEntityClassify.IsFolder(c.TypeEntityId, c.Code))
+                    queue.Enqueue(c.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Offline unit-test helper only — leaf-first recursive DeleteEntity.
+    /// <strong>Do not</strong> call from UI delete or Sync ApplyLocal (Api cascade +
+    /// <see cref="DeleteSingleRootAsync"/> is the production path; N+1 recurse is too slow).
     /// </summary>
     public static async Task DeleteFolderRecursiveAsync(
         Guid folderId,

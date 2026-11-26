@@ -811,8 +811,8 @@ public sealed partial class SyncEngine
             }
         }
 
-        // Deepest-first so child meta rows usually go first; folder Removed still uses
-        // leaf-first cascade so incomplete meta cannot DeleteEntity(parent) alone → promote.
+        // Deepest-first so child meta rows usually go first; folder Removed uses single-root
+        // DeleteEntity (Api cascade) + local sync-meta ids for alreadyDeleted tracking.
         var alreadyDeleted = new HashSet<Guid>();
         foreach (var rm in changes.OfType<LocalChange.Removed>().OrderByDescending(x => x.Meta.RelativePath.Count(c => c == '/')))
         {
@@ -826,23 +826,23 @@ public sealed partial class SyncEngine
 
             if (rm.Meta.IsFolder)
             {
-                var cascadeDeleted = new HashSet<Guid>();
-                await CloudFolderDelete.DeleteFolderRecursiveAsync(
-                    rm.Meta.RemoteId,
-                    async id =>
+                // Known local sync-meta descendants (no GetEntities walk) + one DeleteEntity —
+                // Api cascade owns the Cloud subtree (prod ≥1.0.92). Avoid N+1 re-cascade.
+                var cascadeDeleted = new HashSet<Guid> { rm.Meta.RemoteId };
+                var prefix = SyncPathUtil.Normalize(rm.Meta.RelativePath ?? "").TrimEnd('/');
+                if (!string.IsNullOrEmpty(prefix))
+                {
+                    foreach (var row in _store.GetAll(mapping.Id))
                     {
-                        var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false)
-                            .ConfigureAwait(false);
-                        // Fail-closed: null listing must not soft-hide parent alone.
-                        if (kids == null)
-                        {
-                            throw new InvalidOperationException(
-                                $"Cloud delete listing failed under {id:D}; aborting Sync folder delete to avoid promote.");
-                        }
-                        return kids
-                            .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code, c.TypeEntityId))
-                            .ToList();
-                    },
+                        if (row.RemoteId == Guid.Empty) continue;
+                        var path = SyncPathUtil.Normalize(row.RelativePath ?? "");
+                        if (path == prefix || path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+                            cascadeDeleted.Add(row.RemoteId);
+                    }
+                }
+
+                await CloudFolderDelete.DeleteSingleRootAsync(
+                    rm.Meta.RemoteId,
                     id => _api.DeleteEntityAsync(id),
                     cascadeDeleted).ConfigureAwait(false);
                 foreach (var id in cascadeDeleted)
