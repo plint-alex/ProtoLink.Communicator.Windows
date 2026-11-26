@@ -76,6 +76,9 @@ public class NotesViewModelRootStateTests
             PublicSiteBaseUrl = s.PublicSiteBaseUrl,
             UiLanguage = s.UiLanguage,
             NotesRootPath = s.NotesRootPath,
+            NotesRootPaths = s.NotesRootPaths?.ToList() ?? new List<string>(),
+            LastSelectedNotesRootPath = s.LastSelectedNotesRootPath,
+            LastOpenNotesPagePath = s.LastOpenNotesPagePath,
             LastOpenCloudEntityId = s.LastOpenCloudEntityId
         };
     }

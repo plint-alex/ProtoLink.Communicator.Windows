@@ -67,7 +67,7 @@ public class NotesViewModelMultiRootTests
     }
 
     [Fact]
-    public void SelectRoot_PersistsLastSelected_AndClearsOpenPage()
+    public void SelectRoot_PersistsLastSelected_KeepsOpenPage_E11a()
     {
         var a = CreateTempRoot("A");
         var b = CreateTempRoot("B");
@@ -85,10 +85,45 @@ public class NotesViewModelMultiRootTests
 
             vm.SelectNotesRootPath(b);
 
-            Assert.Null(vm.CurrentPagePath);
+            Assert.Equal(pageA, vm.CurrentPagePath);
             Assert.True(NotesRootSettings.PathsEqual(vm.RootPath, b));
             Assert.True(NotesRootSettings.PathsEqual(
                 settings.LoadSettings().LastSelectedNotesRootPath, b));
+        }
+        finally
+        {
+            Wipe(a);
+            Wipe(b);
+        }
+    }
+
+    [Fact]
+    public void StackedTrees_BuildAllRoots_AndPersistLastOpenPage()
+    {
+        var a = CreateTempRoot("StackA");
+        var b = CreateTempRoot("StackB");
+        var pageA = Path.Combine(a, "PageA");
+        var pageB = Path.Combine(b, "PageB");
+        Directory.CreateDirectory(pageA);
+        Directory.CreateDirectory(pageB);
+        File.WriteAllText(Path.Combine(pageA, "index.html"), "<h1>A</h1>");
+        File.WriteAllText(Path.Combine(pageB, "index.html"), "<h1>B</h1>");
+        try
+        {
+            var settings = new MemorySettingsService(new AppSettings());
+            var vm = new NotesViewModel(settings);
+            vm.AddNotesRootPath(a);
+            vm.AddNotesRootPath(b);
+            Assert.Equal(2, vm.TreeRoots.Count);
+
+            vm.PersistLastOpenPage(pageB);
+            Assert.True(NotesRootSettings.PathsEqual(
+                settings.LoadSettings().LastOpenNotesPagePath, pageB));
+            Assert.True(NotesRootSettings.PathsEqual(vm.RootPath, b));
+
+            var restored = new NotesViewModel(settings);
+            Assert.True(NotesRootSettings.PathsEqual(restored.CurrentPagePath, pageB));
+            Assert.Equal(2, restored.TreeRoots.Count);
         }
         finally
         {
@@ -192,6 +227,7 @@ public class NotesViewModelMultiRootTests
             NotesRootPath = s.NotesRootPath,
             NotesRootPaths = s.NotesRootPaths?.ToList() ?? new List<string>(),
             LastSelectedNotesRootPath = s.LastSelectedNotesRootPath,
+            LastOpenNotesPagePath = s.LastOpenNotesPagePath,
             LastOpenCloudEntityId = s.LastOpenCloudEntityId
         };
     }

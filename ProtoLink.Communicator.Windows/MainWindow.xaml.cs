@@ -301,12 +301,58 @@ public partial class MainWindow : Window
 
     private void UpdateTabToolbar(System.Windows.Controls.Panel toolbarPanel)
     {
-        // Chrome-minimal CM-TT1…TT4: Notes/Cloud permanent create/Download/Open strip removed.
-        // Create → FAB/empty/context; Download/Open → entity ⋮ / Info; Refresh → list search / tree context / F5.
-        // Policy: ShellTabToolbarChrome.PermanentActionIds (empty for all current shell tabs).
+        // Chrome-minimal CM-TT1…TT4: Notes/Cloud create/Download/Open stay off the permanent strip.
+        // E11a: Notes-tab Add/Remove/Map roots sit adjacent to the Settings gear.
         toolbarPanel.Children.Clear();
-        if (ShellTabToolbarChrome.PermanentActionIds(MainTabControl.SelectedIndex).Count > 0)
-            throw new InvalidOperationException("Shell TabToolbar permanent actions are not wired; extend UpdateTabToolbar when policy adds ids.");
+        var actionIds = ShellTabToolbarChrome.PermanentActionIds(MainTabControl.SelectedIndex);
+        foreach (var id in actionIds)
+        {
+            if (!ShellTabToolbarChrome.IsNotesRootChromeAction(id))
+                throw new InvalidOperationException($"Shell TabToolbar action '{id}' is not wired; extend UpdateTabToolbar.");
+
+            toolbarPanel.Children.Add(CreateNotesRootChromeButton(id));
+        }
+    }
+
+    private System.Windows.Controls.Button CreateNotesRootChromeButton(string actionId)
+    {
+        var button = new System.Windows.Controls.Button
+        {
+            MinWidth = 36,
+            Height = 36,
+            Margin = new Thickness(0, 0, 4, 0),
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Focusable = false,
+            Foreground = (System.Windows.Media.Brush)FindResource("ForegroundBrush")
+        };
+
+        switch (actionId)
+        {
+            case ShellTabToolbarChrome.NotesAddRootActionId:
+                button.Content = "+";
+                button.ToolTip = "Add Notes folder";
+                System.Windows.Automation.AutomationProperties.SetName(button, "Add Notes folder");
+                button.Command = _notesViewModel.AddNotesRootCommand;
+                break;
+            case ShellTabToolbarChrome.NotesRemoveRootActionId:
+                button.Content = "−";
+                button.ToolTip = "Remove from Notes list (keeps files on disk)";
+                System.Windows.Automation.AutomationProperties.SetName(button, "Remove Notes folder from list");
+                button.Command = _notesViewModel.RemoveNotesRootCommand;
+                break;
+            case ShellTabToolbarChrome.NotesMapRootActionId:
+                button.Content = "☁";
+                button.ToolTip = "Map Notes folder to Cloud";
+                System.Windows.Automation.AutomationProperties.SetName(button, "Map Notes root to Cloud");
+                button.Command = _notesViewModel.MapSelectedNotesRootCommand;
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown Notes root chrome action '{actionId}'.");
+        }
+
+        return button;
     }
 
     private void CloseSettingsPanel()

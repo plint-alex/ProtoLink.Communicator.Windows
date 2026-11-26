@@ -24,6 +24,9 @@ public class AppSettings
     /// <summary>E11: last selected Notes root path (must be in <see cref="NotesRootPaths"/> when set).</summary>
     public string? LastSelectedNotesRootPath { get; set; }
 
+    /// <summary>E11a: last-open Notes page folder path (under a configured root); restored on restart.</summary>
+    public string? LastOpenNotesPagePath { get; set; }
+
     /// <summary>Last open Cloud entity id; restored on next start (AT-C7). Null → Cloud root.</summary>
     public Guid? LastOpenCloudEntityId { get; set; }
 

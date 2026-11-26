@@ -35,84 +35,10 @@
             <ColumnDefinition x:Name="EditorColumn" Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Notes list — CM-HD1: tab already names surface; no 20pt title bar -->
+        <!-- Notes list — CM-HD1: tab already names surface; no 20pt title bar.
+             E11a: stacked trees for all roots; Add/Remove/Map live next to Settings gear. -->
         <Grid x:Name="TreePane" Grid.Column="0" Background="{DynamicResource ListBackground}">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <!-- E11: ordered Notes roots — Add / Remove / Select; muted Not-in-Cloud cue per root -->
-            <Border Grid.Row="0" Padding="8,6"
-                    BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"
-                    Visibility="{Binding HasConfiguredNotesRoots, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <DockPanel LastChildFill="True">
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,0,0,0">
-                        <Button Content="+" Width="28" Height="28" Margin="0,0,4,0"
-                                Style="{DynamicResource GhostButton}"
-                                Command="{Binding AddNotesRootCommand}"
-                                ToolTip="Add Notes folder"
-                                AutomationProperties.Name="Add Notes folder"/>
-                        <Button Content="−" Width="28" Height="28"
-                                Style="{DynamicResource GhostButton}"
-                                Command="{Binding RemoveNotesRootCommand}"
-                                ToolTip="Remove from Notes list (keeps files on disk)"
-                                AutomationProperties.Name="Remove Notes folder from list"/>
-                    </StackPanel>
-                    <ListBox x:Name="NotesRootsList"
-                             ItemsSource="{Binding NotesRoots}"
-                             SelectedItem="{Binding SelectedNotesRoot, Mode=TwoWay}"
-                             BorderThickness="0"
-                             Background="Transparent"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             MaxHeight="120"
-                             AutomationProperties.Name="Notes root folders">
-                        <ListBox.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Not in Cloud yet — Map…"
-                                          Command="{Binding PlacementTarget.DataContext.MapSelectedNotesRootCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                          AutomationProperties.Name="Map Notes root to Cloud"/>
-                                <MenuItem Header="Remove from Notes list"
-                                          Command="{Binding PlacementTarget.DataContext.RemoveNotesRootCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                          AutomationProperties.Name="Remove Notes folder from list"/>
-                            </ContextMenu>
-                        </ListBox.ContextMenu>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding DisplayName}"
-                                           ToolTip="{Binding ToolTip}"
-                                           TextTrimming="CharacterEllipsis"
-                                           Margin="4,2">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Foreground" Value="{DynamicResource ForegroundBrush}"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ShowNotInCloudCue}" Value="True">
-                                                    <Setter Property="Foreground" Value="{DynamicResource ForegroundMutedBrush}"/>
-                                                    <Setter Property="FontStyle" Value="Italic"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </DockPanel>
-            </Border>
-            <!-- E6: selected Notes root not under any Cloud mapping (AT-MAP-4); no sync chrome -->
-            <Border Grid.Row="1" Padding="12,8"
-                    Background="{DynamicResource AccentSoftBrush}"
-                    BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1"
-                    Visibility="{Binding ShowMapToCloudNudge, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Button Content="{Binding MapToCloudNudgeText}"
-                        HorizontalAlignment="Left" Padding="0"
-                        Style="{DynamicResource GhostButton}"
-                        Command="{Binding AddNotesRootToCloudCommand}"
-                        AutomationProperties.Name="{Binding MapToCloudNudgeText}"/>
-            </Border>
-            <Grid Grid.Row="2">
+            <Grid>
                 <TreeView x:Name="NotesTreeView" SelectedItemChanged="OnTreeSelectionChanged"
                           Background="{DynamicResource ListBackground}" BorderThickness="0"
                           AllowDrop="True"
@@ -124,7 +50,8 @@
                           Padding="0,4"
                           TreeViewItem.Expanded="OnTreeItemExpanded"
                           TreeViewItem.Collapsed="OnTreeItemCollapsed"
-                          Visibility="{Binding ShowNotesTree, Converter={StaticResource BooleanToVisibilityConverter}}">
+                          Visibility="{Binding ShowNotesTree, Converter={StaticResource BooleanToVisibilityConverter}}"
+                          AutomationProperties.Name="Notes folder trees">
                     <TreeView.Resources>
                         <Style TargetType="TreeViewItem">
                             <Setter Property="Padding" Value="8,6"/>
@@ -140,6 +67,13 @@
                                       InputGestureText="F5"
                                       AutomationProperties.Name="Refresh Notes tree"/>
                             <Separator/>
+                            <MenuItem x:Name="NotesTreeMapRootMenuItem" Header="Not in Cloud yet — Map…"
+                                      Click="OnMapNotesRootClick"
+                                      AutomationProperties.Name="Map Notes root to Cloud"/>
+                            <MenuItem x:Name="NotesTreeRemoveRootMenuItem" Header="Remove from Notes list"
+                                      Click="OnRemoveNotesRootClick"
+                                      AutomationProperties.Name="Remove Notes folder from list"/>
+                            <Separator x:Name="NotesTreeRootActionsSeparator"/>
                             <MenuItem x:Name="NotesTreeOpenInExplorerMenuItem" Header="Open in Explorer" Click="OnOpenInExplorerClick"/>
                             <MenuItem x:Name="NotesTreeCopyLinkMenuItem" Header="Copy link" Click="OnCopyLinkClick"/>
                             <MenuItem x:Name="NotesTreeShareMenuItem" Header="Share…" Click="OnShareClick"/>

@@ -34,6 +34,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private NotesViewModel? _vm;
     private NotesIndexFileWatcher? _indexWatcher;
     private NotesNotesRootWatcher? _rootWatcher;
+    private readonly List<NotesNotesRootWatcher> _rootWatchers = new();
     private NotesExternalChangeDialog? _externalChangeDialog;
     private bool _notesWebViewReady;
     private bool _webViewInitStarted;
@@ -527,7 +528,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         if (NotesTreeView.Items.Count == 0)
         {
-            if (_vm?.TreeRoot != null)
+            if (_vm != null && _vm.TreeRoots.Count > 0)
             {
                 if (_vm.StatusText == "Ready")
                     _vm.StatusText = "Loading…";
@@ -540,6 +541,10 @@ public partial class NotesView : System.Windows.Controls.UserControl
                 _vm?.RefreshTree();
             }
         }
+
+        if (_vm?.CurrentPagePath != null && NotesWebView.CoreWebView2 != null
+            && Directory.Exists(_vm.CurrentPagePath))
+            _ = NavigateToAsync(_vm.CurrentPagePath);
 
         TryStartWebViewInit();
         _ = Dispatcher.InvokeAsync(ReloadOpenPageFromDiskIfCleanAsync);
@@ -656,26 +661,41 @@ public partial class NotesView : System.Windows.Controls.UserControl
     private void StartRootWatcher()
     {
         if (_vm == null) return;
-        var root = _vm.RootPath;
-        if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
-        try
+        StopRootWatcher();
+        foreach (var root in _vm.NotesRoots.Select(r => r.Path))
         {
-            StopRootWatcher();
-            _rootWatcher = new NotesNotesRootWatcher(root);
-            _rootWatcher.TreeStructureChanged += OnNotesRootStructureChanged;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) continue;
+            try
+            {
+                var watcher = new NotesNotesRootWatcher(root);
+                watcher.TreeStructureChanged += OnNotesRootStructureChanged;
+                _rootWatchers.Add(watcher);
+            }
+            catch
+            {
+                // Ignore watcher failures during path transitions.
+            }
         }
-        catch
-        {
-            // Ignore watcher failures during path transitions.
-        }
+
+        // Legacy single-field kept null; multi-root uses _rootWatchers.
+        _rootWatcher = null;
     }
 
     private void StopRootWatcher()
     {
-        if (_rootWatcher == null) return;
-        _rootWatcher.TreeStructureChanged -= OnNotesRootStructureChanged;
-        _rootWatcher.Dispose();
-        _rootWatcher = null;
+        if (_rootWatcher != null)
+        {
+            _rootWatcher.TreeStructureChanged -= OnNotesRootStructureChanged;
+            _rootWatcher.Dispose();
+            _rootWatcher = null;
+        }
+
+        foreach (var watcher in _rootWatchers)
+        {
+            watcher.TreeStructureChanged -= OnNotesRootStructureChanged;
+            watcher.Dispose();
+        }
+        _rootWatchers.Clear();
     }
 
     private void OnNotesRootStructureChanged()
@@ -1004,31 +1024,60 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void PopulateTree()
     {
-        if (_vm?.TreeRoot == null)
+        if (_vm == null || _vm.TreeRoots.Count == 0)
         {
             NotesTreeView.Items.Clear();
             return;
         }
 
-        var rootPath = _vm.TreeRoot.Item.FullPath;
         var keepEditorFocus = NotesWebView.IsKeyboardFocusWithin;
         // Merge/rebuild removes live TreeViewItems; WPF then selects a parent (often root) and
         // SelectedItemChanged would NavigateToAsync that parent — keep CurrentPagePath/editor stable.
         var preservePagePath = _vm.CurrentPagePath;
 
-        if (NotesTreeView.Items.Count == 1
-            && NotesTreeView.Items[0] is TreeViewItem existingRoot
-            && existingRoot.Tag is TreeItemViewModel existingVm
-            && string.Equals(
-                NormalizePathKey(existingVm.Item.FullPath),
-                NormalizePathKey(rootPath),
-                StringComparison.OrdinalIgnoreCase))
+        var wantByPath = new Dictionary<string, TreeItemViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rootVm in _vm.TreeRoots)
+        {
+            var key = NormalizePathKey(rootVm.Item.FullPath);
+            if (!string.IsNullOrEmpty(key))
+                wantByPath[key] = rootVm;
+        }
+
+        var liveRoots = NotesTreeView.Items.OfType<TreeViewItem>()
+            .Where(t => t.Tag is TreeItemViewModel)
+            .ToList();
+        var canMerge = liveRoots.Count == wantByPath.Count
+            && liveRoots.All(t =>
+                t.Tag is TreeItemViewModel vm
+                && wantByPath.ContainsKey(NormalizePathKey(vm.Item.FullPath)));
+
+        if (canMerge)
         {
             _suppressTreeSelectionNavigate = true;
             try
             {
-                // In-place merge: never rewrite IsExpanded — live TreeViewItems keep user collapse/expand.
-                MergeTreeItem(existingRoot, _vm.TreeRoot);
+                foreach (var existingRoot in liveRoots)
+                {
+                    var key = NormalizePathKey(((TreeItemViewModel)existingRoot.Tag).Item.FullPath);
+                    MergeTreeItem(existingRoot, wantByPath[key]);
+                }
+
+                // Reorder live roots to match NotesRootPaths order.
+                for (var i = 0; i < _vm.TreeRoots.Count; i++)
+                {
+                    var wantKey = NormalizePathKey(_vm.TreeRoots[i].Item.FullPath);
+                    var current = NotesTreeView.Items.OfType<TreeViewItem>()
+                        .FirstOrDefault(t => t.Tag is TreeItemViewModel vm
+                            && string.Equals(NormalizePathKey(vm.Item.FullPath), wantKey, StringComparison.OrdinalIgnoreCase));
+                    if (current == null) continue;
+                    var idx = NotesTreeView.Items.IndexOf(current);
+                    if (idx >= 0 && idx != i)
+                    {
+                        NotesTreeView.Items.RemoveAt(idx);
+                        NotesTreeView.Items.Insert(i, current);
+                    }
+                }
+
                 TryReselectCurrentPageCore(focusTree: false);
                 EnsurePreservedPagePath(preservePagePath);
             }
@@ -1042,7 +1091,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
             return;
         }
 
-        // First paint or root path changed — rebuild once; respect remembered expansion.
+        // First paint or root set changed — rebuild; respect remembered expansion.
         var live = CollectExpandedPaths();
         if (live.Count > 0)
         {
@@ -1052,17 +1101,19 @@ public partial class NotesView : System.Windows.Controls.UserControl
         }
         else if (_rememberedExpandedPaths.Count == 0)
         {
-            // First load only: expand root so the tree is usable.
-            _rememberedExpandedPaths.Add(NormalizePathKey(rootPath));
+            foreach (var rootVm in _vm.TreeRoots)
+                _rememberedExpandedPaths.Add(NormalizePathKey(rootVm.Item.FullPath));
         }
 
-        // Build before Clear so a create failure cannot leave an empty tree.
-        var rootItem = CreateTreeItem(_vm.TreeRoot, _rememberedExpandedPaths);
+        var rootItems = _vm.TreeRoots
+            .Select(r => CreateTreeItem(r, _rememberedExpandedPaths))
+            .ToList();
         _suppressTreeSelectionNavigate = true;
         try
         {
             NotesTreeView.Items.Clear();
-            NotesTreeView.Items.Add(rootItem);
+            foreach (var rootItem in rootItems)
+                NotesTreeView.Items.Add(rootItem);
         }
         catch
         {
@@ -1070,7 +1121,6 @@ public partial class NotesView : System.Windows.Controls.UserControl
             throw;
         }
 
-        // Keep suppress until after reselect — Clear/Add can select root before Loaded.
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
             try
@@ -1237,10 +1287,12 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
     private void EnsureAncestorsExpanded(string? pagePath)
     {
-        if (string.IsNullOrEmpty(pagePath) || string.IsNullOrEmpty(_vm?.RootPath)) return;
+        if (string.IsNullOrEmpty(pagePath) || _vm == null) return;
+        var containing = _vm.FindContainingNotesRoot(pagePath);
+        if (string.IsNullOrEmpty(containing)) return;
         try
         {
-            var root = NormalizePathKey(_vm.RootPath);
+            var root = NormalizePathKey(containing);
             var current = NormalizePathKey(pagePath);
             while (!string.IsNullOrEmpty(current))
             {
@@ -1493,14 +1545,11 @@ public partial class NotesView : System.Windows.Controls.UserControl
 
         if (_treeDragSourceItem.Tag is not TreeItemViewModel vm) return;
         var sourcePath = vm.Item.FullPath;
-        if (string.IsNullOrEmpty(sourcePath) || string.IsNullOrEmpty(_vm.RootPath)) return;
+        if (string.IsNullOrEmpty(sourcePath) || _vm.FindContainingNotesRoot(sourcePath) == null) return;
 
         try
         {
-            if (string.Equals(
-                    Path.GetFullPath(sourcePath),
-                    Path.GetFullPath(_vm.RootPath),
-                    StringComparison.OrdinalIgnoreCase))
+            if (_vm.IsNotesRootPath(sourcePath))
             {
                 _treeDragSourceItem = null;
                 return;
@@ -1651,6 +1700,7 @@ public partial class NotesView : System.Windows.Controls.UserControl
         var previous = _vm.CurrentPagePath;
         var gen = ++_notesNavigateGeneration;
         _vm.CurrentPagePath = folderPath;
+        _vm.PersistLastOpenPage(folderPath);
         _vm.RecordOpenedPage(previous, folderPath, pushHistory: !fromHistory, resolveRemote: false);
         if (NotesPageNavigation.ShouldShowLoading(previous, folderPath, forceReload))
             _vm.StatusText = NotesPageNavigation.LoadingStatus;
@@ -1807,6 +1857,19 @@ public partial class NotesView : System.Windows.Controls.UserControl
             treeViewItem.IsSelected = true;
             NotesTreeContextMenu.Tag = vm;
             var path = vm.Item.FullPath;
+            var isRoot = _vm?.IsNotesRootPath(path) == true;
+            var rootCue = isRoot
+                ? _vm!.NotesRoots.FirstOrDefault(r => NotesRootSettings.PathsEqual(r.Path, path))
+                : null;
+            NotesTreeMapRootMenuItem.Visibility = isRoot && rootCue?.ShowNotInCloudCue == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            NotesTreeRemoveRootMenuItem.Visibility = isRoot ? Visibility.Visible : Visibility.Collapsed;
+            NotesTreeRootActionsSeparator.Visibility =
+                NotesTreeMapRootMenuItem.Visibility == Visibility.Visible
+                || NotesTreeRemoveRootMenuItem.Visibility == Visibility.Visible
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
             NotesTreeOpenInExplorerMenuItem.IsEnabled =
                 !string.IsNullOrEmpty(path) && Directory.Exists(path);
             var hasCloudId = _vm?.TryResolveRemoteId(path) is not null;
@@ -1829,6 +1892,26 @@ public partial class NotesView : System.Windows.Controls.UserControl
         {
             e.Handled = true;
         }
+    }
+
+    private void OnMapNotesRootClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        NotesTreeContextMenu.Tag = null;
+        var path = vm.Item.FullPath;
+        if (!_vm.IsNotesRootPath(path)) return;
+        _vm.FocusNotesRootPath(path, persist: true);
+        if (_vm.AddNotesRootToCloudCommand.CanExecute(null))
+            _vm.AddNotesRootToCloudCommand.Execute(null);
+    }
+
+    private void OnRemoveNotesRootClick(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || NotesTreeContextMenu.Tag is not TreeItemViewModel vm) return;
+        NotesTreeContextMenu.Tag = null;
+        var path = vm.Item.FullPath;
+        if (!_vm.IsNotesRootPath(path)) return;
+        _vm.RemoveNotesRootPath(path);
     }
 
     private static TreeViewItem? FindTreeViewItemUnderMouse(DependencyObject treeView)

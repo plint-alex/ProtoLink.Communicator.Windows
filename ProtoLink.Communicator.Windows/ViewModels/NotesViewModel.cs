@@ -52,7 +52,7 @@ public partial class NotesViewModel : ViewModelBase
         ApplyRootFromSettings(reloadTree: false);
         NewFolderCommand = new RelayCommand(
             _ => RaiseRequestNewFolder(),
-            _ => !NeedsNotesRoot && !SelectedNotesRootMissing);
+            _ => !NeedsNotesRoot && TreeRoots.Count > 0);
         CreateFirstNoteCommand = new RelayCommand(_ => RaiseRequestNewFolder(), _ => IsNotesEmpty);
         ChooseNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
         AddNotesRootCommand = new RelayCommand(_ => RequestChooseNotesRoot?.Invoke());
@@ -66,7 +66,7 @@ public partial class NotesViewModel : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(path))
                     RequestAddNotesRootToCloud?.Invoke(path);
             },
-            _ => ShowMapToCloudNudge || (SelectedNotesRoot?.ShowNotInCloudCue ?? false));
+            _ => CanMapFocusedNotesRoot);
         MapSelectedNotesRootCommand = new RelayCommand(
             _ =>
             {
@@ -74,8 +74,7 @@ public partial class NotesViewModel : ViewModelBase
                 if (!string.IsNullOrWhiteSpace(path))
                     RequestAddNotesRootToCloud?.Invoke(path);
             },
-            _ => SelectedNotesRoot?.ShowNotInCloudCue == true
-                 || (!string.IsNullOrWhiteSpace(_rootPath) && ShowMapToCloudNudge));
+            _ => CanMapFocusedNotesRoot);
         RefreshCommand = new RelayCommand(_ => RefreshTree());
         OpenSiblingFileCommand = new RelayCommand(
             p => OpenSiblingPath(p as string),
@@ -84,12 +83,16 @@ public partial class NotesViewModel : ViewModelBase
         InitShare(shareApi, shareCurrentUserId, shareIsOnline, onSendShareLinkInMessenger);
         RefreshTree();
         RefreshMapToCloudNudge();
+        TryRestoreLastOpenPage();
     }
 
     public string? RootPath { get => _rootPath; private set { _rootPath = value; OnPropertyChanged(); } }
 
-    /// <summary>E11: ordered Notes roots for the multi-root chrome.</summary>
+    /// <summary>E11: ordered Notes roots metadata (Map cue / Remove target).</summary>
     public ObservableCollection<NotesRootItemViewModel> NotesRoots { get; } = new();
+
+    /// <summary>E11a: stacked folder trees for every on-disk Notes root (order matches <see cref="NotesRoots"/>).</summary>
+    public ObservableCollection<TreeItemViewModel> TreeRoots { get; } = new();
 
     private NotesRootItemViewModel? _selectedNotesRoot;
     public NotesRootItemViewModel? SelectedNotesRoot
@@ -112,6 +115,8 @@ public partial class NotesViewModel : ViewModelBase
     }
 
     public bool HasConfiguredNotesRoots => NotesRoots.Count > 0;
+
+    /// <summary>Focused root tree (last-open / Remove target). Prefer <see cref="TreeRoots"/> for UI.</summary>
     public TreeItemViewModel? TreeRoot
     {
         get => _treeRoot;
@@ -126,26 +131,28 @@ public partial class NotesViewModel : ViewModelBase
     /// <summary>No Notes roots configured — must not look like “no notes yet”.</summary>
     public bool NeedsNotesRoot => NotesRoots.Count == 0;
 
-    /// <summary>Selected root path missing on disk (roots list may still be non-empty).</summary>
+    /// <summary>Focused root path missing on disk (other roots may still exist).</summary>
     public bool SelectedNotesRootMissing =>
         !NeedsNotesRoot
         && (string.IsNullOrWhiteSpace(_rootPath) || !Directory.Exists(_rootPath));
 
-    /// <summary>Setup CTA: no roots, or selected root folder missing.</summary>
-    public bool ShowNotesRootSetup => NeedsNotesRoot || SelectedNotesRootMissing;
+    /// <summary>Setup CTA: no roots, or every configured root missing on disk.</summary>
+    public bool ShowNotesRootSetup => NeedsNotesRoot || (!NeedsNotesRoot && TreeRoots.Count == 0);
 
-    /// <summary>Root is configured but has no child note folders yet.</summary>
+    /// <summary>Configured roots exist on disk but none have child note folders yet.</summary>
     public bool IsNotesEmpty =>
         !NeedsNotesRoot
-        && !SelectedNotesRootMissing
-        && _treeRoot != null
-        && _treeRoot.Children.Count == 0;
+        && TreeRoots.Count > 0
+        && TreeRoots.All(t => t.Children.Count == 0);
 
-    /// <summary>Show the Notes tree (not setup / empty states).</summary>
-    public bool ShowNotesTree => !NeedsNotesRoot && !SelectedNotesRootMissing && !IsNotesEmpty;
+    /// <summary>Show stacked Notes trees (not setup / empty states).</summary>
+    public bool ShowNotesTree => !NeedsNotesRoot && TreeRoots.Count > 0 && !IsNotesEmpty;
 
-    /// <summary>E6: Notes root set but not covered by any Cloud mapping LocalPath.</summary>
+    /// <summary>E11a: focused root not covered by any Cloud mapping (Map chrome / context — not a left-pane banner).</summary>
     public bool ShowMapToCloudNudge { get; private set; }
+
+    public bool CanMapFocusedNotesRoot =>
+        ShowMapToCloudNudge || (SelectedNotesRoot?.ShowNotInCloudCue ?? false);
 
     public string MapToCloudNudgeText =>
         MapLocalFolderStrings.NotesNudgeText(_settingsService.LoadSettings().UiLanguage);
@@ -274,6 +281,7 @@ public partial class NotesViewModel : ViewModelBase
         var indexPath = Path.Combine(newPath, "index.html");
         File.WriteAllText(indexPath, $"<h1>{System.Net.WebUtility.HtmlEncode(folderName)}</h1>\n\n<p><br></p>", Encoding.UTF8);
         CurrentPagePath = newPath;
+        PersistLastOpenPage(newPath);
         RefreshTree();
         NotesPagePathChanged?.Invoke(newPath);
     }
@@ -338,8 +346,14 @@ public partial class NotesViewModel : ViewModelBase
                 : $"Added Notes folder: {full}";
     }
 
-    /// <summary>E11: select a configured root; tree/editor follow it; persists last-selected.</summary>
-    public void SelectNotesRootPath(string path)
+    /// <summary>
+    /// E11a: focus a configured root (Remove/Map target + last-selected) without unloading the open page.
+    /// Stacked trees stay visible for every root.
+    /// </summary>
+    public void SelectNotesRootPath(string path) => FocusNotesRootPath(path, persist: true);
+
+    /// <summary>Focus a Notes root for chrome actions; optionally persist last-selected.</summary>
+    public void FocusNotesRootPath(string path, bool persist)
     {
         if (!NotesRootSettings.TryNormalize(path, out var full))
             return;
@@ -355,16 +369,45 @@ public partial class NotesViewModel : ViewModelBase
             return;
         }
 
-        NotesRootSettings.Write(settings, roots, full);
-        _settingsService.SaveSettings(settings);
-        CurrentPagePath = null;
-        _currentHtml = string.Empty;
-        _htmlSyncedToDisk = string.Empty;
-        CancelPendingSave();
-        ReloadFromSettings();
+        if (persist)
+        {
+            NotesRootSettings.Write(settings, roots, full);
+            _settingsService.SaveSettings(settings);
+        }
+
+        _rootPath = full;
+        OnPropertyChanged(nameof(RootPath));
+        RefreshNotesRootsCollection(roots, full);
+        SyncTreeRootFromStack();
+        NotifyNotesListStateChanged();
+        NotesRootPathChanged?.Invoke();
         StatusText = Directory.Exists(full)
             ? $"Notes folder: {full}"
             : "Notes folder not found. Choose another path.";
+    }
+
+    /// <summary>Remember last-open page + containing root (E11a restart restore).</summary>
+    public void PersistLastOpenPage(string? pagePath)
+    {
+        var settings = _settingsService.LoadSettings();
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        string? selected = _rootPath;
+        if (NotesRootSettings.TryNormalize(pagePath, out var page))
+        {
+            var containing = NotesStackedRoots.FindContainingRoot(roots, page);
+            if (containing != null)
+                selected = containing;
+            settings.LastOpenNotesPagePath = page;
+        }
+        else
+        {
+            settings.LastOpenNotesPagePath = null;
+        }
+
+        NotesRootSettings.Write(settings, roots, selected);
+        _settingsService.SaveSettings(settings);
+        if (selected != null && !NotesRootSettings.PathsEqual(selected, _rootPath))
+            FocusNotesRootPath(selected, persist: false);
     }
 
     /// <summary>
@@ -382,10 +425,14 @@ public partial class NotesViewModel : ViewModelBase
 
         var next = NotesRootSettings.PreferNeighborAfterRemove(roots, idx);
         roots.RemoveAt(idx);
+        var openUnderRemoved = NotesStackedRoots.IsUnderOrEqual(full, CurrentPagePath ?? string.Empty);
+        if (NotesRootSettings.PathsEqual(settings.LastOpenNotesPagePath, full)
+            || NotesStackedRoots.IsUnderOrEqual(full, settings.LastOpenNotesPagePath ?? string.Empty))
+            settings.LastOpenNotesPagePath = null;
         NotesRootSettings.Write(settings, roots, next);
         _settingsService.SaveSettings(settings);
 
-        if (NotesRootSettings.PathsEqual(full, _rootPath) || roots.Count == 0)
+        if (openUnderRemoved || NotesRootSettings.PathsEqual(full, _rootPath) || roots.Count == 0)
         {
             CurrentPagePath = null;
             _currentHtml = string.Empty;
@@ -422,6 +469,43 @@ public partial class NotesViewModel : ViewModelBase
             RefreshTree();
         else
             RefreshMapToCloudNudge();
+    }
+
+    private void TryRestoreLastOpenPage()
+    {
+        var settings = _settingsService.LoadSettings();
+        var roots = NotesRootSettings.ResolveRoots(settings);
+        var page = NotesStackedRoots.ResolveLastOpenPage(roots, settings.LastOpenNotesPagePath);
+        if (page == null) return;
+        CurrentPagePath = page;
+        var containing = NotesStackedRoots.FindContainingRoot(roots, page);
+        if (containing != null)
+            FocusNotesRootPath(containing, persist: false);
+    }
+
+    private void SyncTreeRootFromStack()
+    {
+        TreeItemViewModel? focused = null;
+        foreach (var t in TreeRoots)
+        {
+            if (NotesRootSettings.PathsEqual(t.Item.FullPath, _rootPath))
+            {
+                focused = t;
+                break;
+            }
+        }
+
+        TreeRoot = focused ?? TreeRoots.FirstOrDefault();
+    }
+
+    /// <summary>Root path that contains <paramref name="path"/> among configured Notes roots.</summary>
+    public string? FindContainingNotesRoot(string? path) =>
+        NotesStackedRoots.FindContainingRoot(NotesRoots.Select(r => r.Path), path);
+
+    public bool IsNotesRootPath(string? path)
+    {
+        if (!NotesRootSettings.TryNormalize(path, out var full)) return false;
+        return NotesRoots.Any(r => NotesRootSettings.PathsEqual(r.Path, full));
     }
 
     private void RefreshNotesRootsCollection(IReadOnlyList<string> roots, string? selected)
@@ -489,25 +573,22 @@ public partial class NotesViewModel : ViewModelBase
 
     public void RefreshTree()
     {
-        if (string.IsNullOrEmpty(_rootPath) || !Directory.Exists(_rootPath))
+        var rootPaths = NotesRoots.Select(r => r.Path).ToList();
+        if (rootPaths.Count == 0)
         {
             _lastTreeFingerprint = null;
-            TreeRoot = null;
-            CommandManager.InvalidateRequerySuggested();
-            TreeRefreshed?.Invoke();
-            RefreshSiblingFiles();
+            ApplyStackedTrees(Array.Empty<TreeItemViewModel>(), string.Empty);
             return;
         }
 
-        var path = _rootPath;
         // No WPF dispatcher (unit tests / headless): build on the caller thread.
         if (System.Windows.Application.Current?.Dispatcher == null)
         {
-            ApplyBuiltTree(path);
+            ApplyBuiltStackedTrees(rootPaths);
             return;
         }
 
-        _ = Task.Run(() => ApplyBuiltTree(path));
+        _ = Task.Run(() => ApplyBuiltStackedTrees(rootPaths));
     }
 
     /// <summary>Re-enumerate Folder files under the open note (E5/E5a files-only). Soft-empty on errors.</summary>
@@ -559,24 +640,35 @@ public partial class NotesViewModel : ViewModelBase
         }
     }
 
-    private void ApplyBuiltTree(string path)
+    private void ApplyBuiltStackedTrees(IReadOnlyList<string> rootPaths)
     {
         try
         {
-            var built = _fsService.BuildTree(path);
-            var fingerprint = ComputeTreeFingerprint(built);
+            var builtRoots = new List<TreeItemViewModel>();
+            var fingerprintParts = new List<string>();
+            foreach (var path in rootPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                    continue;
+                var built = _fsService.BuildTree(path);
+                if (built == null) continue;
+                fingerprintParts.Add(ComputeTreeFingerprint(built));
+                builtRoots.Add(new TreeItemViewModel(built));
+            }
+
+            var fingerprint = string.Join("\n---\n", fingerprintParts);
             PostUi(() =>
             {
-                if (fingerprint != _lastTreeFingerprint || TreeRoot == null)
+                if (fingerprint != _lastTreeFingerprint || TreeRoots.Count != builtRoots.Count)
                 {
                     _lastTreeFingerprint = fingerprint;
-                    TreeRoot = built != null ? new TreeItemViewModel(built) : null;
-                    CommandManager.InvalidateRequerySuggested();
-                    TreeRefreshed?.Invoke();
+                    ApplyStackedTrees(builtRoots, fingerprint);
                 }
-
-                // Always re-list Folder files — tree fingerprint ignore must not skip E5 panel.
-                RefreshSiblingFiles();
+                else
+                {
+                    // Always re-list Folder files — tree fingerprint ignore must not skip E5 panel.
+                    RefreshSiblingFiles();
+                }
             });
         }
         catch (Exception ex)
@@ -584,14 +676,23 @@ public partial class NotesViewModel : ViewModelBase
             PostUi(() =>
             {
                 _lastTreeFingerprint = null;
-                TreeRoot = null;
+                ApplyStackedTrees(Array.Empty<TreeItemViewModel>(), string.Empty);
                 StatusText = "Error loading notes tree.";
-                CommandManager.InvalidateRequerySuggested();
-                TreeRefreshed?.Invoke();
-                RefreshSiblingFiles();
                 ErrorDetailDialog.Show("Notes tree", ex);
             });
         }
+    }
+
+    private void ApplyStackedTrees(IReadOnlyList<TreeItemViewModel> builtRoots, string fingerprint)
+    {
+        _lastTreeFingerprint = fingerprint;
+        TreeRoots.Clear();
+        foreach (var root in builtRoots)
+            TreeRoots.Add(root);
+        SyncTreeRootFromStack();
+        CommandManager.InvalidateRequerySuggested();
+        TreeRefreshed?.Invoke();
+        RefreshSiblingFiles();
     }
 
     private static string ComputeTreeFingerprint(FileSystemItem? root)
@@ -745,11 +846,10 @@ public partial class NotesViewModel : ViewModelBase
 
     public bool RenameFolder(string fullPath, string newName)
     {
-        if (string.IsNullOrEmpty(fullPath) || string.IsNullOrEmpty(_rootPath))
+        var root = FindContainingNotesRoot(fullPath);
+        if (string.IsNullOrEmpty(fullPath) || string.IsNullOrEmpty(root))
             return false;
-        if (string.Equals(Path.GetFullPath(fullPath), Path.GetFullPath(_rootPath), StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (!fullPath.StartsWith(_rootPath, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(Path.GetFullPath(fullPath), Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase))
             return false;
 
         try
@@ -760,7 +860,10 @@ public partial class NotesViewModel : ViewModelBase
                 return false;
             var newPath = Path.Combine(parent, newName);
             if (string.Equals(_currentPagePath, fullPath, StringComparison.OrdinalIgnoreCase))
+            {
                 CurrentPagePath = newPath;
+                PersistLastOpenPage(newPath);
+            }
             RefreshTree();
             StatusText = "Renamed";
             return true;
@@ -778,10 +881,16 @@ public partial class NotesViewModel : ViewModelBase
     /// </summary>
     public bool MoveFolder(string sourcePath, string targetParentPath)
     {
-        if (string.IsNullOrEmpty(_rootPath))
+        var sourceRoot = FindContainingNotesRoot(sourcePath);
+        var targetRoot = FindContainingNotesRoot(targetParentPath);
+        if (string.IsNullOrEmpty(sourceRoot) || string.IsNullOrEmpty(targetRoot)
+            || !NotesRootSettings.PathsEqual(sourceRoot, targetRoot))
+        {
+            StatusText = "Move must stay inside the same Notes folder.";
             return false;
+        }
 
-        var error = NotesFileSystemService.ValidateMove(sourcePath, targetParentPath, _rootPath);
+        var error = NotesFileSystemService.ValidateMove(sourcePath, targetParentPath, sourceRoot);
         if (error != null)
         {
             StatusText = error;
@@ -795,6 +904,7 @@ public partial class NotesViewModel : ViewModelBase
             var pathChanged = RemapCurrentPagePathAfterMove(sourceFull, destFull);
             if (!pathChanged)
                 CurrentPagePath = destFull;
+            PersistLastOpenPage(CurrentPagePath);
             RefreshTree();
             StatusText = "Moved";
             if (pathChanged || !string.IsNullOrEmpty(CurrentPagePath))
@@ -847,22 +957,24 @@ public partial class NotesViewModel : ViewModelBase
 
     public bool DeleteFolder(string folderPath)
     {
-        if (string.IsNullOrEmpty(folderPath) || string.IsNullOrEmpty(_rootPath)) return false;
-        if (string.Equals(Path.GetFullPath(folderPath), Path.GetFullPath(_rootPath), StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (!folderPath.StartsWith(_rootPath, StringComparison.OrdinalIgnoreCase))
+        var root = FindContainingNotesRoot(folderPath);
+        if (string.IsNullOrEmpty(folderPath) || string.IsNullOrEmpty(root)) return false;
+        if (string.Equals(Path.GetFullPath(folderPath), Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase))
             return false;
 
         try
         {
             // Resolve before delete so sibling order still includes the removed folder (AT-ND-1…3).
-            var nextPath = NotesDeleteNavigate.ResolveNextPath(_rootPath, folderPath, _currentPagePath);
+            var nextPath = NotesDeleteNavigate.ResolveNextPath(root, folderPath, _currentPagePath);
             var openAffected = NotesDeleteNavigate.IsOpenPageAffected(_currentPagePath, folderPath);
 
             _fsService.DeleteItem(folderPath, isFolder: true);
 
             if (openAffected)
+            {
                 CurrentPagePath = nextPath;
+                PersistLastOpenPage(nextPath);
+            }
             RefreshTree();
             StatusText = "Deleted";
             return true;
