@@ -1101,7 +1101,11 @@ public partial class CloudViewModel : ViewModelBase
         catch (Exception ex)
         {
             // Prod may lag LocalStand tip; never crash Cloud chrome on HTML/404 bodies.
-            StatusText = ShareSheetStrings.SharedByMeLoadFailed(lang) + " " + ex.Message;
+            // Soft-fail gateway HTML — do not append openresty dump to status strip.
+            var failed = ShareSheetStrings.SharedByMeLoadFailed(lang);
+            StatusText = CloudStatusFormatting.ShouldUseWaitingForNetworkStatus(ex)
+                ? failed
+                : failed + " " + CloudStatusFormatting.SanitizeMessage(ex.Message);
             return new List<CloudItemViewModel>();
         }
 

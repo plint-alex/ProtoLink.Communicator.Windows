@@ -63,7 +63,7 @@ public class CloudFolderSynchronizer
         }
         catch (Exception ex)
         {
-            reportStatus("Error: " + ex.Message);
+            reportStatus(CloudStatusFormatting.FormatSyncFailureStatus(ex));
             reportFullError?.Invoke(ex);
             return false;
         }
@@ -106,7 +106,7 @@ public class CloudFolderSynchronizer
         }
         catch (Exception ex)
         {
-            reportStatus("Error: " + ex.Message);
+            reportStatus(CloudStatusFormatting.FormatSyncFailureStatus(ex));
             reportFullError?.Invoke(ex);
             return false;
         }
@@ -152,7 +152,7 @@ public class CloudFolderSynchronizer
         }
         catch (Exception ex)
         {
-            reportStatus("Error: " + ex.Message);
+            reportStatus(CloudStatusFormatting.FormatSyncFailureStatus(ex));
             reportFullError?.Invoke(ex);
             return -1;
         }
@@ -186,7 +186,7 @@ public class CloudFolderSynchronizer
         }
         catch (Exception ex)
         {
-            reportStatus("Force upload error: " + ex.Message);
+            reportStatus(CloudStatusFormatting.FormatForceFailureStatus(ex, "upload"));
             reportFullError?.Invoke(ex);
             return false;
         }
@@ -220,7 +220,7 @@ public class CloudFolderSynchronizer
         }
         catch (Exception ex)
         {
-            reportStatus("Force download error: " + ex.Message);
+            reportStatus(CloudStatusFormatting.FormatForceFailureStatus(ex, "download"));
             reportFullError?.Invoke(ex);
             return false;
         }

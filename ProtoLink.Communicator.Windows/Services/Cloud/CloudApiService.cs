@@ -57,8 +57,13 @@ public class CloudApiService
         }
 
         var requestUri = response.RequestMessage?.RequestUri?.ToString() ?? "(unknown)";
+        // Never embed openresty/gateway HTML in HttpRequestException — Cloud status used to
+        // paint "Error: HTTP 504… Response: <html>…" (WIN_CLOUD_STATUS_GATEWAY_HTML).
+        var detail = CloudStatusFormatting.FormatHttpFailureDetail(response.StatusCode, body);
         throw new HttpRequestException(
-            $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Request: {requestUri}{Environment.NewLine}Response: {body}");
+            $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}. Request: {requestUri}. Response: {detail}",
+            inner: null,
+            statusCode: response.StatusCode);
     }
 
     public async Task<List<GetEntitiesResult>> GetEntitiesAsync(
