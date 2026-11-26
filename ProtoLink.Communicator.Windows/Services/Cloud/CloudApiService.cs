@@ -616,6 +616,30 @@ public class CloudApiService
                ?? new LeaveSharedWithMeResult { EntityId = entityId, Left = true };
     }
 
+    /// <summary>E12 owner me-only: remove My Cloud EntityRelations; keep grants/binaries.</summary>
+    public async Task<DetachFromMyCloudResult> DetachFromMyCloudAsync(Guid entityId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/DetachFromMyCloud", new DetachFromMyCloudContract
+        {
+            EntityId = entityId
+        });
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<DetachFromMyCloudResult>()
+               ?? new DetachFromMyCloudResult { EntityId = entityId, Detached = true };
+    }
+
+    /// <summary>E12 CanWrite for-all: revoke external grants + cascade soft-hide + CloudFile blobs.</summary>
+    public async Task<DeleteSharedForAllResult> DeleteSharedForAllAsync(Guid entityId)
+    {
+        var response = await _http.PostAsJsonAsync("api/Share/DeleteSharedForAll", new DeleteSharedForAllContract
+        {
+            EntityId = entityId
+        });
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<DeleteSharedForAllResult>()
+               ?? new DeleteSharedForAllResult { EntityId = entityId, Deleted = true };
+    }
+
     /// <summary>AT-S53: outbound share roots the caller can write (people/guest/public summary).</summary>
     public async Task<List<SharedByMeRootResult>> ListSharedByMeAsync(int skip = 0, int? take = null)
     {

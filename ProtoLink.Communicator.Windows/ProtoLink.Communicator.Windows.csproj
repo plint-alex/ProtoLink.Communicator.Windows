@@ -8,9 +8,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-  <Version>1.0.133</Version>
-  <AssemblyVersion>1.0.133.0</AssemblyVersion>
-  <FileVersion>1.0.133.0</FileVersion>
+  <Version>1.0.134</Version>
+  <AssemblyVersion>1.0.134.0</AssemblyVersion>
+  <FileVersion>1.0.134.0</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>

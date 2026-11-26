@@ -83,6 +83,33 @@ public sealed class LeaveSharedWithMeResult
     public bool Left { get; set; }
 }
 
+/// <summary>E12 owner me-only: detach My Cloud parent relations; keep grants.</summary>
+public sealed class DetachFromMyCloudContract
+{
+    public Guid EntityId { get; set; }
+}
+
+public sealed class DetachFromMyCloudResult
+{
+    public Guid EntityId { get; set; }
+    public bool Detached { get; set; }
+    public int RemovedRelationCount { get; set; }
+    public bool MainParentCleared { get; set; }
+}
+
+/// <summary>E12 CanWrite for-all: revoke external grants + cascade DeleteEntity.</summary>
+public sealed class DeleteSharedForAllContract
+{
+    public Guid EntityId { get; set; }
+}
+
+public sealed class DeleteSharedForAllResult
+{
+    public Guid EntityId { get; set; }
+    public int RevokedPrincipalCount { get; set; }
+    public bool Deleted { get; set; }
+}
+
 /// <summary>Outbound Shared by me root (AT-S51 / AT-S52 / AT-S53). No raw tokens.</summary>
 public sealed class SharedByMeRootResult
 {

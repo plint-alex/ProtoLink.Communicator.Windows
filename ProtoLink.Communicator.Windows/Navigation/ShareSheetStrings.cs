@@ -205,8 +205,8 @@ public static class ShareSheetStrings
 
     public static string CanEditHelper(string? lang) =>
         IsRussian(lang)
-            ? "Редактирование также позволяет делиться и отключать ссылки."
-            : "Can edit also lets them share and turn off links.";
+            ? "С правом редактирования можно добавлять, изменять и удалять. Также можно делиться и отключать ссылки."
+            : "Can edit means add, edit, and delete. They can also share and turn off links.";
 
     public static string Access(string? lang) =>
         IsRussian(lang) ? "Доступ" : "Access";

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -6,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
+using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Utilities;
@@ -446,12 +448,20 @@ public partial class CloudView : System.Windows.Controls.UserControl
     {
         if (_vm?.CurrentEntity is null) return;
         var entity = _vm.CurrentEntity;
-        var message = entity.IsFolder
-            ? $"Delete folder \"{entity.Name}\" and all its contents?"
-            : $"Delete file \"{entity.Name}\"?";
-        if (System.Windows.MessageBox.Show(message, "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-            return;
-        _vm.DeleteCurrentCommand.Execute(null);
+        var listed = _vm.Items.FirstOrDefault(i => i.Id == entity.Id);
+        var item = listed ?? new CloudItemViewModel
+        {
+            Id = entity.Id,
+            Name = entity.Name,
+            IsFolder = entity.IsFolder,
+            IsShareRoot = _vm.IsSwmShareRootItem(new CloudItemViewModel
+            {
+                Id = entity.Id,
+                Name = entity.Name,
+                IsFolder = entity.IsFolder
+            })
+        };
+        _ = ConfirmAndDeleteAsync(item);
     }
 
     private void OnListScrollRestoreRequested(double offset)
@@ -705,14 +715,38 @@ public partial class CloudView : System.Windows.Controls.UserControl
         menu.Items.Add(deleteItem);
     }
 
-    private void OnDeleteItem(CloudItemViewModel item)
+    private void OnDeleteItem(CloudItemViewModel item) => _ = ConfirmAndDeleteAsync(item);
+
+    private async Task ConfirmAndDeleteAsync(CloudItemViewModel item)
     {
+        if (_vm == null) return;
+        var lang = _vm.ShareSheet.Lang;
+        var shared = await _vm.ResolveIsSharedDeleteTargetAsync(item);
+        if (shared)
+        {
+            var choice = SharedCloudDeleteDialog.Show(
+                lang,
+                item.Name,
+                item.IsFolder,
+                canWriteForAll: _vm.CanDeleteItem(item));
+            if (choice == SharedCloudDeleteChoice.ForMeOnly)
+                await _vm.DeleteSharedForMeOnlyAsync(item);
+            else if (choice == SharedCloudDeleteChoice.ForAll)
+                await _vm.DeleteSharedForAllAsync(item);
+            return;
+        }
+
         var message = item.IsFolder
             ? $"Delete folder \"{item.Name}\" and all its contents?"
             : $"Delete file \"{item.Name}\"?";
-        if (System.Windows.MessageBox.Show(message, "Confirm delete", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (System.Windows.MessageBox.Show(
+                message,
+                "Confirm delete",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
-        _vm!.DeleteCommand.Execute(item);
+        if (_vm.DeleteCommand.CanExecute(item))
+            _vm.DeleteCommand.Execute(item);
     }
 
     private void OnLeaveSharedItem(CloudItemViewModel item)

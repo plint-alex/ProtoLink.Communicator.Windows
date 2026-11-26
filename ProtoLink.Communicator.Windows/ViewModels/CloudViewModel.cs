@@ -55,6 +55,8 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Dictionary<Guid, string> _shareRootCaptions = new();
     /// <summary>CanWrite from SharedWithMe listing; survives navigation into share-root descendants.</summary>
     private readonly Dictionary<Guid, bool> _shareRootCanWrite = new();
+    /// <summary>Outbound Shared-by-me root ids (E12 me/all detect without re-probe).</summary>
+    private readonly HashSet<Guid> _outboundShareRootIds = new();
     /// <summary>Session tombstones after Cloud delete — Soft Ready must not resurrect them.</summary>
     private readonly HashSet<Guid> _deletedRemoteIds = new();
     private string? _folderSizeSummary;
@@ -1165,6 +1167,7 @@ public partial class CloudViewModel : ViewModelBase
                 root.HasPublicAccess);
             if (!string.IsNullOrWhiteSpace(caption))
                 _shareRootCaptions[root.EntityId] = caption;
+            _outboundShareRootIds.Add(root.EntityId);
             fresh.Add(new CloudItemViewModel
             {
                 Id = root.EntityId,
@@ -1179,6 +1182,48 @@ public partial class CloudViewModel : ViewModelBase
         }
 
         return fresh;
+    }
+
+    /// <summary>E12: whether Delete should offer me-only vs for-all (share roots / outbound grants).</summary>
+    public bool IsSwmShareRootItem(CloudItemViewModel item)
+    {
+        if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return false;
+        if (IsSharedWithMeListing && item.IsShareRoot) return true;
+        var active = CloudSharedScope.TryGetActiveShareRootId(BreadcrumbPath.Select(b => b.Id));
+        return active == item.Id && _shareRootCanWrite.ContainsKey(item.Id);
+    }
+
+    public async Task<bool> ResolveIsSharedDeleteTargetAsync(CloudItemViewModel item)
+    {
+        if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return false;
+        var swmRoot = IsSwmShareRootItem(item);
+        if (CloudSharedDelete.IsSharedDeleteTarget(
+                swmRoot,
+                _outboundShareRootIds.Contains(item.Id),
+                hasExternalGrants: false))
+            return true;
+
+        try
+        {
+            var grants = await _api.ListShareGrantsAsync(item.Id);
+            if (grants.Count > 0)
+            {
+                _outboundShareRootIds.Add(item.Id);
+                return true;
+            }
+        }
+        catch
+        {
+            // Probe failed — keep E10 single confirm rather than block delete.
+        }
+
+        return false;
+    }
+
+    public void RememberOutboundShareRoot(Guid entityId)
+    {
+        if (entityId != Guid.Empty)
+            _outboundShareRootIds.Add(entityId);
     }
 
     private string? ResolveListingMetaName(Guid remoteId)

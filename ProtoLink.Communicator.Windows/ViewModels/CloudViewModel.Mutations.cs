@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
+using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
@@ -149,7 +150,45 @@ public partial class CloudViewModel
         await _api.AddFileAsync(entityId, fileName, stream, mime);
     }
 
-    private async Task DeleteAsync(CloudItemViewModel item)
+    private async Task DeleteAsync(CloudItemViewModel item) =>
+        await DeleteCloudTreeAsync(item, forAllShared: false);
+
+    /// <summary>E12 For all users — revoke grants + cascade delete (Api DeleteSharedForAll).</summary>
+    public async Task DeleteSharedForAllAsync(CloudItemViewModel item) =>
+        await DeleteCloudTreeAsync(item, forAllShared: true);
+
+    /// <summary>E12 For me only — Leave (SWM) or DetachFromMyCloud (owner outbound).</summary>
+    public async Task DeleteSharedForMeOnlyAsync(CloudItemViewModel item)
+    {
+        try
+        {
+            if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return;
+            var lang = _settingsService.LoadSettings().UiLanguage;
+            if (CloudSharedDelete.PreferLeaveForMeOnly(IsSwmShareRootItem(item)))
+            {
+                await LeaveSharedAsync(item.Id);
+                return;
+            }
+
+            StatusText = "Removing…";
+            await _api.DetachFromMyCloudAsync(item.Id);
+            _outboundShareRootIds.Remove(item.Id);
+            _shareRootCaptions.Remove(item.Id);
+            Items.Remove(item);
+            _locations.Remove(item.Id);
+            if (CurrentEntity?.Id == item.Id && ListedFolderId is { } listedId &&
+                _locations.TryGetValue(listedId, out var folder))
+                CurrentEntity = folder.Entity;
+            StatusText = CloudSharedDeleteStrings.DetachedStatus(lang, item.Name);
+            await LoadCurrentAsync();
+        }
+        catch (Exception ex)
+        {
+            ReportCaughtException(ex);
+        }
+    }
+
+    private async Task DeleteCloudTreeAsync(CloudItemViewModel item, bool forAllShared)
     {
         try
         {
@@ -165,7 +204,7 @@ public partial class CloudViewModel
             var localMirror = CloudMappingMirrorPaths.GetLocalPathForCloudItem(item, BreadcrumbPath, SyncMappings);
             var wasMappedRoot = item.IsFolder && IsFolderSynced(item.Id);
             // Known local subtree ids (UI tree / Soft Ready meta / listing) — purge after
-            // single-root DeleteEntity; do not N+1 GetEntities+DeleteEntity (Api cascade).
+            // single-root delete; do not N+1 GetEntities+DeleteEntity (Api cascade).
             var deletedIds = new HashSet<Guid>();
             if (item.IsFolder)
                 CollectKnownLocalSubtreeIds(item.Id, deletedIds);
@@ -178,33 +217,39 @@ public partial class CloudViewModel
                 // Release Sync file handles under parent maps before Directory.Delete (AT-CFD-6).
                 await _mappedSync.CancelAndWaitIdleAsync(TimeSpan.FromSeconds(8));
 
-                // One DeleteEntity on root — Api cascade soft-hides Cloud subtree (prod ≥1.0.92).
                 // Fail-closed: if this throws, do not pretend gone / purge as success.
-                await CloudFolderDelete.DeleteSingleRootAsync(
-                    item.Id,
-                    id => _api.DeleteEntityAsync(id),
-                    deletedIds);
+                if (forAllShared)
+                {
+                    await _api.DeleteSharedForAllAsync(item.Id);
+                    deletedIds.Add(item.Id);
+                }
+                else
+                {
+                    await CloudFolderDelete.DeleteSingleRootAsync(
+                        item.Id,
+                        id => _api.DeleteEntityAsync(id),
+                        deletedIds);
+                }
+
+                _outboundShareRootIds.Remove(item.Id);
+                _shareRootCaptions.Remove(item.Id);
+                _shareRootCanWrite.Remove(item.Id);
 
                 // Soft Ready paints sync-meta children when GetEntities times out — purge so
                 // deleted ids cannot resurrect after a successful Cloud soft-hide (E10 regress).
-                // Shared store with SyncEngine (ctor) so AutoPush cannot rewrite purged rows.
                 _listingMetaStore.RemoveByRemoteIds(deletedIds);
                 _listingDiskCache.RemoveRemoteIds(deletedIds);
                 foreach (var id in deletedIds)
                     _deletedRemoteIds.Add(id);
                 PurgeDeletedFromFolderTree(deletedIds);
 
-                // Covering parent maps (MyNotesFolder) may hold twin meta for the same local tree —
-                // drop those rows so Soft Ready / Compare cannot treat the path as still synced.
                 if (!string.IsNullOrWhiteSpace(localMirror))
                     PurgeCoveringParentMetaForMirror(localMirror);
 
                 // NFR-SYNC-1: mirror IO soft-fails; Cloud tree already deleted.
-                // Serialize with Sync disk ops; retries inside DeleteLocalMirror.
                 await MappedFolderIoGate.RunSyncAsync(() =>
                     CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror));
 
-                // Prevent parent-map SeedInventory / ForcePull from rematerializing the tree.
                 if (!string.IsNullOrWhiteSpace(localMirror))
                     Services.Sync.DeletedLocalMirrorTombstones.Remember(localMirror);
 
