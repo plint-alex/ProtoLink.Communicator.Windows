@@ -83,6 +83,70 @@ public class CloudFolderDeleteTests
     }
 
     [Fact]
+    public async Task DeleteFolderRecursive_NestedDepth_LeafFirstNoPromoteOrder()
+    {
+        // Deeper than shallow AT-CFD 1.0.124 fixtures: root → mid → leafFolder → file.
+        var order = new List<Guid>();
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var mid = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var leafFolder = Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        var leafFile = Guid.Parse("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        var tree = new Dictionary<Guid, List<CloudFolderDelete.ChildRef>>
+        {
+            [root] = [new(mid, CloudEntityCodes.CloudFolder)],
+            [mid] = [new(leafFolder, CloudEntityCodes.CloudFolder)],
+            [leafFolder] = [new(leafFile, CloudEntityCodes.CloudFile)]
+        };
+
+        await CloudFolderDelete.DeleteFolderRecursiveAsync(
+            root,
+            id => Task.FromResult<IReadOnlyList<CloudFolderDelete.ChildRef>>(
+                tree.TryGetValue(id, out var kids) ? kids : Array.Empty<CloudFolderDelete.ChildRef>()),
+            id =>
+            {
+                order.Add(id);
+                return Task.CompletedTask;
+            });
+
+        Assert.Equal(new[] { leafFile, leafFolder, mid, root }, order);
+    }
+
+    [Fact]
+    public async Task DeleteFolderRecursive_ListChildrenThrows_DoesNotDeleteParent()
+    {
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var order = new List<Guid>();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CloudFolderDelete.DeleteFolderRecursiveAsync(
+                root,
+                _ => throw new InvalidOperationException("simulated GetEntities 504"),
+                id =>
+                {
+                    order.Add(id);
+                    return Task.CompletedTask;
+                }));
+        Assert.Empty(order);
+    }
+
+    [Fact]
+    public async Task DeleteFolderRecursive_ListChildrenNull_DoesNotDeleteParent()
+    {
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var order = new List<Guid>();
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CloudFolderDelete.DeleteFolderRecursiveAsync(
+                root,
+                _ => Task.FromResult<IReadOnlyList<CloudFolderDelete.ChildRef>>(null!),
+                id =>
+                {
+                    order.Add(id);
+                    return Task.CompletedTask;
+                }));
+        Assert.Contains("promote", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(order);
+    }
+
+    [Fact]
     public void RemoveByRemoteIds_DropsSoftReadyChildren()
     {
         var dir = Path.Combine(Path.GetTempPath(), "ProtoLinkTests", "cfd-meta-" + Guid.NewGuid().ToString("N"));

@@ -170,12 +170,19 @@ public partial class CloudViewModel
             {
                 if (item.IsFolder)
                 {
+                    // Leaf-first recursive DeleteEntity (defense-in-depth vs Api cascade).
+                    // Fail-closed: GetEntities throw/null aborts — never soft-hide parent alone.
                     await CloudFolderDelete.DeleteFolderRecursiveAsync(
                         item.Id,
                         async id =>
                         {
                             var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false);
-                            return (kids ?? new List<GetEntitiesResult>())
+                            if (kids == null)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Cloud folder delete listing failed under {id:D}; aborting to avoid promote.");
+                            }
+                            return kids
                                 .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code, c.TypeEntityId))
                                 .ToList();
                         },

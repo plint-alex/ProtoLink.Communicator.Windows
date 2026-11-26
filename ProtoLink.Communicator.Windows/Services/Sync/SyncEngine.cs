@@ -759,10 +759,48 @@ public sealed partial class SyncEngine
             }
         }
 
+        // Deepest-first so child meta rows usually go first; folder Removed still uses
+        // leaf-first cascade so incomplete meta cannot DeleteEntity(parent) alone → promote.
+        var alreadyDeleted = new HashSet<Guid>();
         foreach (var rm in changes.OfType<LocalChange.Removed>().OrderByDescending(x => x.Meta.RelativePath.Count(c => c == '/')))
         {
             ct.ThrowIfCancellationRequested();
-            await _api.DeleteEntityAsync(rm.Meta.RemoteId);
+            if (!alreadyDeleted.Add(rm.Meta.RemoteId))
+            {
+                _store.Delete(mapping.Id, rm.Meta.RelativePath);
+                dirty.Add(SyncPathUtil.Normalize(rm.Meta.RelativePath));
+                continue;
+            }
+
+            if (rm.Meta.IsFolder)
+            {
+                var cascadeDeleted = new HashSet<Guid>();
+                await CloudFolderDelete.DeleteFolderRecursiveAsync(
+                    rm.Meta.RemoteId,
+                    async id =>
+                    {
+                        var kids = await _api.GetEntitiesAsync(new[] { id }, includeValues: false)
+                            .ConfigureAwait(false);
+                        // Fail-closed: null listing must not soft-hide parent alone.
+                        if (kids == null)
+                        {
+                            throw new InvalidOperationException(
+                                $"Cloud delete listing failed under {id:D}; aborting Sync folder delete to avoid promote.");
+                        }
+                        return kids
+                            .Select(c => new CloudFolderDelete.ChildRef(c.Id, c.Code, c.TypeEntityId))
+                            .ToList();
+                    },
+                    id => _api.DeleteEntityAsync(id),
+                    cascadeDeleted).ConfigureAwait(false);
+                foreach (var id in cascadeDeleted)
+                    alreadyDeleted.Add(id);
+            }
+            else
+            {
+                await _api.DeleteEntityAsync(rm.Meta.RemoteId).ConfigureAwait(false);
+            }
+
             _store.Delete(mapping.Id, rm.Meta.RelativePath);
             dirty.Add(SyncPathUtil.Normalize(rm.Meta.RelativePath));
             applied++;

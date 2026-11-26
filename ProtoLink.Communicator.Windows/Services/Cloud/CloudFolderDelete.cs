@@ -3,7 +3,8 @@ using ProtoLink.Communicator.Windows.Core;
 namespace ProtoLink.Communicator.Windows.Services;
 
 /// <summary>
-/// E10 Cloud folder delete — recursive DeleteEntity order (Api has no cascade).
+/// E10 Cloud folder delete — leaf-first recursive DeleteEntity (defense-in-depth while/after
+/// Api CloudFolder cascade). Children must never promote to the deleted folder’s level.
 /// Mirrors Android <c>CloudFolderDelete.deleteFolderRecursive</c>.
 /// </summary>
 public static class CloudFolderDelete
@@ -13,6 +14,8 @@ public static class CloudFolderDelete
     /// <summary>
     /// Depth-first: delete file children, recurse folder children, then delete
     /// <paramref name="folderId"/>. Skips self-id rows and non cloud folder/file rows.
+    /// Fail-closed: if <paramref name="listChildren"/> throws or returns null, aborts
+    /// without deleting <paramref name="folderId"/> (do not soft-hide parent alone → promote).
     /// </summary>
     public static async Task DeleteFolderRecursiveAsync(
         Guid folderId,
@@ -20,7 +23,10 @@ public static class CloudFolderDelete
         Func<Guid, Task> deleteEntity,
         ICollection<Guid>? deletedIds = null)
     {
-        var children = await listChildren(folderId).ConfigureAwait(false);
+        var children = await listChildren(folderId).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                $"Cloud folder delete listing returned null under {folderId:D}; aborting to avoid promote.");
+
         foreach (var c in children)
         {
             if (c.Id == folderId)
