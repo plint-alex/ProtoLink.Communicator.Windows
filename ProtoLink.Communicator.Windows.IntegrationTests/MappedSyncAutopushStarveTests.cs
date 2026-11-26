@@ -167,6 +167,50 @@ public class MappedSyncAutopushStarveTests
     }
 
     [Fact]
+    public async Task BudgetedPush_WhenMetaNeedsRemoteBootstrap_DivertsToUnlimitedFullSync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-autopush-heal-divert-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new HangThenFullFake { ReportNeedsRemoteBootstrap = true };
+            var mappings = new ObservableCollection<CloudSyncMapping>
+            {
+                new()
+                {
+                    CloudFolderId = Guid.NewGuid(),
+                    LocalPath = root,
+                    CloudFolderName = "collapsed-map"
+                }
+            };
+
+            var coordinator = new CloudMappedSyncCoordinator(
+                fake,
+                new CloudApiService(new HttpClient()),
+                mappings,
+                reloadCurrentFolderAsync: () => Task.CompletedTask,
+                setStatus: _ => { },
+                syncFullErrorReporter: null,
+                dispatcher: null,
+                isAuthenticated: () => true,
+                getUserId: () => null,
+                onAuthRequired: null,
+                onSyncCompleted: null,
+                startInterval: false);
+
+            await coordinator.RequestLocalPushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, fake.SynchronizeAllCount);
+            Assert.Equal(0, fake.PushCompletedCount);
+            Assert.False(fake.PushWasCancelled);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
     public async Task RequestFullSync_WhileUnlimitedFullActive_CoalescesWithoutCancel()
     {
         var root = Path.Combine(Path.GetTempPath(), "pl-full-coalesce-" + Guid.NewGuid().ToString("N"));
@@ -232,6 +276,11 @@ public class MappedSyncAutopushStarveTests
         public int PushCompletedCount { get; private set; }
         public bool AllowPushToCompleteImmediately { get; set; }
         public bool HangSynchronizeAll { get; set; }
+        /// <summary>Default false so starve tests exercise Push; set true to assert heal divert.</summary>
+        public bool ReportNeedsRemoteBootstrap { get; set; }
+
+        public override bool AnyMappingNeedsRemoteBootstrap(IEnumerable<CloudSyncMapping> mappings) =>
+            ReportNeedsRemoteBootstrap;
 
         public override async Task<int> PushLocalChangesAllAsync(
             IEnumerable<CloudSyncMapping> mappings,

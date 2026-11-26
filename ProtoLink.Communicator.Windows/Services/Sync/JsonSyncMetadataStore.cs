@@ -234,6 +234,21 @@ public sealed class JsonSyncMetadataStore
         }
     }
 
+    /// <summary>
+    /// Persist dirty items while a batch stays open so a later cancel/preempt cannot
+    /// roll back inventory already rebuilt (near-empty meta heal under AutoPushBudget).
+    /// </summary>
+    public void FlushBatchCheckpoint()
+    {
+        EnsureLoaded();
+        lock (_gate)
+        {
+            if (!_dirty) return;
+            SaveUnlocked();
+            _dirty = false;
+        }
+    }
+
     /// <summary>Test observation: deferred disk write pending inside an open batch.</summary>
     internal bool IsDirtyForTests
     {

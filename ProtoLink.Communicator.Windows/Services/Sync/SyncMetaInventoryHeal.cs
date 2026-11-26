@@ -3,15 +3,16 @@ using System.IO;
 namespace ProtoLink.Communicator.Windows.Services.Sync;
 
 /// <summary>
-/// Detects empty / folders-only / near-empty file inventory so Sync bootstraps from remote
+/// Detects empty / folders-only / near-empty file inventory so Sync seeds inventory from remote
 /// instead of treating a collapsed meta as warm (sticky Syncing… / blind AutoPush).
 /// Live 1.0.119 cite: 317 folders + 2 files while local MyNotesFolder ~18k files — the
 /// strict folders-only gate skipped heal because two residual file rows remained.
+/// 1.0.120 still FAIL: budgeted Push→Reconcile cancelled during WalkRemote before any meta flush.
 /// </summary>
 internal static class SyncMetaInventoryHeal
 {
     /// <summary>
-    /// True when metadata must be rebuilt via <c>BootstrapFromRemote</c> / full Reconcile
+    /// True when metadata must be rebuilt via inventory seed / full Reconcile
     /// before push or compare can converge.
     /// </summary>
     public static bool NeedsRemoteBootstrap(

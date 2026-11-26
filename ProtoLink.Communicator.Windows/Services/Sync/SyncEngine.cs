@@ -33,9 +33,11 @@ public sealed partial class SyncEngine
             ct.ThrowIfCancellationRequested();
             var meta = _store.GetAll(mapping.Id);
             // Empty / folders-only / near-empty file inventory (partial Force or interrupted
-            // bootstrap left folders + few file rows) → pull remote files before Compare.
+            // bootstrap left folders + few file rows) → seed remote inventory before Compare.
+            // Inventory-only (no getFile): ApplyRemote materializes missing locals; cancel after
+            // checkpoints must leave file rows on disk (1.0.120 live FAIL under AutoPushBudget).
             if (SyncMetaInventoryHeal.NeedsRemoteBootstrap(meta, mapping.LocalRootPath))
-                await BootstrapFromRemoteAsync(mapping, ct);
+                await SeedInventoryFromRemoteAsync(mapping, ct);
         }
 
         var remoteLocated = new List<RemoteLocated>();
@@ -317,18 +319,49 @@ public sealed partial class SyncEngine
         }
     }
 
-    private async Task BootstrapFromRemoteAsync(SyncMappingInfo mapping, CancellationToken ct)
+    /// <summary>
+    /// Rebuild sync-meta folders + file rows from remote listing without getFile.
+    /// Existing locals are hashed in place; missing remotes stay out of meta so ApplyRemote
+    /// can still classify them as Added. Progressive checkpoints survive budget cancel.
+    /// </summary>
+    private async Task SeedInventoryFromRemoteAsync(SyncMappingInfo mapping, CancellationToken ct)
     {
         var located = new List<RemoteLocated>();
-        await WalkRemoteAsync(mapping.CloudFolderId, mapping.Id, "", located, ct);
-        await EnrichRemoteSizesAsync(located, ct);
-        foreach (var loc in located.OrderBy(l => l.RelativePath.Count(c => c == '/')))
+        var checkpointCounter = new int[1];
+        await WalkRemoteAsync(
+            mapping.CloudFolderId,
+            mapping.Id,
+            "",
+            located,
+            ct,
+            onFolderListed: batch =>
+            {
+                SeedDiscoveredInventory(mapping, batch);
+                // Parallel WalkRemote folders — Interlocked so cancel still sees disk progress.
+                if (Interlocked.Increment(ref checkpointCounter[0]) % 8 == 0)
+                    _store.FlushBatchCheckpoint();
+            });
+        // Final inventory persist before Compare/Apply* (or cancel) so disk leaves folders-nearly-only.
+        _store.FlushBatchCheckpoint();
+        RecomputeFolderSizes(mapping);
+        _store.FlushBatchCheckpoint();
+    }
+
+    private void SeedDiscoveredInventory(SyncMappingInfo mapping, IReadOnlyList<RemoteLocated> batch)
+    {
+        foreach (var loc in batch)
         {
-            ct.ThrowIfCancellationRequested();
-            var full = Path.Combine(mapping.LocalRootPath, loc.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            var full = Path.Combine(
+                mapping.LocalRootPath,
+                loc.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             if (loc.Entry.IsFolder)
             {
-                Directory.CreateDirectory(full);
+                try { Directory.CreateDirectory(full); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SyncMissingLocalPath.Log("SeedInventory", loc.RelativePath, full, ex);
+                }
+
                 _store.Upsert(new SyncItemMeta
                 {
                     MappingId = mapping.Id,
@@ -339,69 +372,40 @@ public sealed partial class SyncEngine
                     SizeBytes = 0,
                     RemoteUpdateTime = loc.Entry.UpdateTime
                 });
+                continue;
             }
-            else
+
+            // Only seed file rows when local bytes exist — missing remotes stay for ApplyRemote.Added.
+            if (!File.Exists(full))
+                continue;
+
+            long len;
+            try { len = new FileInfo(full).Length; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                var missing = !File.Exists(full);
-                // Always pull when missing; when present, download and keep remote if hashes differ
-                // (bootstrap has no meta baseline — prefer cloud so devices share one tree).
-                var remoteBytes = await DownloadBytesOrNullAsync(loc.Entry.Id, ct);
-                if (remoteBytes != null)
-                {
-                    if (remoteBytes.Length > 0)
-                    {
-                        if (missing)
-                        {
-                            await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                        }
-                        else
-                        {
-                            var localHash = ContentHashUtil.TrySha256HexFile(full);
-                            if (localHash == null)
-                            {
-                                SyncMissingLocalPath.Log("BootstrapFromRemote", loc.RelativePath, full);
-                                await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                            }
-                            else
-                            {
-                                var remoteHash = ContentHashUtil.Sha256Hex(remoteBytes);
-                                if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
-                                    await MappedFolderIoGate.WriteAllBytesAsync(full, remoteBytes, ct);
-                            }
-                        }
-                    }
-                    else if (missing)
-                        continue; // no empty placeholders
-                }
-                else if (missing)
-                    continue;
-                var len = File.Exists(full) ? new FileInfo(full).Length : 0L;
-                if (missing && len == 0L && !File.Exists(full)) continue;
-                string bootHash = "";
-                if (File.Exists(full))
-                {
-                    var hashed = ContentHashUtil.TrySha256HexFile(full);
-                    if (hashed == null)
-                    {
-                        SyncMissingLocalPath.Log("BootstrapFromRemote", loc.RelativePath, full);
-                        continue;
-                    }
-                    bootHash = hashed;
-                }
-                _store.Upsert(new SyncItemMeta
-                {
-                    MappingId = mapping.Id,
-                    RemoteId = loc.Entry.Id,
-                    ParentRemoteId = loc.Entry.ParentId,
-                    RelativePath = loc.RelativePath,
-                    IsFolder = false,
-                    SizeBytes = len,
-                    ContentHash = bootHash,
-                    RemoteUpdateTime = loc.Entry.UpdateTime
-                });
+                SyncMissingLocalPath.Log("SeedInventory", loc.RelativePath, full, ex);
+                continue;
             }
+
+            var hashed = ContentHashUtil.TrySha256HexFile(full);
+            if (hashed == null)
+            {
+                SyncMissingLocalPath.Log("SeedInventory", loc.RelativePath, full);
+                continue;
+            }
+
+            _store.Upsert(new SyncItemMeta
+            {
+                MappingId = mapping.Id,
+                RemoteId = loc.Entry.Id,
+                ParentRemoteId = loc.Entry.ParentId,
+                RelativePath = loc.RelativePath,
+                IsFolder = false,
+                SizeBytes = len,
+                ContentHash = hashed,
+                RemoteUpdateTime = loc.Entry.UpdateTime
+            });
         }
-        RecomputeFolderSizes(mapping);
     }
 
     private void RecomputeFolderSizes(SyncMappingInfo mapping)
@@ -940,7 +944,8 @@ public sealed partial class SyncEngine
         List<RemoteLocated> outList,
         CancellationToken ct,
         HashSet<Guid>? visitedIds = null,
-        HashSet<string>? seenPaths = null)
+        HashSet<string>? seenPaths = null,
+        Action<IReadOnlyList<RemoteLocated>>? onFolderListed = null)
     {
         visitedIds ??= new HashSet<Guid>();
         seenPaths ??= new HashSet<string>(StringComparer.Ordinal);
@@ -956,7 +961,7 @@ public sealed partial class SyncEngine
         using var throttle = new SemaphoreSlim(GetEntitiesThrottlingHandler.SyncLaneConcurrency);
         await WalkRemoteParallelAsync(
             folderId, mappingId, relativeParent, outList, ct, visitedIds, seenPaths, gate, throttle,
-            metaByRemoteId);
+            metaByRemoteId, onFolderListed);
     }
 
     private async Task WalkRemoteParallelAsync(
@@ -969,7 +974,8 @@ public sealed partial class SyncEngine
         HashSet<string> seenPaths,
         object gate,
         SemaphoreSlim throttle,
-        IReadOnlyDictionary<Guid, SyncItemMeta> metaByRemoteId)
+        IReadOnlyDictionary<Guid, SyncItemMeta> metaByRemoteId,
+        Action<IReadOnlyList<RemoteLocated>>? onFolderListed = null)
     {
         // Cold bootstrap (empty meta): IncludeValues listing per folder.
         // Warm reconcile: structure-only first; if every CloudFile/Folder child is already in meta,
@@ -1014,6 +1020,7 @@ public sealed partial class SyncEngine
         }
 
         var subfolders = new List<(Guid Id, string Rel)>();
+        List<RemoteLocated>? listedHere = onFolderListed == null ? null : new List<RemoteLocated>();
         lock (gate)
         {
             foreach (var child in children)
@@ -1055,15 +1062,21 @@ public sealed partial class SyncEngine
                     IsFolder = isFolder,
                     UpdateTime = listingUpdate
                 };
-                outList.Add(new RemoteLocated { Entry = entry, MappingId = mappingId, RelativePath = rel });
+                var located = new RemoteLocated { Entry = entry, MappingId = mappingId, RelativePath = rel };
+                outList.Add(located);
+                listedHere?.Add(located);
                 if (isFolder)
                     subfolders.Add((child.Id, rel));
             }
         }
 
+        if (listedHere is { Count: > 0 })
+            onFolderListed!(listedHere);
+
         if (subfolders.Count == 0) return;
         await Task.WhenAll(subfolders.Select(sf => WalkRemoteParallelAsync(
-            sf.Id, mappingId, sf.Rel, outList, ct, visitedIds, seenPaths, gate, throttle, metaByRemoteId)));
+            sf.Id, mappingId, sf.Rel, outList, ct, visitedIds, seenPaths, gate, throttle, metaByRemoteId,
+            onFolderListed)));
     }
 
     private Guid? ResolveParentId(SyncMappingInfo mapping, string parentPath)

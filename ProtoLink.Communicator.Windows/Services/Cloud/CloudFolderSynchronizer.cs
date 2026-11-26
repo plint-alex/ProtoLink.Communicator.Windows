@@ -234,6 +234,25 @@ public class CloudFolderSynchronizer
         CloudFolderName = m.CloudFolderName ?? ""
     };
 
+    /// <summary>
+    /// True when any mapped root has empty / folders-only / near-empty file meta that must
+    /// heal via unlimited Reconcile — not under <c>AutoPushBudget</c> (1.0.120 live FAIL).
+    /// </summary>
+    public virtual bool AnyMappingNeedsRemoteBootstrap(IEnumerable<CloudSyncMapping> mappings)
+    {
+        foreach (var m in mappings)
+        {
+            if (string.IsNullOrWhiteSpace(m.LocalPath) || !Directory.Exists(m.LocalPath))
+                continue;
+            var id = m.CloudFolderId.ToString("N");
+            var meta = _store.GetAll(id);
+            if (SyncMetaInventoryHeal.NeedsRemoteBootstrap(meta, Path.GetFullPath(m.LocalPath)))
+                return true;
+        }
+
+        return false;
+    }
+
     internal static bool IsAuthFailure(Exception ex)
     {
         for (var e = ex; e != null; e = e.InnerException)

@@ -221,6 +221,139 @@ public class SyncMetaFileCollapseHealTests
     }
 
     [Fact]
+    public void FlushBatchCheckpoint_MidOpenBatch_PersistsFileRowsBeforeCancel()
+    {
+        // 1.0.120 live class: Reconcile RunInBatch held dirty Upserts until EndBatch; AutoPushBudget
+        // cancel during WalkRemote left disk at folders-nearly-only. Checkpoint must flush early.
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-meta-checkpoint-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(metaDir);
+        var store = new JsonSyncMetadataStore(metaDir);
+        var mappingId = Guid.NewGuid().ToString("N");
+        var fileId = Guid.NewGuid();
+
+        store.BeginBatch();
+        for (var i = 0; i < 12; i++)
+        {
+            store.Upsert(new SyncItemMeta
+            {
+                MappingId = mappingId,
+                RemoteId = Guid.NewGuid(),
+                ParentRemoteId = Guid.NewGuid(),
+                RelativePath = $"shell-{i}",
+                IsFolder = true
+            });
+        }
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = fileId,
+            ParentRemoteId = Guid.NewGuid(),
+            RelativePath = "films/index.html",
+            IsFolder = false,
+            SizeBytes = 4,
+            ContentHash = "abcd"
+        });
+        Assert.True(store.IsDirtyForTests);
+        store.FlushBatchCheckpoint();
+        Assert.False(store.IsDirtyForTests);
+        Assert.True(store.BatchDepthForTests >= 1, "batch must stay open after checkpoint");
+
+        // Simulate cancel without EndBatch (process kill / abandoned batch) — disk still has file row.
+        var reloaded = new JsonSyncMetadataStore(metaDir);
+        Assert.Contains(reloaded.GetAll(mappingId), m => !m.IsFolder && m.RemoteId == fileId);
+
+        store.EndBatch();
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
+    public async Task Reconcile_NearEmpty_SeedsExistingLocalFileWithoutGetFile()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pl-meta-collapse-seed-" + Guid.NewGuid().ToString("N"));
+        var metaDir = Path.Combine(Path.GetTempPath(), "pl-meta-collapse-seed-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(metaDir);
+        Directory.CreateDirectory(Path.Combine(root, "films"));
+        const string localBody = "already-on-disk";
+        File.WriteAllText(Path.Combine(root, "films", "index.html"), localBody);
+        for (var i = 0; i < 20; i++)
+            File.WriteAllText(Path.Combine(root, $"extra-{i}.txt"), "x");
+
+        var mappingId = Guid.NewGuid().ToString("N");
+        var cloudFolderId = Guid.NewGuid();
+        var filmsFolderId = Guid.NewGuid();
+        var filmsFileId = Guid.NewGuid();
+        var store = new JsonSyncMetadataStore(metaDir);
+        for (var i = 0; i < 10; i++)
+        {
+            store.Upsert(new SyncItemMeta
+            {
+                MappingId = mappingId,
+                RemoteId = Guid.NewGuid(),
+                ParentRemoteId = cloudFolderId,
+                RelativePath = $"shell-{i}",
+                IsFolder = true
+            });
+            Directory.CreateDirectory(Path.Combine(root, $"shell-{i}"));
+        }
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = filmsFolderId,
+            ParentRemoteId = cloudFolderId,
+            RelativePath = "films",
+            IsFolder = true
+        });
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = Guid.NewGuid(),
+            ParentRemoteId = filmsFolderId,
+            RelativePath = "films/residual-a.txt",
+            IsFolder = false,
+            SizeBytes = 1
+        });
+        store.Upsert(new SyncItemMeta
+        {
+            MappingId = mappingId,
+            RemoteId = Guid.NewGuid(),
+            ParentRemoteId = filmsFolderId,
+            RelativePath = "films/residual-b.txt",
+            IsFolder = false,
+            SizeBytes = 1
+        });
+
+        var getFileCount = new int[1];
+        using var http = new HttpClient(new CollapseHealHttpHandler(
+            cloudFolderId,
+            filmsFolderId,
+            filmsFileId,
+            Encoding.UTF8.GetBytes("cloud-should-not-overwrite"),
+            new List<string>(),
+            getFileCount: getFileCount))
+        {
+            BaseAddress = new Uri("http://sync-test.local/")
+        };
+        var engine = new SyncEngine(store, new CloudApiService(http));
+        await engine.ReconcileAllAsync(new[]
+        {
+            new SyncMappingInfo
+            {
+                Id = mappingId,
+                CloudFolderId = cloudFolderId,
+                LocalRootPath = root
+            }
+        });
+
+        Assert.Equal(localBody, File.ReadAllText(Path.Combine(root, "films", "index.html")));
+        Assert.Contains(store.GetAll(mappingId), m => !m.IsFolder && m.RemoteId == filmsFileId);
+        Assert.Equal(0, getFileCount[0]);
+
+        try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        try { Directory.Delete(metaDir, recursive: true); } catch { /* ignore */ }
+    }
+
+    [Fact]
     public async Task PushLocal_NearEmptyFileMeta_UpgradesToFullReconcile()
     {
         var root = Path.Combine(Path.GetTempPath(), "pl-meta-collapse-push-" + Guid.NewGuid().ToString("N"));
@@ -310,19 +443,22 @@ public class SyncMetaFileCollapseHealTests
         private readonly Guid _filmsFileId;
         private readonly byte[] _fileBytes;
         private readonly List<string> _creates;
+        private readonly int[]? _getFileCount;
 
         public CollapseHealHttpHandler(
             Guid rootFolderId,
             Guid filmsFolderId,
             Guid filmsFileId,
             byte[] fileBytes,
-            List<string> creates)
+            List<string> creates,
+            int[]? getFileCount = null)
         {
             _rootFolderId = rootFolderId;
             _filmsFolderId = filmsFolderId;
             _filmsFileId = filmsFileId;
             _fileBytes = fileBytes;
             _creates = creates;
+            _getFileCount = getFileCount;
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -334,6 +470,8 @@ public class SyncMetaFileCollapseHealTests
                 return Task.FromResult(GetEntities(request));
             if (path.Contains("getFile", StringComparison.OrdinalIgnoreCase))
             {
+                if (_getFileCount != null)
+                    Interlocked.Increment(ref _getFileCount[0]);
                 var idText = path.Split('/').LastOrDefault() ?? "";
                 if (Guid.TryParse(idText, out var id) && id == _filmsFileId)
                 {

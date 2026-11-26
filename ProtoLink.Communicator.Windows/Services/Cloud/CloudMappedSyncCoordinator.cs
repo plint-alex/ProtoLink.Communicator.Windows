@@ -361,6 +361,15 @@ public sealed class CloudMappedSyncCoordinator
         if (Volatile.Read(ref _cloudMutationSuspend) > 0)
             return Task.CompletedTask;
 
+        // Near-empty / empty meta heal cannot finish under AutoPushBudget=60s (WalkRemote alone
+        // exceeds it on MyNotesFolder). Divert to unlimited full Sync before taking the lane so
+        // Uploading… → Upload paused. cannot starve Bootstrap/inventory seed (1.0.120 FAIL).
+        if (budget is { } b && b > TimeSpan.Zero
+            && _folderSynchronizer.AnyMappingNeedsRemoteBootstrap(_syncMappings))
+        {
+            return RequestFullSyncAsync();
+        }
+
         return RunExclusiveAsync(async ct =>
         {
             if (Volatile.Read(ref _cloudMutationSuspend) > 0) return;
