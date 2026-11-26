@@ -256,6 +256,53 @@ public class CloudApiService
     }
 
     /// <summary>
+    /// Batch create parent+children in one call (<c>POST api/Entities/AddEntities</c>).
+    /// Items must be parents-before-children; optional TempId becomes persisted Entity.Id.
+    /// Response ids match request order. Prefer for ≥2 creates; one-offs stay on <see cref="AddEntityAsync"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> AddEntitiesAsync(IReadOnlyList<AddEntitiesItemContract> items)
+    {
+        if (items == null || items.Count == 0)
+            return Array.Empty<Guid>();
+
+        var response = await _http.PostAsJsonAsync("api/Entities/AddEntities", new { items });
+        await EnsureSuccessAsync(response);
+        var json = await response.Content.ReadAsStringAsync();
+        var ids = CloudBatchCreate.ParseIdsResponse(json);
+        if (ids.Count != items.Count)
+        {
+            throw new InvalidOperationException(
+                $"AddEntities returned {ids.Count} ids for {items.Count} items.");
+        }
+
+        // Same NAME_TYPE re-assert belt as AddEntityAsync for CloudFolder rows.
+        for (var i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            if (!string.Equals(item.Code, CloudEntityCodes.CloudFolder, StringComparison.Ordinal))
+                continue;
+            string? displayName = null;
+            if (item.Values != null)
+            {
+                foreach (var v in item.Values)
+                {
+                    if (v.ParentIds != null && v.ParentIds.Contains(CloudEntityCodes.NameTypeId)
+                        && v.Value is string s)
+                    {
+                        displayName = s;
+                        break;
+                    }
+                }
+            }
+
+            if (ShouldReassertDisplayName(ids[i], displayName, isFolder: true))
+                await AddValueAsync(ids[i], displayName!);
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// True when <paramref name="displayName"/> is a real user name that should be written
     /// (or re-written) as NAME_TYPE — not blank and not the synthetic folder-/file-{id} fallback.
     /// </summary>

@@ -490,6 +490,11 @@ public sealed partial class SyncEngine
             applied++;
         }
 
+        // Buffer same-pass Creates → one AddEntities when planting parent+children (listing lag).
+        var pendingCreates = new List<PendingLocalCreate>();
+        var pendingCreatesByPath = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        var pendingCreateIds = new HashSet<Guid>();
+
         foreach (var a in changes.OfType<LocalChange.Added>().OrderBy(x => x.Entry.RelativePath.Count(c => c == '/')))
         {
             ct.ThrowIfCancellationRequested();
@@ -504,10 +509,28 @@ public sealed partial class SyncEngine
                 {
                     // Path miss (synthetic skip / push with empty walk): match by name under parent.
                     var parentPathProbe = SyncPathUtil.ParentOf(a.Entry.RelativePath);
-                    var parentIdProbe = ResolveParentId(mapping, parentPathProbe) ?? mapping.CloudFolderId;
+                    var parentPathNorm = SyncPathUtil.Normalize(parentPathProbe);
+                    var parentIdProbe = (pendingCreatesByPath.TryGetValue(parentPathNorm, out var pendingParentProbe)
+                            ? pendingParentProbe
+                            : ResolveParentId(mapping, parentPathProbe))
+                        ?? mapping.CloudFolderId;
                     var nameProbe = SyncPathUtil.NameOf(a.Entry.RelativePath);
-                    var (byName, listingOk) = await ResolveExistingSiblingAsync(
-                        parentIdProbe, nameProbe, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                    RemoteEntryInfo? byName;
+                    bool listingOk;
+                    if (pendingCreatesByPath.ContainsKey(parentPathNorm)
+                        || pendingCreateIds.Contains(parentIdProbe))
+                    {
+                        listingOk = true;
+                        byName = siblingCache.TryGetValue(parentIdProbe, out var kidsProbe)
+                            ? SameNamedCloudSibling.PreferExisting(
+                                parentIdProbe, nameProbe, a.Entry.IsFolder, kidsProbe)
+                            : null;
+                    }
+                    else
+                    {
+                        (byName, listingOk) = await ResolveExistingSiblingAsync(
+                            parentIdProbe, nameProbe, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                    }
                     if (byName != null)
                     {
                         existingRemote = new RemoteLocated
@@ -634,22 +657,39 @@ public sealed partial class SyncEngine
                     continue;
                 }
                 var parentPath = SyncPathUtil.ParentOf(a.Entry.RelativePath);
-                var parentId = ResolveParentId(mapping, parentPath) ?? mapping.CloudFolderId;
+                // Overlay: parent may be a same-pass buffered create (TempId not yet on server).
+                var parentId = (pendingCreatesByPath.TryGetValue(SyncPathUtil.Normalize(parentPath), out var pendingParent)
+                        ? pendingParent
+                        : ResolveParentId(mapping, parentPath))
+                    ?? mapping.CloudFolderId;
                 var addName = SyncPathUtil.NameOf(a.Entry.RelativePath);
                 var addFull = addFullProbe;
                 // Final match-before-create (cache may have been filled by earlier Adds).
-                var (reuse, listingOkCreate) = await ResolveExistingSiblingAsync(
-                    parentId, addName, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                // New parents in this pass: skip live GetEntities (id not on server yet) — siblingCache only.
+                RemoteEntryInfo? reuse;
+                bool listingOkCreate;
+                if (pendingCreatesByPath.ContainsKey(SyncPathUtil.Normalize(parentPath))
+                    || pendingCreateIds.Contains(parentId))
+                {
+                    listingOkCreate = true;
+                    reuse = siblingCache.TryGetValue(parentId, out var kids)
+                        ? SameNamedCloudSibling.PreferExisting(parentId, addName, a.Entry.IsFolder, kids)
+                        : null;
+                }
+                else
+                {
+                    (reuse, listingOkCreate) = await ResolveExistingSiblingAsync(
+                        parentId, addName, a.Entry.IsFolder, remoteInMapping, siblingCache, ct);
+                }
                 if (reuse == null && !listingOkCreate)
                 {
                     System.Diagnostics.Debug.WriteLine(
                         $"[Sync] skip create {path}: sibling listing failed under {parentId:D}");
                     continue;
                 }
-                Guid id;
                 if (reuse != null)
                 {
-                    id = reuse.Id;
+                    var id = reuse.Id;
                     if (!a.Entry.IsFolder)
                     {
                         if (!File.Exists(addFull))
@@ -661,13 +701,35 @@ public sealed partial class SyncEngine
                         await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
                         await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
                     }
+                    string reuseHash = "";
+                    if (!a.Entry.IsFolder)
+                    {
+                        if (a.Entry.ContentHash.Length > 0)
+                            reuseHash = a.Entry.ContentHash;
+                        else
+                        {
+                            reuseHash = ContentHashUtil.TrySha256HexFile(addFull) ?? "";
+                            if (reuseHash.Length == 0)
+                                SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFull);
+                        }
+                    }
+                    _store.Upsert(new SyncItemMeta
+                    {
+                        MappingId = mapping.Id,
+                        RemoteId = id,
+                        ParentRemoteId = parentId,
+                        RelativePath = SyncPathUtil.Normalize(a.Entry.RelativePath),
+                        IsFolder = a.Entry.IsFolder,
+                        SizeBytes = a.Entry.SizeBytes,
+                        ContentHash = reuseHash,
+                        RemoteUpdateTime = DateTime.UtcNow
+                    });
+                    dirty.Add(SyncPathUtil.Normalize(a.Entry.RelativePath));
+                    applied++;
+                    continue;
                 }
-                else if (a.Entry.IsFolder)
-                {
-                    id = await _api.AddEntityAsync(CloudEntityCodes.CloudFolder, new[] { parentId }, addName);
-                    RememberSibling(siblingCache, parentId, id, addName, isFolder: true);
-                }
-                else
+
+                if (!a.Entry.IsFolder)
                 {
                     if (!File.Exists(addFull))
                     {
@@ -675,41 +737,29 @@ public sealed partial class SyncEngine
                         continue;
                     }
                     if (new FileInfo(addFull).Length == 0) continue;
-                    id = await _api.AddEntityAsync(CloudEntityCodes.CloudFile, new[] { parentId }, addName);
-                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(addFull, ct);
-                    await _api.AddFileAsync(id, addName, content, MimeTypes.GetMimeType(addName));
-                    RememberSibling(siblingCache, parentId, id, addName, isFolder: false);
                 }
-                string addHash = "";
-                if (!a.Entry.IsFolder)
-                {
-                    if (a.Entry.ContentHash.Length > 0)
-                        addHash = a.Entry.ContentHash;
-                    else
-                    {
-                        addHash = ContentHashUtil.TrySha256HexFile(addFull) ?? "";
-                        if (addHash.Length == 0)
-                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFull);
-                    }
-                }
-                _store.Upsert(new SyncItemMeta
-                {
-                    MappingId = mapping.Id,
-                    RemoteId = id,
-                    ParentRemoteId = parentId,
-                    RelativePath = SyncPathUtil.Normalize(a.Entry.RelativePath),
-                    IsFolder = a.Entry.IsFolder,
-                    SizeBytes = a.Entry.SizeBytes,
-                    ContentHash = addHash,
-                    RemoteUpdateTime = DateTime.UtcNow
-                });
-                dirty.Add(SyncPathUtil.Normalize(a.Entry.RelativePath));
-                applied++;
+
+                // Buffer new entities — flush via AddEntities (≥2) or AddEntity (1) after the pass.
+                var tempId = Guid.NewGuid();
+                var code = a.Entry.IsFolder ? CloudEntityCodes.CloudFolder : CloudEntityCodes.CloudFile;
+                pendingCreates.Add(new PendingLocalCreate(
+                    tempId, code, parentId, addName, path, addFull, a.Entry.IsFolder, a.Entry.SizeBytes,
+                    a.Entry.ContentHash));
+                pendingCreatesByPath[path] = tempId;
+                pendingCreateIds.Add(tempId);
+                RememberSibling(siblingCache, parentId, tempId, addName, isFolder: a.Entry.IsFolder);
             }
             catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
             {
                 SyncMissingLocalPath.Log("ApplyLocalPhase.Added", path, addFullProbe, ex);
             }
+        }
+
+        if (pendingCreates.Count > 0)
+        {
+            applied += await FlushPendingLocalCreatesAsync(mapping, pendingCreates, ct);
+            foreach (var p in pendingCreates)
+                dirty.Add(p.RelativePath);
         }
 
         foreach (var u in changes.OfType<LocalChange.Updated>())
@@ -1200,6 +1250,104 @@ public sealed partial class SyncEngine
             IsFolder = isFolder,
             UpdateTime = DateTime.UtcNow
         });
+    }
+
+    private sealed record PendingLocalCreate(
+        Guid TempId,
+        string Code,
+        Guid ParentId,
+        string Name,
+        string RelativePath,
+        string FullPath,
+        bool IsFolder,
+        long SizeBytes,
+        string ContentHash);
+
+    /// <summary>
+    /// Plant buffered Creates: AddEntities (≥2 parent+children) or AddEntity (single), then file blobs.
+    /// </summary>
+    private async Task<int> FlushPendingLocalCreatesAsync(
+        SyncMappingInfo mapping,
+        List<PendingLocalCreate> pending,
+        CancellationToken ct)
+    {
+        if (pending.Count == 0) return 0;
+
+        var planned = pending
+            .Select(p => new CloudBatchCreate.PlannedItem(p.TempId, p.Code, [p.ParentId], p.Name))
+            .ToList();
+
+        IReadOnlyList<Guid> ids;
+        if (CloudBatchCreate.ShouldUseBatch(planned.Count))
+        {
+            if (!CloudBatchCreate.ParentsBeforeChildren(planned))
+            {
+                throw new InvalidOperationException(
+                    "AddEntities batch requires parents-before-children TempId order.");
+            }
+
+            ids = await _api.AddEntitiesAsync(CloudBatchCreate.ToContracts(planned));
+        }
+        else
+        {
+            var only = pending[0];
+            var id = await _api.AddEntityAsync(only.Code, [only.ParentId], only.Name);
+            ids = [id];
+        }
+
+        var applied = 0;
+        for (var i = 0; i < pending.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var p = pending[i];
+            var id = ids[i];
+            try
+            {
+                if (!p.IsFolder)
+                {
+                    if (!File.Exists(p.FullPath))
+                    {
+                        SyncMissingLocalPath.Log("ApplyLocalPhase.Added", p.RelativePath, p.FullPath);
+                        continue;
+                    }
+
+                    await using var content = await MappedFolderIoGate.OpenUploadStreamAsync(p.FullPath, ct);
+                    await _api.AddFileAsync(id, p.Name, content, MimeTypes.GetMimeType(p.Name));
+                }
+
+                var addHash = "";
+                if (!p.IsFolder)
+                {
+                    if (p.ContentHash.Length > 0)
+                        addHash = p.ContentHash;
+                    else
+                    {
+                        addHash = ContentHashUtil.TrySha256HexFile(p.FullPath) ?? "";
+                        if (addHash.Length == 0)
+                            SyncMissingLocalPath.Log("ApplyLocalPhase.Added", p.RelativePath, p.FullPath);
+                    }
+                }
+
+                _store.Upsert(new SyncItemMeta
+                {
+                    MappingId = mapping.Id,
+                    RemoteId = id,
+                    ParentRemoteId = p.ParentId,
+                    RelativePath = p.RelativePath,
+                    IsFolder = p.IsFolder,
+                    SizeBytes = p.SizeBytes,
+                    ContentHash = addHash,
+                    RemoteUpdateTime = DateTime.UtcNow
+                });
+                applied++;
+            }
+            catch (Exception ex) when (SyncMissingLocalPath.IsMissing(ex))
+            {
+                SyncMissingLocalPath.Log("ApplyLocalPhase.Added", p.RelativePath, p.FullPath, ex);
+            }
+        }
+
+        return applied;
     }
 
     /// <summary>Overwrite server with all local files for a mapping; meta follows local.</summary>
