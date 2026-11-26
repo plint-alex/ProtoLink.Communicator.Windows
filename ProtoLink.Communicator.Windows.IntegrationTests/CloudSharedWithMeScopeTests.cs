@@ -265,7 +265,7 @@ public class CloudSharedWithMeScopeTests
     }
 
     [Fact]
-    public void WithCloudHub_PrependsHub_AndRenamesMyCloud()
+    public void WithCloudHub_E9f_RenamesMyCloud_NoHubCrumb()
     {
         var root = Guid.NewGuid();
         var folder = Guid.NewGuid();
@@ -277,25 +277,26 @@ public class CloudSharedWithMeScopeTests
         };
 
         var (opened, trail) = CloudEntityRestore.WithCloudHub(entity, crumbs, "Cloud", "My Cloud");
-        Assert.Equal(3, trail.Count);
-        Assert.Equal(CloudVirtualNodes.HubId, trail[0].Id);
-        Assert.Equal("Cloud", trail[0].Name);
-        Assert.Equal(root, trail[1].Id);
-        Assert.Equal("My Cloud", trail[1].Name);
+        Assert.Equal(2, trail.Count);
+        Assert.Equal(root, trail[0].Id);
+        Assert.Equal("My Cloud", trail[0].Name);
+        Assert.Equal(folder, trail[1].Id);
+        Assert.DoesNotContain(trail, b => b.Id == CloudVirtualNodes.HubId);
         Assert.Equal(folder, opened.Id);
         Assert.Equal(root, opened.ParentId);
     }
 
     [Fact]
-    public void WithCloudHub_CloudRootEntity_ParentsToHub()
+    public void WithCloudHub_E9f_CloudRootEntity_IsBrowseRoot()
     {
         var root = Guid.NewGuid();
         var entity = new Models.CloudEntityRef(root, Models.CloudEntityKind.Folder, "Cloud", null);
         var crumbs = new[] { new Models.CloudBreadcrumbEntry { Id = root, Name = "Cloud", Index = 0 } };
 
         var (opened, trail) = CloudEntityRestore.WithCloudHub(entity, crumbs, "Cloud", "My Cloud");
-        Assert.Equal(2, trail.Count);
-        Assert.Equal(CloudVirtualNodes.HubId, opened.ParentId);
+        Assert.Single(trail);
+        Assert.Null(opened.ParentId);
         Assert.Equal("My Cloud", opened.Name);
+        Assert.Equal(root, trail[0].Id);
     }
 }

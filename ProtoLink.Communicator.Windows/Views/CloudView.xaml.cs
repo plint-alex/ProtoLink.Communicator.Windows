@@ -432,6 +432,31 @@ public partial class CloudView : System.Windows.Controls.UserControl
             menu.Items.Add(deleteItem);
         }
 
+        // E9f: SWM / SBM / Recent via Cloud ⋮ Locations (not TabToolbar).
+        if (menu.Items.Count > 0)
+            menu.Items.Add(new Separator());
+        var swmItem = new MenuItem
+        {
+            Header = _vm.OpenSharedWithMeLabel,
+            Command = _vm.OpenSharedWithMeCommand
+        };
+        System.Windows.Automation.AutomationProperties.SetName(swmItem, "CloudLocationsSharedWithMe");
+        menu.Items.Add(swmItem);
+        var sbmItem = new MenuItem
+        {
+            Header = _vm.OpenSharedByMeLabel,
+            Command = _vm.OpenSharedByMeCommand
+        };
+        System.Windows.Automation.AutomationProperties.SetName(sbmItem, "CloudLocationsSharedByMe");
+        menu.Items.Add(sbmItem);
+        var recentItem = new MenuItem
+        {
+            Header = _vm.OpenRecentLabel,
+            Command = _vm.OpenRecentCommand
+        };
+        System.Windows.Automation.AutomationProperties.SetName(recentItem, "CloudLocationsRecent");
+        menu.Items.Add(recentItem);
+
         EntityHeaderControl.MoreMenu = menu;
         EntityHeaderControl.ShowMoreMenu = menu.Items.Count > 0;
     }

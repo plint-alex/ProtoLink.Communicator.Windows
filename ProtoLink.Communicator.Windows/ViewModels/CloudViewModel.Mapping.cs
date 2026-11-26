@@ -292,11 +292,9 @@ public partial class CloudViewModel
         Guid folderId,
         string folderName)
     {
+        // E9f: crumbs start at My Cloud (no hub crumb).
         var lang = _settingsService.LoadSettings().UiLanguage;
-        var crumbs = new List<CloudBreadcrumbEntry>
-        {
-            new() { Id = CloudVirtualNodes.HubId, Name = ShareSheetStrings.CloudHub(lang) }
-        };
+        var crumbs = new List<CloudBreadcrumbEntry>();
         if (parentId != Guid.Empty && parentId != folderId)
         {
             crumbs.Add(new CloudBreadcrumbEntry
@@ -305,6 +303,14 @@ public partial class CloudViewModel
                 Name = parentId == _myCloudRootId
                     ? ShareSheetStrings.MyCloud(lang)
                     : "Cloud"
+            });
+        }
+        else if (_myCloudRootId != Guid.Empty && folderId != _myCloudRootId)
+        {
+            crumbs.Add(new CloudBreadcrumbEntry
+            {
+                Id = _myCloudRootId,
+                Name = ShareSheetStrings.MyCloud(lang)
             });
         }
 

@@ -70,7 +70,9 @@ public static class CloudEntityRestore
         CloudEntityClassify.IsNavigableCloudEntity(typeEntityId, code, isKnownCloudRoot);
 
     /// <summary>
-    /// Prepend the Cloud hub so My Cloud stays a sibling of Shared with me after cold restore (AT-S17).
+    /// E9f: rename the CloudRoot crumb/entity to My Cloud. Does <strong>not</strong> prepend the
+    /// virtual hub — My Cloud is the browse root (Up must not land on hub).
+    /// <paramref name="hubName"/> retained for call-site compatibility; ignored.
     /// </summary>
     public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb) WithCloudHub(
         CloudEntityRef entity,
@@ -78,35 +80,51 @@ public static class CloudEntityRestore
         string hubName,
         string myCloudName)
     {
+        _ = hubName;
+        return WithMyCloudRootLabel(entity, breadcrumb, myCloudName);
+    }
+
+    /// <summary>E9f: My Cloud as browse-root label on CloudRoot crumb/entity (no hub crumb).</summary>
+    public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb) WithMyCloudRootLabel(
+        CloudEntityRef entity,
+        IReadOnlyList<CloudBreadcrumbEntry> breadcrumb,
+        string myCloudName)
+    {
         var crumbs = breadcrumb.Select(b => new CloudBreadcrumbEntry { Id = b.Id, Name = b.Name }).ToList();
         if (crumbs.Count > 0)
             crumbs[0] = new CloudBreadcrumbEntry { Id = crumbs[0].Id, Name = myCloudName };
 
-        crumbs.Insert(0, new CloudBreadcrumbEntry { Id = CloudVirtualNodes.HubId, Name = hubName });
         for (var i = 0; i < crumbs.Count; i++)
             crumbs[i].Index = i;
 
         var resultEntity = entity;
-        if (crumbs.Count >= 2 && entity.Id == crumbs[1].Id)
-            resultEntity = entity with { ParentId = CloudVirtualNodes.HubId, Name = myCloudName };
+        if (crumbs.Count >= 1 && entity.Id == crumbs[0].Id)
+            resultEntity = entity with { ParentId = null, Name = myCloudName };
 
         return (resultEntity, crumbs);
     }
 
     /// <summary>
     /// Sick/cold LastOpen when Api ancestry is unavailable but listing disk has rows for
-    /// <paramref name="folderId"/>: open as My Cloud under the hub so listing paint can run.
+    /// <paramref name="folderId"/>: open as My Cloud browse root so listing paint can run (E9f).
     /// </summary>
     public static (CloudEntityRef Entity, IReadOnlyList<CloudBreadcrumbEntry> Breadcrumb) BuildOfflineMyCloudOpen(
         Guid folderId,
         string hubName,
         string myCloudName)
     {
+        _ = hubName;
         var entity = new CloudEntityRef(folderId, CloudEntityKind.Folder, myCloudName, null);
         var breadcrumb = new[]
         {
             new CloudBreadcrumbEntry { Index = 0, Id = folderId, Name = myCloudName }
         };
-        return WithCloudHub(entity, breadcrumb, hubName, myCloudName);
+        return WithMyCloudRootLabel(entity, breadcrumb, myCloudName);
     }
+
+    /// <summary>E9f cold open: start folder is canonical My Cloud — never the virtual hub.</summary>
+    public static Guid ColdOpenFolderId(Guid myCloudRootId) => myCloudRootId;
+
+    /// <summary>E9f: hub listing must not be the user-facing start folder.</summary>
+    public static bool IsHubLanding(Guid folderId) => folderId == CloudVirtualNodes.HubId;
 }

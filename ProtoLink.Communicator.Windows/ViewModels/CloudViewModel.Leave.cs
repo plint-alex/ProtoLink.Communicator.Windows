@@ -23,6 +23,24 @@ public partial class CloudViewModel
     /// <summary>Parameter: share-root row, or null for <see cref="CurrentEntity"/> when it is the active share root.</summary>
     public ICommand LeaveSharedCommand { get; private set; } = null!;
 
+    /// <summary>E9f Locations — open Shared with me virtual listing.</summary>
+    public ICommand OpenSharedWithMeCommand { get; private set; } = null!;
+
+    /// <summary>E9f Locations — open Shared by me virtual listing.</summary>
+    public ICommand OpenSharedByMeCommand { get; private set; } = null!;
+
+    /// <summary>E9f Locations — open Recent virtual listing.</summary>
+    public ICommand OpenRecentCommand { get; private set; } = null!;
+
+    public string OpenSharedWithMeLabel =>
+        ShareSheetStrings.SharedWithMe(_settingsService.LoadSettings().UiLanguage);
+
+    public string OpenSharedByMeLabel =>
+        ShareSheetStrings.SharedByMe(_settingsService.LoadSettings().UiLanguage);
+
+    public string OpenRecentLabel =>
+        ShareSheetStrings.Recent(_settingsService.LoadSettings().UiLanguage);
+
     private void InitLeaveCommands()
     {
         LeaveSharedCommand = new RelayCommand(
@@ -33,6 +51,15 @@ public partial class CloudViewModel
                 await LeaveSharedAsync(entityId);
             },
             p => !_leaveBusy && LeaveTargetId(p).HasValue);
+        OpenSharedWithMeCommand = new RelayCommand(
+            async _ => await NavigateToSharedWithMeListingAsync(),
+            _ => !IsSharedWithMeListing);
+        OpenSharedByMeCommand = new RelayCommand(
+            async _ => await NavigateToSharedByMeListingAsync(),
+            _ => !IsSharedByMeListing);
+        OpenRecentCommand = new RelayCommand(
+            async _ => await NavigateToRecentListingAsync(),
+            _ => !IsRecentListing);
     }
 
     private Guid? LeaveTargetId(object? parameter)
@@ -87,22 +114,27 @@ public partial class CloudViewModel
         }
     }
 
-    private async Task NavigateToSharedWithMeListingAsync()
+    private async Task NavigateToSharedWithMeListingAsync() =>
+        await OpenVirtualLocationAsync(
+            CloudVirtualNodes.SharedWithMeId,
+            ShareSheetStrings.SharedWithMe(_settingsService.LoadSettings().UiLanguage));
+
+    private async Task NavigateToSharedByMeListingAsync() =>
+        await OpenVirtualLocationAsync(
+            CloudVirtualNodes.SharedByMeId,
+            ShareSheetStrings.SharedByMe(_settingsService.LoadSettings().UiLanguage));
+
+    private async Task NavigateToRecentListingAsync() =>
+        await OpenVirtualLocationAsync(
+            CloudVirtualNodes.RecentId,
+            ShareSheetStrings.Recent(_settingsService.LoadSettings().UiLanguage));
+
+    /// <summary>E9f: SWM / SBM / Recent as secondary Locations — single crumb, no hub parent.</summary>
+    private async Task OpenVirtualLocationAsync(Guid virtualId, string name)
     {
-        var lang = _settingsService.LoadSettings().UiLanguage;
-        var hubName = ShareSheetStrings.CloudHub(lang);
-        var sharedName = ShareSheetStrings.SharedWithMe(lang);
         await OpenAsync(
-            new CloudEntityRef(
-                CloudVirtualNodes.SharedWithMeId,
-                CloudEntityKind.Folder,
-                sharedName,
-                CloudVirtualNodes.HubId),
-            new[]
-            {
-                new CloudBreadcrumbEntry { Id = CloudVirtualNodes.HubId, Name = hubName },
-                new CloudBreadcrumbEntry { Id = CloudVirtualNodes.SharedWithMeId, Name = sharedName }
-            },
-            pushHistory: false);
+            new CloudEntityRef(virtualId, CloudEntityKind.Folder, name, null),
+            new[] { new CloudBreadcrumbEntry { Id = virtualId, Name = name } },
+            pushHistory: true);
     }
 }

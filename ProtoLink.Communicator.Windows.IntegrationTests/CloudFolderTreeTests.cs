@@ -40,6 +40,19 @@ public class CloudFolderTreeTests
     }
 
     [Fact]
+    public void PickTreeRootId_E9f_MyCloudFirstCrumb_NoHub()
+    {
+        var root = Guid.NewGuid();
+        var folder = Guid.NewGuid();
+        var crumbs = new (Guid, string?)[]
+        {
+            (root, CloudEntityCodes.CloudRoot),
+            (folder, CloudEntityCodes.CloudFolder)
+        };
+        Assert.Equal(root, CloudFolderTree.PickTreeRootId(crumbs, photosLibraryId: null, CloudVirtualNodes.IsVirtual));
+    }
+
+    [Fact]
     public void Flatten_DepthAndSelection()
     {
         var root = Guid.NewGuid();

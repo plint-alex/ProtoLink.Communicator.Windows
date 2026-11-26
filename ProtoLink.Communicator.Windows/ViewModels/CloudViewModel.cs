@@ -652,11 +652,13 @@ public partial class CloudViewModel : ViewModelBase
         await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
         _history.Clear();
         _locations.Clear();
+        // E9f: cold open = My Cloud (never HubId / BuildHubListing as start).
         var lang = _settingsService.LoadSettings().UiLanguage;
-        var hubName = ShareSheetStrings.CloudHub(lang);
+        var myCloudName = ShareSheetStrings.MyCloud(lang);
+        var startId = CloudEntityRestore.ColdOpenFolderId(_myCloudRootId);
         await OpenAsync(
-            new CloudEntityRef(CloudVirtualNodes.HubId, CloudEntityKind.Folder, hubName, null),
-            new[] { new CloudBreadcrumbEntry { Id = CloudVirtualNodes.HubId, Name = hubName } },
+            new CloudEntityRef(startId, CloudEntityKind.Folder, myCloudName, null),
+            new[] { new CloudBreadcrumbEntry { Id = startId, Name = myCloudName } },
             pushHistory: false);
     }
 
