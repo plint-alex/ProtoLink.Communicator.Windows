@@ -6,7 +6,6 @@ using ProtoLink.Communicator.Windows.Dialogs;
 using ProtoLink.Communicator.Windows.Models;
 using ProtoLink.Communicator.Windows.Navigation;
 using ProtoLink.Communicator.Windows.Services;
-using ProtoLink.Communicator.Windows.Services.Sync;
 
 namespace ProtoLink.Communicator.Windows.ViewModels;
 
@@ -136,7 +135,8 @@ public partial class CloudViewModel
 
     /// <summary>
     /// E6 local-first wizard: pick local → create or pick Cloud folder → <see cref="AddMapping"/> + full reconcile.
-    /// Candidate listing soft-fails (first page only) so a bloated Drive-style CloudRoot cannot block create-then-map.
+    /// Candidate listing soft-fails (interactive pages only) so a bloated Drive-style CloudRoot cannot
+    /// block ShowDialog (AT-NMR-7 / AT-MAP-2).
     /// </summary>
     public async Task RunAddLocalFolderWizardAsync(string? prefilledLocalPath = null)
     {
@@ -147,6 +147,8 @@ public partial class CloudViewModel
         }
 
         var lang = _settingsService.LoadSettings().UiLanguage;
+        var priorStatus = StatusText;
+        StatusText = MapLocalFolderStrings.WizardOpening(lang);
         try
         {
             // Resolve My Cloud id without navigating to hub (FolderPicker must open promptly).
@@ -159,37 +161,32 @@ public partial class CloudViewModel
                     MapLocalFolderStrings.WizardTitle(lang),
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Warning);
+                StatusText = priorStatus;
                 return;
             }
 
             var candidates = await LoadUnmappedChildFoldersAsync(parentId).ConfigureAwait(true);
-            var choice = MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates);
-            if (choice is null) return;
+            var choice = await ShowMapWizardOnUiAsync(lang, prefilledLocalPath, candidates)
+                .ConfigureAwait(true);
+            if (choice is null)
+            {
+                StatusText = priorStatus;
+                return;
+            }
 
             Guid folderId;
             string folderName;
             if (choice.CreateNew)
             {
                 var name = choice.NewFolderName!.Trim();
-                // Never mint a second same-named CloudFolder (dual MyNotesFolder FAIL class).
-                // Cross-CloudRoot: another client may already have the name under Drive.
-                var userId = _authService.CurrentToken?.UserId ?? Guid.Empty;
-                var heal = new SameNamedCloudFolderHealRunner(_api);
-                var existing = SameNamedCloudFolderHeal.PreferExistingSameName(
-                    name,
-                    await heal.LoadChildFolderSiblingsForDiscoveryAsync(
-                            parentId,
-                            userId,
-                            mustIncludeRootIds: null,
-                            onlyNamesLower: new HashSet<string>(StringComparer.Ordinal)
-                            {
-                                name.ToLowerInvariant()
-                            })
-                        .ConfigureAwait(true));
+                // Prefer existing same-named child under create parent (interactive pages).
+                // Cross-CloudRoot duals: Sync SameNamedCloudFolderHeal — do not hang confirm.
+                var existing = await PreferSameNamedChildUnderParentAsync(parentId, name)
+                    .ConfigureAwait(true);
                 if (existing is { } hit)
                 {
                     folderId = hit.Id;
-                    folderName = string.IsNullOrWhiteSpace(hit.Name) ? name : hit.Name;
+                    folderName = hit.Name;
                 }
                 else
                 {
@@ -213,13 +210,54 @@ public partial class CloudViewModel
         catch (Exception ex)
         {
             ReportCaughtException(ex);
+            System.Windows.MessageBox.Show(
+                MapLocalFolderStrings.WizardOpenFailed(lang),
+                MapLocalFolderStrings.WizardTitle(lang),
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
         }
+    }
+
+    /// <summary>ShowDialog must run on the WPF UI thread (Notes nudge / UIA Invoke). </summary>
+    private static async Task<MapLocalFolderWizardResult?> ShowMapWizardOnUiAsync(
+        string? lang,
+        string? prefilledLocalPath,
+        IReadOnlyList<MapLocalFolderCandidate> candidates)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess())
+            return MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates);
+
+        return await dispatcher.InvokeAsync(() =>
+            MapLocalFolderWizardDialog.TryShow(lang, prefilledLocalPath, candidates));
     }
 
     /// <summary>Ensure <see cref="_myCloudRootId"/> without opening the hub (wizard must not stall on navigation).</summary>
     private async Task EnsureWizardCloudRootAsync()
     {
         if (_authService.CurrentToken == null) return;
+
+        // Fast path: Cloud already Ready with a known My Cloud — skip GetMyCloudRoots / richness
+        // walks so Notes nudge opens the dialog promptly (AT-NMR-7).
+        if (_myCloudRootId != Guid.Empty && _knownCloudRootIds.Contains(_myCloudRootId))
+        {
+            var mappedFast = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
+            if (!mappedFast.Contains(_myCloudRootId))
+                return;
+
+            var knownRoots = _knownCloudRootIds
+                .Select(id => new CloudRootSelection.Candidate(id, DateTime.UtcNow))
+                .ToList();
+            var alt = CloudRootSelection.PickWizardCreateParentRoot(knownRoots, mappedFast);
+            if (alt is { } altId && altId != Guid.Empty)
+            {
+                _myCloudRootId = altId;
+                _folderTreeCodes[altId] = CloudEntityCodes.CloudRoot;
+            }
+
+            return;
+        }
+
         var userId = _authService.CurrentToken.UserId;
         var list = await _api.GetEntitiesAsync(new[] { userId }, includeValues: false).ConfigureAwait(true);
         await ApplyCanonicalCloudRootFromUserChildrenAsync(list, userId).ConfigureAwait(true);
@@ -275,35 +313,16 @@ public partial class CloudViewModel
     }
 
     /// <summary>
-    /// Soft-fail discover (parent + cross-CloudRoot same-name merge): bloated CloudRoot must not
-    /// block create-then-map (AT-MAP-2). Duplicate names get short-id labels.
+    /// Soft-fail interactive parent listing only — never SameNamed cross-root discovery
+    /// (unbounded includeValues paging blocked ShowDialog; AT-NMR-7).
     /// </summary>
     private async Task<IReadOnlyList<MapLocalFolderCandidate>> LoadUnmappedChildFoldersAsync(Guid parentId)
     {
         try
         {
-            var userId = _authService.CurrentToken?.UserId ?? Guid.Empty;
-            var heal = new SameNamedCloudFolderHealRunner(_api);
-            var siblings = await heal.LoadChildFolderSiblingsForDiscoveryAsync(parentId, userId)
-                .ConfigureAwait(true);
+            var list = await LoadWizardParentChildrenAsync(parentId).ConfigureAwait(true);
             var mapped = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
-            var names = siblings.Select(s => s.Name).ToList();
-            var result = new List<MapLocalFolderCandidate>();
-            foreach (var s in siblings
-                         .OrderByDescending(x => x.ImmediateChildCount)
-                         .ThenBy(x => x.CreationTime ?? "")
-                         .ThenBy(x => x.Id))
-            {
-                if (mapped.Contains(s.Id)) continue;
-                if (IsFolderSynced(s.Id)) continue;
-                result.Add(new MapLocalFolderCandidate
-                {
-                    Id = s.Id,
-                    Name = SameNamedCloudFolderHeal.DisplayLabel(s.Name, s.Id, names)
-                });
-            }
-
-            return result;
+            return MapLocalFolderWizardCandidates.FromParentListing(list, mapped, IsFolderSynced);
         }
         catch (Exception ex)
         {
@@ -311,6 +330,33 @@ public partial class CloudViewModel
             System.Diagnostics.Debug.WriteLine(
                 $"LoadUnmappedChildFolders soft-fail: {ex.GetType().Name}: {ex.Message}");
             return Array.Empty<MapLocalFolderCandidate>();
+        }
+    }
+
+    private async Task<List<GetEntitiesResult>> LoadWizardParentChildrenAsync(Guid parentId)
+    {
+        return await _api.GetEntitiesAsync(
+                new[] { parentId },
+                includeValues: true,
+                maxPages: CloudApiService.InteractiveListingMaxPages,
+                pageSize: CloudApiService.InteractiveListingPageSize)
+            .ConfigureAwait(true);
+    }
+
+    private async Task<(Guid Id, string Name)?> PreferSameNamedChildUnderParentAsync(
+        Guid parentId,
+        string name)
+    {
+        try
+        {
+            var list = await LoadWizardParentChildrenAsync(parentId).ConfigureAwait(true);
+            return MapLocalFolderWizardCandidates.PreferSameNamedUnderParent(name, list);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"PreferSameNamedChild soft-fail: {ex.GetType().Name}: {ex.Message}");
+            return null;
         }
     }
 

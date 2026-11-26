@@ -83,4 +83,12 @@ public static class MapLocalFolderStrings
         IsRussian(lang)
             ? "Не удалось определить «Моё облако». Обновите Cloud и попробуйте снова."
             : "Could not resolve My Cloud. Refresh Cloud and try again.";
+
+    public static string WizardOpening(string? lang) =>
+        IsRussian(lang) ? "Открытие мастера сопоставления…" : "Opening map wizard…";
+
+    public static string WizardOpenFailed(string? lang) =>
+        IsRussian(lang)
+            ? "Не удалось открыть мастер «Локальная папка → Cloud». См. подробности в Cloud."
+            : "Could not open the Local folder → Cloud wizard. See Cloud details.";
 }

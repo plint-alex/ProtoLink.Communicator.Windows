@@ -26,4 +26,13 @@ public class MapLocalFolderStringsTests
         Assert.Contains("My Cloud", MapLocalFolderStrings.RefuseMapOntoCloudRoot("en"), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Notes root", MapLocalFolderStrings.RefuseNotesRootOntoCloudRoot("en"), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void WizardOpeningAndFailed_EnAndRu()
+    {
+        Assert.Contains("Opening map wizard", MapLocalFolderStrings.WizardOpening("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("мастера", MapLocalFolderStrings.WizardOpening("ru"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Could not open", MapLocalFolderStrings.WizardOpenFailed("en"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("мастер", MapLocalFolderStrings.WizardOpenFailed("ru"), StringComparison.OrdinalIgnoreCase);
+    }
 }
