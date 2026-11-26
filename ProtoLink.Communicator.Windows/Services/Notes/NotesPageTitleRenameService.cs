@@ -18,6 +18,19 @@ public sealed class NotesPageTitleRenameService
     }
 
     /// <summary>
+    /// Folder name from note title: invalid filename chars → <c>_</c>; spaces kept (NTFS-safe).
+    /// Empty/whitespace-only → empty (caller skips rename).
+    /// </summary>
+    public static string SanitizeFolderNameFromTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return string.Empty;
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        return string.Join("_", title.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries)).Trim();
+    }
+
+    /// <summary>
     /// If the first H1 text implies a new folder name and the folder can be moved, renames the page folder and persists HTML to the index file.
     /// Returns the folder path to use for subsequent saves (unchanged if no rename).
     /// </summary>
@@ -32,10 +45,7 @@ public sealed class NotesPageTitleRenameService
         if (string.IsNullOrEmpty(newTitle))
             return currentPageFolderPath;
 
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var sanitizedTitle = string.Join("_", newTitle.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries))
-            .Trim()
-            .Replace(" ", "_");
+        var sanitizedTitle = SanitizeFolderNameFromTitle(newTitle);
         if (string.IsNullOrEmpty(sanitizedTitle))
             return currentPageFolderPath;
 
