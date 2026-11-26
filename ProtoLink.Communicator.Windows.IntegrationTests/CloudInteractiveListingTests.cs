@@ -321,6 +321,17 @@ public class CloudInteractiveListingTests
     }
 
     [Fact]
+    public void ShouldSoftReadyAfterApiListing_RawEmptyOnly_NotTombstoneFiltered()
+    {
+        // True empty Api → Soft Ready OK (1.0.117 WIN_CLOUD_SOFTREADY_EMPTY_LISTING).
+        Assert.True(CloudInteractiveListing.ShouldSoftReadyAfterApiListing(rawApiCount: 0));
+        // Api echoed deleted ids; tombstones emptied the painted list — do not Soft Ready
+        // (1.0.118+ Win Cloud folder delete silent no-op).
+        Assert.False(CloudInteractiveListing.ShouldSoftReadyAfterApiListing(rawApiCount: 1));
+        Assert.False(CloudInteractiveListing.ShouldSoftReadyAfterApiListing(rawApiCount: 3));
+    }
+
+    [Fact]
     public void ShouldKeepListingOverEmptyHydrate_SoftReadyNotBlanked()
     {
         Assert.True(CloudInteractiveListing.ShouldKeepListingOverEmptyHydrate(paintedCount: 1, hydrateCount: 0));

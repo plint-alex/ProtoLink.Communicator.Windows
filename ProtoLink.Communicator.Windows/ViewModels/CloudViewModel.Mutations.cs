@@ -190,10 +190,12 @@ public partial class CloudViewModel
 
                 // Soft Ready paints sync-meta children when GetEntities times out — purge so
                 // deleted ids cannot resurrect after a successful Cloud soft-hide (E10 regress).
+                // Shared store with SyncEngine (ctor) so AutoPush cannot rewrite purged rows.
                 _listingMetaStore.RemoveByRemoteIds(deletedIds);
                 _listingDiskCache.RemoveRemoteIds(deletedIds);
                 foreach (var id in deletedIds)
                     _deletedRemoteIds.Add(id);
+                PurgeDeletedFromFolderTree(deletedIds);
 
                 // NFR-SYNC-1: mirror IO soft-fails; Cloud tree already deleted.
                 CloudMappingMirrorPaths.DeleteLocalMirror(item, localMirror);

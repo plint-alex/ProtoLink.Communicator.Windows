@@ -135,6 +135,13 @@ public static class CloudInteractiveListing
     }
 
     /// <summary>
+    /// Soft Ready after a successful GetEntities must use the <em>raw</em> Api count, not the
+    /// post-tombstone count. When Api still echoes deleted ids and session tombstones empty the
+    /// list, Soft Ready/mappings must not repaint those rows (Win Cloud delete no-op on 1.0.118+).
+    /// </summary>
+    public static bool ShouldSoftReadyAfterApiListing(int rawApiCount) => rawApiCount == 0;
+
+    /// <summary>
     /// IncludeValues hydrate must not blank Soft Ready / values-light Ready when the values
     /// page returns [] (Android <c>mergeHydrateById</c> empty→keep light).
     /// </summary>

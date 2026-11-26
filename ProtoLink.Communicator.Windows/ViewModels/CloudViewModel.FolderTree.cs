@@ -474,6 +474,7 @@ public partial class CloudViewModel
 
         var folderKids = new List<CloudFolderTree.Node>();
         foreach (var e in (list ?? new List<GetEntitiesResult>())
+                 .Where(x => !_deletedRemoteIds.Contains(x.Id))
                  .Where(x => CloudFolderTree.IsFolderTreeEntity(x.TypeEntityId, x.Code))
                  .OrderBy(x => CloudInteractiveListing.ResolveRowName(x, ResolveListingMetaName),
                      StringComparer.OrdinalIgnoreCase))
@@ -489,6 +490,41 @@ public partial class CloudViewModel
 
         _folderTreeChildren[parentId] = folderKids;
         _folderTreeLoaded.Add(parentId);
+    }
+
+    /// <summary>
+    /// After E10 delete: drop tombstoned ids from Folders tree cache so KeepChildrenAcrossRefresh
+    /// / Soft Ready seed cannot keep a deleted row visible beside an emptied list.
+    /// </summary>
+    private void PurgeDeletedFromFolderTree(IReadOnlyCollection<Guid> deletedIds)
+    {
+        if (deletedIds == null || deletedIds.Count == 0) return;
+        var set = deletedIds as HashSet<Guid> ?? deletedIds.ToHashSet();
+        var touched = false;
+        foreach (var id in set)
+        {
+            if (_folderTreeNames.Remove(id)) touched = true;
+            if (_folderTreeCodes.Remove(id)) touched = true;
+            if (_folderTreeExpanded.Remove(id)) touched = true;
+            if (_folderTreeLoaded.Remove(id)) touched = true;
+            if (_folderTreeLoading.Remove(id)) touched = true;
+            if (_folderTreeChildren.Remove(id)) touched = true;
+        }
+
+        var parents = _folderTreeChildren.Keys.ToList();
+        foreach (var parentId in parents)
+        {
+            var kids = _folderTreeChildren[parentId];
+            if (kids == null || kids.Count == 0) continue;
+            var kept = kids.Where(n => !set.Contains(n.Id)).ToList();
+            if (kept.Count == kids.Count) continue;
+            _folderTreeChildren[parentId] = kept;
+            _folderTreeFolderCount = Math.Max(0, _folderTreeFolderCount - (kids.Count - kept.Count));
+            touched = true;
+        }
+
+        if (touched)
+            RebuildFolderTreeRows();
     }
 
     /// <summary>

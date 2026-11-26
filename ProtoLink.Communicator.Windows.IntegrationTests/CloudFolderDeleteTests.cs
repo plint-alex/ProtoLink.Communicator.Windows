@@ -48,6 +48,41 @@ public class CloudFolderDeleteTests
     }
 
     [Fact]
+    public async Task DeleteFolderRecursive_TypeEntityId_DisplayNameCode()
+    {
+        // Code=name: classifiers must use TypeEntityId (legacy Code discriminators absent).
+        var order = new List<Guid>();
+        var root = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var file1 = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var sub = Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        var file2 = Guid.Parse("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        var tree = new Dictionary<Guid, List<CloudFolderDelete.ChildRef>>
+        {
+            [root] =
+            [
+                new(file1, "notes.txt", CloudEntityCodes.TypeCloudFileId),
+                new(sub, "Nested", CloudEntityCodes.TypeCloudFolderId),
+            ],
+            [sub] = [new(file2, "deep.bin", CloudEntityCodes.TypeCloudFileId)]
+        };
+
+        var deleted = new HashSet<Guid>();
+        await CloudFolderDelete.DeleteFolderRecursiveAsync(
+            root,
+            id => Task.FromResult<IReadOnlyList<CloudFolderDelete.ChildRef>>(
+                tree.TryGetValue(id, out var kids) ? kids : Array.Empty<CloudFolderDelete.ChildRef>()),
+            id =>
+            {
+                order.Add(id);
+                return Task.CompletedTask;
+            },
+            deleted);
+
+        Assert.Equal(new[] { file1, file2, sub, root }, order);
+        Assert.Equal(new HashSet<Guid> { file1, file2, sub, root }, deleted);
+    }
+
+    [Fact]
     public void RemoveByRemoteIds_DropsSoftReadyChildren()
     {
         var dir = Path.Combine(Path.GetTempPath(), "ProtoLinkTests", "cfd-meta-" + Guid.NewGuid().ToString("N"));

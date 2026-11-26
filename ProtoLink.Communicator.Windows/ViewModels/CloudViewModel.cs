@@ -30,7 +30,11 @@ public partial class CloudViewModel : ViewModelBase
     private readonly Action<string>? _onSendShareLinkInMessenger;
     private readonly ICloudRecentStore _recentStore;
     private readonly CloudListingDiskCache _listingDiskCache;
-    private readonly JsonSyncMetadataStore _listingMetaStore = new();
+    /// <summary>
+    /// Shared with <see cref="CloudFolderSynchronizer"/> / SyncEngine so E10 delete meta purge
+    /// cannot be overwritten by a second in-memory store rewriting cloud-sync-metadata.json.
+    /// </summary>
+    private readonly JsonSyncMetadataStore _listingMetaStore;
     private readonly NavigationHistory<Guid> _history = new();
     private readonly Dictionary<Guid, CloudLocation> _locations = new();
     private int _listingHydrateGeneration;
@@ -84,7 +88,10 @@ public partial class CloudViewModel : ViewModelBase
         var syncApi = syncHttpClient != null && !ReferenceEquals(syncHttpClient, interactiveHttpClient)
             ? new CloudApiService(syncHttpClient)
             : _api;
-        var folderSynchronizer = new CloudFolderSynchronizer(syncApi);
+        // One meta store for Soft Ready + SyncEngine — dual instances let AutoPush rewrite
+        // purged rows after E10 delete (Win Cloud folder delete silent no-op class).
+        _listingMetaStore = new JsonSyncMetadataStore();
+        var folderSynchronizer = new CloudFolderSynchronizer(syncApi, _listingMetaStore);
         _syncStore = syncStore;
         _syncFullErrorReporter = syncFullErrorReporter;
         _onAuthRequired = onAuthRequired;
@@ -122,7 +129,7 @@ public partial class CloudViewModel : ViewModelBase
                 try { onAfterMappedSync?.Invoke(); } catch { /* ignore */ }
             },
             syncStore: _syncStore,
-            healRunner: new Services.Sync.SameNamedCloudFolderHealRunner(syncApi));
+            healRunner: new Services.Sync.SameNamedCloudFolderHealRunner(syncApi, _listingMetaStore));
         ShareSheet = new ShareSheetViewModel(
             _api,
             () => _settingsService.LoadSettings().UiLanguage,
@@ -780,6 +787,7 @@ public partial class CloudViewModel : ViewModelBase
                     pageSize: CloudApiService.InteractiveListingPageSize);
                 if (loadGen != _listingLoadGeneration || ListedFolderId != folderId) return;
 
+                var rawApiCount = list?.Count ?? 0;
                 var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
                 fresh = (list ?? new List<GetEntitiesResult>())
                     .Where(e => !_deletedRemoteIds.Contains(e.Id))
@@ -788,9 +796,10 @@ public partial class CloudViewModel : ViewModelBase
                     .ThenByDescending(x => x.UpdateTime)
                     .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                // Android preferApiOrSoftReady: empty GetEntities success still Soft-Readies
-                // (WIN_CLOUD_SOFTREADY_EMPTY_LISTING on 1.0.117 — catch-only Soft Ready missed this).
-                if (fresh.Count == 0)
+                // Soft Ready only when Api is truly empty — not when tombstones emptied a
+                // stale echo of deleted ids (1.0.118 Soft Ready empty → delete no-op).
+                if (fresh.Count == 0
+                    && CloudInteractiveListing.ShouldSoftReadyAfterApiListing(rawApiCount))
                 {
                     var soft = TryBuildSoftReadyItems(folderId);
                     if (soft is { Count: > 0 })
@@ -1320,7 +1329,9 @@ public partial class CloudViewModel : ViewModelBase
 
             var syncedIds = new HashSet<Guid>(SyncMappings.Select(m => m.CloudFolderId));
             // Keep sync-meta leaf when IncludeValues still lacks Name (empty-folder / folder-guid class).
+            // Tombstones: hydrate must not MergeListing-resurrect ids DeleteAsync already removed.
             var fresh = (list ?? new List<GetEntitiesResult>())
+                .Where(e => !_deletedRemoteIds.Contains(e.Id))
                 .Select(e => ToListItem(e, syncedIds, ResolveListingMetaName))
                 .OrderByDescending(x => x.IsFolder)
                 .ThenByDescending(x => x.UpdateTime)
