@@ -32,8 +32,9 @@ public sealed partial class SyncEngine
         {
             ct.ThrowIfCancellationRequested();
             var meta = _store.GetAll(mapping.Id);
-            // Empty store OR folders-only (partial bootstrap died after mkdir) → pull remote files.
-            if (meta.Count == 0 || meta.All(m => m.IsFolder))
+            // Empty / folders-only / near-empty file inventory (partial Force or interrupted
+            // bootstrap left folders + few file rows) → pull remote files before Compare.
+            if (SyncMetaInventoryHeal.NeedsRemoteBootstrap(meta, mapping.LocalRootPath))
                 await BootstrapFromRemoteAsync(mapping, ct);
         }
 
@@ -58,7 +59,15 @@ public sealed partial class SyncEngine
             // starve / timeout the pass before missing remote children are filled (cloud-wins).
             await ApplyRemotePhaseAsync(mapping, byId, remoteLocated, dirty, ct);
             var remoteForMapping = remoteLocated.Where(x => x.MappingId == mapping.Id).ToList();
-            await ApplyLocalPhaseAsync(mapping, dirty, skipSizeUpdates: true, remoteForMapping, ct);
+            // Same Agents exclude as AutoPush so full Sync settles under mapped MyNotesFolder
+            // churn (1.0.119 sticky Syncing… after Autopush release + collapsed meta).
+            await ApplyLocalPhaseAsync(
+                mapping,
+                dirty,
+                skipSizeUpdates: true,
+                remoteForMapping,
+                ct,
+                excludeAgentsQueues: true);
             _store.SetLastSyncUtc(mapping.Id, DateTime.UtcNow);
         }
     }
@@ -84,8 +93,8 @@ public sealed partial class SyncEngine
         {
             if (!Directory.Exists(mapping.LocalRootPath)) continue;
             var meta = _store.GetAll(mapping.Id);
-            // Empty OR folders-only (partial mkdir bootstrap) → full reconcile before push.
-            if (meta.Count == 0 || meta.All(m => m.IsFolder))
+            // Empty / folders-only / near-empty file inventory → full reconcile before push.
+            if (SyncMetaInventoryHeal.NeedsRemoteBootstrap(meta, mapping.LocalRootPath))
                 needFull.Add(mapping);
             else
                 ready.Add(mapping);
