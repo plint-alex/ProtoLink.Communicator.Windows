@@ -23,6 +23,26 @@ public static class CloudSharedDelete
         isSwmShareRoot || isKnownOutboundShareRoot || hasExternalGrants;
 
     /// <summary>
+    /// AT-SFD-2: ListGrants on an unshared owner folder still returns the caller's own people grant.
+    /// Count only principals whose <paramref name="permissionForId"/> differs from the caller.
+    /// </summary>
+    public static bool HasExternalGrants(
+        IEnumerable<Guid>? permissionForIds,
+        Guid callerId)
+    {
+        if (permissionForIds == null || callerId == Guid.Empty)
+            return false;
+
+        foreach (var id in permissionForIds)
+        {
+            if (id != callerId)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Grantee SWM share root → LeaveSharedWithMe; otherwise owner outbound → DetachFromMyCloud.
     /// </summary>
     public static bool PreferLeaveForMeOnly(bool isSwmShareRoot) => isSwmShareRoot;

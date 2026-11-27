@@ -1207,8 +1207,12 @@ public partial class CloudViewModel : ViewModelBase
 
         try
         {
+            var callerId = _authService.CurrentToken?.UserId ?? Guid.Empty;
             var grants = await _api.ListShareGrantsAsync(item.Id);
-            if (grants.Count > 0)
+            // AT-SFD-2: owner self-grant alone is not "shared" — ignore permissionForId == caller.
+            if (CloudSharedDelete.HasExternalGrants(
+                    grants.Select(g => g.PermissionForId),
+                    callerId))
             {
                 _outboundShareRootIds.Add(item.Id);
                 return true;

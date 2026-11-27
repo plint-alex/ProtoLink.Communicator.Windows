@@ -30,6 +30,25 @@ public class CloudSharedDeleteTests
     }
 
     [Fact]
+    public void HasExternalGrants_SelfOnly_False()
+    {
+        var me = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        Assert.False(CloudSharedDelete.HasExternalGrants(new[] { me }, me));
+        Assert.False(CloudSharedDelete.HasExternalGrants(Array.Empty<Guid>(), me));
+        Assert.False(CloudSharedDelete.HasExternalGrants(null, me));
+        Assert.False(CloudSharedDelete.HasExternalGrants(new[] { me }, Guid.Empty));
+    }
+
+    [Fact]
+    public void HasExternalGrants_SelfPlusTina_True()
+    {
+        var me = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        var tina = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        Assert.True(CloudSharedDelete.HasExternalGrants(new[] { me, tina }, me));
+        Assert.True(CloudSharedDelete.HasExternalGrants(new[] { tina }, me));
+    }
+
+    [Fact]
     public void PreferLeaveForMeOnly_OnlySwm()
     {
         Assert.True(CloudSharedDelete.PreferLeaveForMeOnly(true));
