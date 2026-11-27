@@ -132,22 +132,41 @@ public partial class CloudViewModel
         if (!PreferOnlineUiCache.ShouldOpenLastOpenFromListingDisk(cached.Count > 0))
             return false;
 
-        if (_myCloudRootId == Guid.Empty || _myCloudRootId == lastOpenId)
-        {
-            _myCloudRootId = lastOpenId;
-            _knownCloudRootIds.Add(lastOpenId);
-            _folderTreeCodes[lastOpenId] = CloudEntityCodes.CloudRoot;
-        }
-        else
+        var lang = _settingsService.LoadSettings().UiLanguage;
+        var myCloudName = ShareSheetStrings.MyCloud(lang);
+
+        // AT-SFD-9: nested LastOpen must keep a real parent so header Delete stays available.
+        // BuildOfflineMyCloudOpen forces ParentId=null (My Cloud browse root only).
+        if (_myCloudRootId != Guid.Empty && _myCloudRootId != lastOpenId)
         {
             _folderTreeCodes.TryAdd(lastOpenId, CloudEntityCodes.CloudFolder);
+            var folderName = ResolveListingMetaName(lastOpenId);
+            if (string.IsNullOrWhiteSpace(folderName))
+                folderName = lastOpenId.ToString("D");
+            var entity = new CloudEntityRef(
+                lastOpenId,
+                CloudEntityKind.Folder,
+                folderName,
+                _myCloudRootId);
+            var breadcrumb = new[]
+            {
+                new CloudBreadcrumbEntry { Index = 0, Id = _myCloudRootId, Name = myCloudName },
+                new CloudBreadcrumbEntry { Index = 1, Id = lastOpenId, Name = folderName }
+            };
+            _history.Clear();
+            _locations.Clear();
+            await OpenAsync(entity, breadcrumb, pushHistory: false).ConfigureAwait(true);
+            return true;
         }
 
-        var lang = _settingsService.LoadSettings().UiLanguage;
+        _myCloudRootId = lastOpenId;
+        _knownCloudRootIds.Add(lastOpenId);
+        _folderTreeCodes[lastOpenId] = CloudEntityCodes.CloudRoot;
+
         var open = CloudEntityRestore.BuildOfflineMyCloudOpen(
             lastOpenId,
             ShareSheetStrings.CloudHub(lang),
-            ShareSheetStrings.MyCloud(lang));
+            myCloudName);
         _history.Clear();
         _locations.Clear();
         await OpenAsync(open.Entity, open.Breadcrumb, pushHistory: false).ConfigureAwait(true);

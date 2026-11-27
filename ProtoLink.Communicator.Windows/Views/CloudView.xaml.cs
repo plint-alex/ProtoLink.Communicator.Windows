@@ -110,10 +110,12 @@ public partial class CloudView : System.Windows.Controls.UserControl
         _vm.DownloadFile += OnDownloadFile;
         _vm.EntityOpened += OnEntityOpened;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
+        EntityHeaderControl.MoreMenuOpening += RebuildEntityMoreMenu;
     }
 
     private void UnhookViewModel()
     {
+        EntityHeaderControl.MoreMenuOpening -= RebuildEntityMoreMenu;
         if (_vm == null) return;
         _vm.ListScrollRestoreRequested -= OnListScrollRestoreRequested;
         _vm.DownloadFile -= OnDownloadFile;
@@ -127,6 +129,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (e.PropertyName is nameof(CloudViewModel.CurrentEntity)
             or nameof(CloudViewModel.HasCurrentFolderMapping)
             or nameof(CloudViewModel.CanMapCurrentFolder)
+            or nameof(CloudViewModel.CanDeleteCurrentEntity)
             or nameof(CloudViewModel.IsInSharedWithMeScope)
             or nameof(CloudViewModel.ShowSharedBrowseOnlyHint)
             or nameof(CloudViewModel.CanLeaveCurrentSharedRoot)
@@ -428,6 +431,7 @@ public partial class CloudView : System.Windows.Controls.UserControl
         if (_vm.CanDeleteCurrentEntity)
         {
             var deleteItem = new MenuItem { Header = "Delete" };
+            System.Windows.Automation.AutomationProperties.SetName(deleteItem, "Delete");
             deleteItem.Click += (_, _) => OnDeleteCurrentEntity();
             menu.Items.Add(deleteItem);
         }

@@ -155,8 +155,12 @@ public partial class EntityHeader : System.Windows.Controls.UserControl
         set => SetValue(MoreMenuProperty, value);
     }
 
+    /// <summary>AT-SFD-9: raised before the ⋮ menu opens so the host can rebuild Delete/Map from current state.</summary>
+    public event Action? MoreMenuOpening;
+
     private void OnMoreClick(object sender, RoutedEventArgs e)
     {
+        MoreMenuOpening?.Invoke();
         if (MoreMenu == null) return;
         MoreMenu.PlacementTarget = MoreButton;
         MoreMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;

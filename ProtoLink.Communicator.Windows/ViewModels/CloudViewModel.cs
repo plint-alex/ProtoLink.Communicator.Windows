@@ -233,13 +233,33 @@ public partial class CloudViewModel : ViewModelBase
             _shareRootCanWrite);
     }
 
-    public bool CanDeleteCurrentEntity =>
-        CurrentEntity is { ParentId: not null } entity
-        && !CloudVirtualNodes.IsVirtual(entity.Id)
-        && CloudSharedScope.AllowsWriteUnderSharedScope(
-            BreadcrumbPath.Select(b => b.Id),
-            entity.Id,
-            _shareRootCanWrite);
+    /// <summary>
+    /// AT-SFD-9 / AT-CFD-5: header Delete for the open Cloud folder/file (not My Cloud root / virtual).
+    /// ParentId null alone is insufficient after offline LastOpen — also refuse known CloudRoot ids.
+    /// </summary>
+    public bool CanDeleteCurrentEntity
+    {
+        get
+        {
+            if (CurrentEntity is not { } entity) return false;
+            if (CloudVirtualNodes.IsVirtual(entity.Id)) return false;
+            if (entity.Id == _myCloudRootId || _knownCloudRootIds.Contains(entity.Id))
+            {
+                _folderTreeCodes.TryGetValue(entity.Id, out var code);
+                if (CloudEntityClassify.IsCloudRootCode(code) || entity.ParentId is null)
+                    return false;
+            }
+            else if (entity.ParentId is null && BreadcrumbPath.Count < 2)
+            {
+                return false;
+            }
+
+            return CloudSharedScope.AllowsWriteUnderSharedScope(
+                BreadcrumbPath.Select(b => b.Id),
+                entity.Id,
+                _shareRootCanWrite);
+        }
+    }
 
     public bool ShowEmptyUpload => IsEmpty && CanMutateListedFolder;
 
@@ -536,6 +556,7 @@ public partial class CloudViewModel : ViewModelBase
         OnPropertyChanged(nameof(CurrentFolderMappingPath));
         ScheduleFolderSizeRefresh();
         OnPropertyChanged(nameof(CanMapCurrentFolder));
+        OnPropertyChanged(nameof(CanDeleteCurrentEntity));
         OnPropertyChanged(nameof(ShowAddLocalFolderCta));
         OnPropertyChanged(nameof(AddLocalFolderCtaLabel));
         OnPropertyChanged(nameof(AddLocalFolderAutomationName));
