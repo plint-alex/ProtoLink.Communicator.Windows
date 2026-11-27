@@ -44,6 +44,22 @@ public static class CloudSharedDelete
 
     /// <summary>
     /// Grantee SWM share root → LeaveSharedWithMe; otherwise owner outbound → DetachFromMyCloud.
+    /// Leave is a no-op for the creator (Left=false, MainParent unchanged) — never prefer Leave
+    /// when the target is a known outbound share root (AT-SFD-4).
     /// </summary>
-    public static bool PreferLeaveForMeOnly(bool isSwmShareRoot) => isSwmShareRoot;
+    public static bool PreferLeaveForMeOnly(
+        bool isSwmShareRoot,
+        bool isKnownOutboundShareRoot = false) =>
+        isSwmShareRoot && !isKnownOutboundShareRoot;
+
+    /// <summary>
+    /// Me-only must Detach when not clearly an inbound SWM leave, or when outbound is known.
+    /// </summary>
+    public static bool PreferDetachForMeOnly(
+        bool isSwmShareRoot,
+        bool isInSharedWithMeScope,
+        bool isKnownOutboundShareRoot) =>
+        !PreferLeaveForMeOnly(
+            isSwmShareRoot: isSwmShareRoot && isInSharedWithMeScope,
+            isKnownOutboundShareRoot: isKnownOutboundShareRoot);
 }

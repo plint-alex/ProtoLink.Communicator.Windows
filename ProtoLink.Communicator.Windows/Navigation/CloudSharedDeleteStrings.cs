@@ -37,4 +37,13 @@ public static class CloudSharedDeleteStrings
             ? $"Убрано из Моего облака: «{safe}»"
             : $"Removed from My Cloud: \"{safe}\"";
     }
+
+    /// <summary>AT-SFD-4: Api returned detached=false — do not paint success / remove the row.</summary>
+    public static string DetachFailed(string? lang, string name)
+    {
+        var safe = string.IsNullOrWhiteSpace(name) ? "—" : name.Trim();
+        return ShareSheetStrings.IsRussian(lang)
+            ? $"Не удалось убрать из Моего облака: «{safe}»"
+            : $"Could not remove from My Cloud: \"{safe}\"";
+    }
 }

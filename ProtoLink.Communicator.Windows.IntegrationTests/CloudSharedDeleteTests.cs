@@ -49,10 +49,38 @@ public class CloudSharedDeleteTests
     }
 
     [Fact]
-    public void PreferLeaveForMeOnly_OnlySwm()
+    public void PreferLeaveForMeOnly_OnlySwm_NotOutbound()
     {
         Assert.True(CloudSharedDelete.PreferLeaveForMeOnly(true));
         Assert.False(CloudSharedDelete.PreferLeaveForMeOnly(false));
+        // AT-SFD-4: known outbound must Detach — creator Leave is MainParent no-op.
+        Assert.False(CloudSharedDelete.PreferLeaveForMeOnly(true, isKnownOutboundShareRoot: true));
+        Assert.False(CloudSharedDelete.PreferLeaveForMeOnly(false, isKnownOutboundShareRoot: true));
+    }
+
+    [Fact]
+    public void PreferDetachForMeOnly_OwnerOutboundUnderMyCloud()
+    {
+        // Win AT-SFD-4 shape: My Cloud listing / open folder, external grants → Detach.
+        Assert.True(CloudSharedDelete.PreferDetachForMeOnly(
+            isSwmShareRoot: false,
+            isInSharedWithMeScope: false,
+            isKnownOutboundShareRoot: true));
+        Assert.True(CloudSharedDelete.PreferDetachForMeOnly(
+            isSwmShareRoot: true,
+            isInSharedWithMeScope: false,
+            isKnownOutboundShareRoot: false));
+        Assert.False(CloudSharedDelete.PreferDetachForMeOnly(
+            isSwmShareRoot: true,
+            isInSharedWithMeScope: true,
+            isKnownOutboundShareRoot: false));
+    }
+
+    [Fact]
+    public void DetachFailedString_EnRu()
+    {
+        Assert.Contains("Could not remove", CloudSharedDeleteStrings.DetachFailed("en", "Docs"), StringComparison.Ordinal);
+        Assert.Contains("Docs", CloudSharedDeleteStrings.DetachFailed("ru", "Docs"), StringComparison.Ordinal);
     }
 
     [Fact]

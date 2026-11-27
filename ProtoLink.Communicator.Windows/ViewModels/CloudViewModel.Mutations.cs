@@ -164,22 +164,68 @@ public partial class CloudViewModel
         {
             if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return;
             var lang = _settingsService.LoadSettings().UiLanguage;
-            if (CloudSharedDelete.PreferLeaveForMeOnly(IsSwmShareRootItem(item)))
+            var crumbIds = BreadcrumbPath.Select(b => b.Id).ToList();
+            var inSwmScope = CloudSharedScope.IsInSharedWithMeScope(crumbIds) || IsSharedWithMeListing;
+            var outbound = _outboundShareRootIds.Contains(item.Id);
+            // AT-SFD-4: creator LeaveSharedWithMe is Left=false / MainParent no-op. Only Leave
+            // when clearly inbound SWM; known outbound or My Cloud listing → DetachFromMyCloud.
+            if (!CloudSharedDelete.PreferDetachForMeOnly(
+                    IsSwmShareRootItem(item),
+                    inSwmScope,
+                    outbound))
             {
                 await LeaveSharedAsync(item.Id);
                 return;
             }
 
             StatusText = "Removing…";
-            await _api.DetachFromMyCloudAsync(item.Id);
+            var result = await _api.DetachFromMyCloudAsync(item.Id);
+            if (!result.Detached)
+            {
+                // Fail closed — do not remove the row or paint success when Api did nothing.
+                StatusText = CloudSharedDeleteStrings.DetachFailed(lang, item.Name);
+                return;
+            }
+
             _outboundShareRootIds.Remove(item.Id);
             _shareRootCaptions.Remove(item.Id);
+            _shareRootCanWrite.Remove(item.Id);
+            // Soft Ready / disk listing must not keep painting the detached id under My Cloud.
+            _listingMetaStore.RemoveByRemoteIds(new[] { item.Id });
+            _listingDiskCache.RemoveRemoteIds(new[] { item.Id });
+            _deletedRemoteIds.Add(item.Id);
+            PurgeDeletedFromFolderTree(new[] { item.Id });
             Items.Remove(item);
             _locations.Remove(item.Id);
-            if (CurrentEntity?.Id == item.Id && ListedFolderId is { } listedId &&
-                _locations.TryGetValue(listedId, out var folder))
-                CurrentEntity = folder.Entity;
-            StatusText = CloudSharedDeleteStrings.DetachedStatus(lang, item.Name);
+
+            var statusOk = CloudSharedDeleteStrings.DetachedStatus(lang, item.Name);
+            // When Delete ran from inside the folder (More on open entity), parent crumb is My Cloud.
+            var viewingDetached =
+                CurrentEntity?.Id == item.Id
+                || ListedFolderId == item.Id
+                || crumbIds.Contains(item.Id);
+            if (viewingDetached)
+            {
+                var parent = crumbIds.LastOrDefault(id => id != item.Id && !CloudVirtualNodes.IsVirtual(id));
+                if (parent == Guid.Empty && _myCloudRootId != Guid.Empty)
+                    parent = _myCloudRootId;
+                if (parent != Guid.Empty
+                    && _locations.TryGetValue(parent, out var parentLoc))
+                {
+                    StatusText = statusOk;
+                    await OpenAsync(parentLoc.Entity, parentLoc.Breadcrumb.ToList(), pushHistory: false);
+                    return;
+                }
+
+                if (_myCloudRootId != Guid.Empty)
+                {
+                    StatusText = statusOk;
+                    await EnsureRootAsync();
+                    return;
+                }
+            }
+
+            StatusText = statusOk;
             await LoadCurrentAsync();
         }
         catch (Exception ex)
