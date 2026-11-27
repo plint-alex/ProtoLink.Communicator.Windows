@@ -29,6 +29,10 @@ public class GetEntitiesResult
     [JsonPropertyName("userWhoCreatedId")]
     public Guid? UserWhoCreatedId { get; set; }
 
+    /// <summary>Privileged parent axis (AT-SFD-4 Detach verify).</summary>
+    [JsonPropertyName("mainParentId")]
+    public Guid? MainParentId { get; set; }
+
     /// <summary>Populated for Shared with me rows — effective CanWrite from the caller's direct grant(s).</summary>
     [JsonPropertyName("canWrite")]
     public bool? CanWrite { get; set; }

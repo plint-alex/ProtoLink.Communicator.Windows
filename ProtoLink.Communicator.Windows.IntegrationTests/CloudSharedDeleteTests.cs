@@ -74,6 +74,23 @@ public class CloudSharedDeleteTests
             isSwmShareRoot: true,
             isInSharedWithMeScope: true,
             isKnownOutboundShareRoot: false));
+        // Mis-flagged SWM root under My Cloud (scope false) must still Detach.
+        Assert.True(CloudSharedDelete.PreferDetachForMeOnly(
+            isSwmShareRoot: true,
+            isInSharedWithMeScope: false,
+            isKnownOutboundShareRoot: false));
+    }
+
+    [Fact]
+    public void DetachResult_JsonPropertyName_DetachedCamelCase()
+    {
+        var json =
+            """{"entityId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","detached":true,"removedRelationCount":1,"mainParentCleared":true}""";
+        var result = System.Text.Json.JsonSerializer.Deserialize<Models.Share.DetachFromMyCloudResult>(json);
+        Assert.NotNull(result);
+        Assert.True(result!.Detached);
+        Assert.True(result.MainParentCleared);
+        Assert.Equal(1, result.RemovedRelationCount);
     }
 
     [Fact]

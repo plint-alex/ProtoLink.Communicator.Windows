@@ -179,10 +179,9 @@ public partial class CloudViewModel
             }
 
             StatusText = "Removing…";
-            var result = await _api.DetachFromMyCloudAsync(item.Id);
-            if (!result.Detached)
+            // PreferDetach tip 1.0.137 still left MainParent on CloudRoot — verify + one retry.
+            if (!await TryDetachFromMyCloudVerifiedAsync(item.Id))
             {
-                // Fail closed — do not remove the row or paint success when Api did nothing.
                 StatusText = CloudSharedDeleteStrings.DetachFailed(lang, item.Name);
                 return;
             }
@@ -232,6 +231,36 @@ public partial class CloudViewModel
         {
             ReportCaughtException(ex);
         }
+    }
+
+    /// <summary>
+    /// AT-SFD-4: Detach must self-root MainParentId. Api can claim detached=true while
+    /// GetEntities still shows CloudRoot — verify via ids listing and retry once.
+    /// </summary>
+    private async Task<bool> TryDetachFromMyCloudVerifiedAsync(Guid entityId)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var result = await _api.DetachFromMyCloudAsync(entityId);
+            if (!result.Detached)
+                continue;
+
+            var rows = await _api.GetEntitiesByIdsAsync(new[] { entityId }, includeValues: false);
+            var mp = rows.FirstOrDefault(r => r.Id == entityId)?.MainParentId;
+            if (mp == entityId)
+                return true;
+
+            // Card fallback when listing omits mainParentId (older Api).
+            var card = await _api.GetEntityCardAsync(entityId, fromCache: false);
+            if (card?.MainParentId == entityId)
+                return true;
+
+            // Detached + MainParentCleared with no readable MainParent — trust Api claim.
+            if (result.MainParentCleared && mp is null && card?.MainParentId is null)
+                return true;
+        }
+
+        return false;
     }
 
     private async Task DeleteCloudTreeAsync(CloudItemViewModel item, bool forAllShared)

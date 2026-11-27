@@ -91,9 +91,17 @@ public sealed class DetachFromMyCloudContract
 
 public sealed class DetachFromMyCloudResult
 {
+    [System.Text.Json.Serialization.JsonPropertyName("entityId")]
     public Guid EntityId { get; set; }
+
+    /// <summary>CamelCase wire name — fail-closed when missing/false (AT-SFD-4).</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("detached")]
     public bool Detached { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("removedRelationCount")]
     public int RemovedRelationCount { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("mainParentCleared")]
     public bool MainParentCleared { get; set; }
 }
 
