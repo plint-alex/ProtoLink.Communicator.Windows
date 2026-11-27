@@ -76,6 +76,19 @@ public partial class CloudViewModel
 
         var treeRows = FolderTreeRows.Select(r => (r.Id, r.Name, r.Depth)).ToList();
         var ancestors = CloudFolderNavigation.BuildAncestorTrail(treeRows, row.Id);
+        // E9g: stacked rows omit My Cloud — prepend browse parent so crumbs/Up stay correct.
+        if (ancestors.Count > 0
+            && CloudFolderTree.OmitBrowseParentWrapper(_folderTreeRootId ?? Guid.Empty, _myCloudRootId)
+            && ancestors[0].Id != _myCloudRootId)
+        {
+            var myName = _folderTreeNames.GetValueOrDefault(_myCloudRootId)
+                         ?? BreadcrumbPath.FirstOrDefault(b => b.Id == _myCloudRootId)?.Name
+                         ?? "Cloud";
+            ancestors = new List<(Guid Id, string Name)> { (_myCloudRootId, myName) }
+                .Concat(ancestors)
+                .ToList();
+        }
+
         if (ancestors.Count > 0)
         {
             var composed = CloudFolderNavigation.ComposeBreadcrumb(
@@ -304,11 +317,19 @@ public partial class CloudViewModel
             return;
         }
 
-        // First paint / empty after listing Clear: root-only chrome (unloaded → CanExpand).
+        // First paint / empty after listing Clear.
+        // E9g: My Cloud as tree root must not paint a lone wrapper stub — keep cache root id
+        // so Soft Ready can seed children, but Rebuild yields zero rows (E9d collapse).
         ResetFolderTreeCache();
         _folderTreeNames[treeRoot] = rootName;
-        _folderTreeExpanded.Add(treeRoot);
         _folderTreeRootId = treeRoot;
+        if (CloudFolderTree.OmitBrowseParentWrapper(treeRoot, _myCloudRootId))
+        {
+            RebuildFolderTreeRows();
+            return;
+        }
+
+        _folderTreeExpanded.Add(treeRoot);
         RebuildFolderTreeRows();
     }
 
@@ -557,14 +578,29 @@ public partial class CloudViewModel
             IsFileOpen,
             CurrentEntity?.Id,
             CurrentEntity?.ParentId);
-        var rootName = _folderTreeNames.GetValueOrDefault(treeRoot, "Cloud");
-        var visible = CloudFolderTree.ProjectVisible(
-            new CloudFolderTree.Node(treeRoot, rootName),
-            _folderTreeChildren,
-            _folderTreeExpanded,
-            _folderTreeLoaded,
-            selected,
-            _folderTreeLoading);
+        IReadOnlyList<CloudFolderTree.VisibleRow> visible;
+        if (CloudFolderTree.OmitBrowseParentWrapper(treeRoot, _myCloudRootId))
+        {
+            // E9g: My Cloud children as sequential depth-0 stacked trees (no wrapper row).
+            visible = CloudFolderTree.ProjectVisibleStackedChildren(
+                treeRoot,
+                _folderTreeChildren,
+                _folderTreeExpanded,
+                _folderTreeLoaded,
+                selected,
+                _folderTreeLoading);
+        }
+        else
+        {
+            var rootName = _folderTreeNames.GetValueOrDefault(treeRoot, "Cloud");
+            visible = CloudFolderTree.ProjectVisible(
+                new CloudFolderTree.Node(treeRoot, rootName),
+                _folderTreeChildren,
+                _folderTreeExpanded,
+                _folderTreeLoaded,
+                selected,
+                _folderTreeLoading);
+        }
 
         FolderTreeRows.Clear();
         foreach (var row in visible)

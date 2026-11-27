@@ -165,6 +165,47 @@ public static class CloudFolderTree
         }
     }
 
+    /// <summary>
+    /// E9g: omit browse-parent wrapper row; project its immediate folder children as sequential
+    /// depth-0 stacked trees (Notes E11a feel). Empty / unloaded children → no rows (no lone stub).
+    /// </summary>
+    public static IReadOnlyList<VisibleRow> ProjectVisibleStackedChildren(
+        Guid browseParentId,
+        IReadOnlyDictionary<Guid, IReadOnlyList<Node>> childrenByParent,
+        IReadOnlySet<Guid> expandedIds,
+        IReadOnlySet<Guid> loadedParentIds,
+        Guid? selectedId,
+        IReadOnlySet<Guid>? loadingIds = null,
+        int maxDepth = DefaultMaxDepth)
+    {
+        if (browseParentId == Guid.Empty) return Array.Empty<VisibleRow>();
+        if (childrenByParent == null
+            || !childrenByParent.TryGetValue(browseParentId, out var stackedRoots)
+            || stackedRoots == null
+            || stackedRoots.Count == 0)
+            return Array.Empty<VisibleRow>();
+
+        var outRows = new List<VisibleRow>();
+        foreach (var stacked in stackedRoots)
+        {
+            if (stacked.Id == Guid.Empty) continue;
+            outRows.AddRange(ProjectVisible(
+                stacked,
+                childrenByParent,
+                expandedIds,
+                loadedParentIds,
+                selectedId,
+                loadingIds,
+                maxDepth));
+        }
+
+        return outRows;
+    }
+
+    /// <summary>E9g: Folders left panel omits the My Cloud CloudRoot wrapper when it is the tree root.</summary>
+    public static bool OmitBrowseParentWrapper(Guid treeRootId, Guid myCloudRootId) =>
+        treeRootId != Guid.Empty && myCloudRootId != Guid.Empty && treeRootId == myCloudRootId;
+
     /// <summary>Remove <paramref name="folderId"/> and all known descendants from the expanded set.</summary>
     public static void CollapseBranch(
         Guid folderId,

@@ -489,4 +489,106 @@ public class CloudFolderTreeTests
             new[] { (Guid.NewGuid(), "Ghost"), (known, "Keep") }));
         Assert.Equal("Keep", names[known]);
     }
+
+    [Fact]
+    public void OmitBrowseParentWrapper_OnlyWhenTreeRootIsMyCloud()
+    {
+        var myCloud = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        Assert.True(CloudFolderTree.OmitBrowseParentWrapper(myCloud, myCloud));
+        Assert.False(CloudFolderTree.OmitBrowseParentWrapper(other, myCloud));
+        Assert.False(CloudFolderTree.OmitBrowseParentWrapper(myCloud, Guid.Empty));
+        Assert.False(CloudFolderTree.OmitBrowseParentWrapper(Guid.Empty, myCloud));
+    }
+
+    [Fact]
+    public void ProjectVisibleStackedChildren_OmitsWrapper_ShowsDepth0Roots()
+    {
+        // AT-CE21 / AT-CE22: no My Cloud row; ≥2 children as sequential depth-0 trees.
+        var myCloud = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var map = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [myCloud] = new[] { new CloudFolderTree.Node(a, "Notes"), new CloudFolderTree.Node(b, "Photos") },
+            [a] = new[] { new CloudFolderTree.Node(a1, "Nested") },
+            [b] = Array.Empty<CloudFolderTree.Node>()
+        };
+        var expanded = new HashSet<Guid> { myCloud }; // browse parent expanded for load; not painted
+        var loaded = new HashSet<Guid> { myCloud, b };
+
+        var rows = CloudFolderTree.ProjectVisibleStackedChildren(
+            myCloud,
+            map,
+            expanded,
+            loaded,
+            selectedId: null);
+
+        Assert.Equal(2, rows.Count);
+        Assert.DoesNotContain(rows, r => r.Id == myCloud);
+        Assert.Equal(a, rows[0].Id);
+        Assert.Equal(0, rows[0].Depth);
+        Assert.Equal(b, rows[1].Id);
+        Assert.Equal(0, rows[1].Depth);
+        Assert.True(rows[0].CanExpand); // unloaded nested → expandable
+        Assert.False(rows[1].CanExpand); // loaded empty → leaf
+    }
+
+    [Fact]
+    public void ProjectVisibleStackedChildren_EmptyOrUnloaded_NoWrapperStub()
+    {
+        // AT-CE21 soft: Soft Ready / soft-fail must not paint lone My Cloud chrome.
+        var myCloud = Guid.NewGuid();
+        Assert.Empty(CloudFolderTree.ProjectVisibleStackedChildren(
+            myCloud,
+            new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>(),
+            expandedIds: new HashSet<Guid> { myCloud },
+            loadedParentIds: new HashSet<Guid>(),
+            selectedId: myCloud));
+
+        var emptyKids = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [myCloud] = Array.Empty<CloudFolderTree.Node>()
+        };
+        Assert.Empty(CloudFolderTree.ProjectVisibleStackedChildren(
+            myCloud,
+            emptyKids,
+            expandedIds: new HashSet<Guid> { myCloud },
+            loadedParentIds: new HashSet<Guid> { myCloud },
+            selectedId: myCloud));
+    }
+
+    [Fact]
+    public void ProjectVisibleStackedChildren_ExpandStackedRoot_RevealsGrandchildren()
+    {
+        // Soft AT-CE9/CE10 per stacked root.
+        var myCloud = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var a1 = Guid.NewGuid();
+        var map = new Dictionary<Guid, IReadOnlyList<CloudFolderTree.Node>>
+        {
+            [myCloud] = new[] { new CloudFolderTree.Node(a, "A") },
+            [a] = new[] { new CloudFolderTree.Node(a1, "A1") },
+            [a1] = Array.Empty<CloudFolderTree.Node>()
+        };
+        var expanded = new HashSet<Guid> { a };
+        var loaded = new HashSet<Guid> { myCloud, a, a1 };
+
+        var rows = CloudFolderTree.ProjectVisibleStackedChildren(
+            myCloud,
+            map,
+            expanded,
+            loaded,
+            selectedId: a1);
+
+        Assert.Equal(2, rows.Count);
+        Assert.DoesNotContain(rows, r => r.Id == myCloud);
+        Assert.Equal(a, rows[0].Id);
+        Assert.Equal(0, rows[0].Depth);
+        Assert.True(rows[0].IsExpanded);
+        Assert.Equal(a1, rows[1].Id);
+        Assert.Equal(1, rows[1].Depth);
+        Assert.True(rows[1].Selected);
+    }
 }
