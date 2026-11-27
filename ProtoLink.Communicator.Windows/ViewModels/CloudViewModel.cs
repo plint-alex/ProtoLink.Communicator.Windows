@@ -1199,31 +1199,30 @@ public partial class CloudViewModel : ViewModelBase
     {
         if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return false;
         var swmRoot = IsSwmShareRootItem(item);
-        if (CloudSharedDelete.IsSharedDeleteTarget(
-                swmRoot,
-                _outboundShareRootIds.Contains(item.Id),
-                hasExternalGrants: false))
-            return true;
-
+        var knownOutbound = _outboundShareRootIds.Contains(item.Id);
+        var hasExternal = false;
+        // AT-SFD-4: always probe grants — skipping when swmRoot already true left knownOutbound
+        // false and PreferDetach fell through to creator Leave (MainParent no-op).
         try
         {
             var callerId = _authService.CurrentToken?.UserId ?? Guid.Empty;
             var grants = await _api.ListShareGrantsAsync(item.Id);
             // AT-SFD-2: owner self-grant alone is not "shared" — ignore permissionForId == caller.
-            if (CloudSharedDelete.HasExternalGrants(
-                    grants.Select(g => g.PermissionForId),
-                    callerId))
-            {
+            hasExternal = CloudSharedDelete.HasExternalGrants(
+                grants.Select(g => g.PermissionForId),
+                callerId);
+            if (hasExternal)
                 _outboundShareRootIds.Add(item.Id);
-                return true;
-            }
         }
         catch
         {
             // Probe failed — keep E10 single confirm rather than block delete.
         }
 
-        return false;
+        return CloudSharedDelete.IsSharedDeleteTarget(
+            swmRoot,
+            knownOutbound || hasExternal,
+            hasExternal);
     }
 
     public void RememberOutboundShareRoot(Guid entityId)

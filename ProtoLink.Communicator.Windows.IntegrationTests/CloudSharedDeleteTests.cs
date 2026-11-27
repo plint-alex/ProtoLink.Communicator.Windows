@@ -79,6 +79,11 @@ public class CloudSharedDeleteTests
             isSwmShareRoot: true,
             isInSharedWithMeScope: false,
             isKnownOutboundShareRoot: false));
+        // Outbound wins even when inbound SWM flags are both true (grant probe stamped outbound).
+        Assert.True(CloudSharedDelete.PreferDetachForMeOnly(
+            isSwmShareRoot: true,
+            isInSharedWithMeScope: true,
+            isKnownOutboundShareRoot: true));
     }
 
     [Fact]

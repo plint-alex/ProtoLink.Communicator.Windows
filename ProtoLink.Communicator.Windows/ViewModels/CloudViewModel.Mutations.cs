@@ -165,7 +165,8 @@ public partial class CloudViewModel
             if (item.IsVirtualEntry || CloudVirtualNodes.IsVirtual(item.Id)) return;
             var lang = _settingsService.LoadSettings().UiLanguage;
             var crumbIds = BreadcrumbPath.Select(b => b.Id).ToList();
-            var inSwmScope = CloudSharedScope.IsInSharedWithMeScope(crumbIds) || IsSharedWithMeListing;
+            // Crumb/virtual SWM only — do not treat "row in SWM list" as Leave scope (AT-SFD-4).
+            var inSwmScope = CloudSharedScope.IsInSharedWithMeScope(crumbIds);
             var outbound = _outboundShareRootIds.Contains(item.Id);
             // AT-SFD-4: creator LeaveSharedWithMe is Left=false / MainParent no-op. Only Leave
             // when clearly inbound SWM; known outbound or My Cloud listing → DetachFromMyCloud.
@@ -179,7 +180,7 @@ public partial class CloudViewModel
             }
 
             StatusText = "Removing…";
-            // PreferDetach tip 1.0.137 still left MainParent on CloudRoot — verify + one retry.
+            // PreferDetach tip 1.0.138 still left MainParent on CloudRoot — verify + one retry.
             if (!await TryDetachFromMyCloudVerifiedAsync(item.Id))
             {
                 StatusText = CloudSharedDeleteStrings.DetachFailed(lang, item.Name);
@@ -236,6 +237,7 @@ public partial class CloudViewModel
     /// <summary>
     /// AT-SFD-4: Detach must self-root MainParentId. Api can claim detached=true while
     /// GetEntities still shows CloudRoot — verify via ids listing and retry once.
+    /// Fail-closed: require readable MainParentId == entityId (do not trust MainParentCleared alone).
     /// </summary>
     private async Task<bool> TryDetachFromMyCloudVerifiedAsync(Guid entityId)
     {
@@ -253,10 +255,6 @@ public partial class CloudViewModel
             // Card fallback when listing omits mainParentId (older Api).
             var card = await _api.GetEntityCardAsync(entityId, fromCache: false);
             if (card?.MainParentId == entityId)
-                return true;
-
-            // Detached + MainParentCleared with no readable MainParent — trust Api claim.
-            if (result.MainParentCleared && mp is null && card?.MainParentId is null)
                 return true;
         }
 
