@@ -182,7 +182,8 @@ public partial class CloudViewModel
                 isFolder,
                 childCount,
                 canEdit: true,
-                isOnline: !_showNetworkBanner);
+                isOnline: !_showNetworkBanner,
+                plantsUnderMyCloud: true);
             OnPropertyChanged(nameof(ShareSheet));
         }
         catch (Exception ex)

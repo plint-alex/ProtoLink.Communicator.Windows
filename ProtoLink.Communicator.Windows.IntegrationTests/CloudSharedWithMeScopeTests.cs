@@ -197,10 +197,11 @@ public class CloudSharedWithMeScopeTests
             "Nothing shared with you yet",
             ShareSheetStrings.EmptySharedTitle("en"));
         Assert.Equal(
-            "When someone gives you access, it shows up here.",
+            "Legacy grants list here. New Cloud shares also appear under My Cloud.",
             ShareSheetStrings.EmptySharedBody("en"));
         Assert.Equal("Вам пока ничего не открыли", ShareSheetStrings.EmptySharedTitle("ru"));
-        Assert.Contains("здесь", ShareSheetStrings.EmptySharedBody("ru"), StringComparison.Ordinal);
+        Assert.Contains("Моё облако", ShareSheetStrings.EmptySharedBody("ru"), StringComparison.Ordinal);
+        Assert.DoesNotContain("only", ShareSheetStrings.EmptySharedBody("en"), StringComparison.OrdinalIgnoreCase);
 
         var en = ShareSheetStrings.SharedRowSubtitle("en", "Ivan", canWrite: false);
         Assert.Contains("Shared by Ivan", en, StringComparison.Ordinal);

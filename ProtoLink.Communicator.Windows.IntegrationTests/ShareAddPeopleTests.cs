@@ -108,6 +108,14 @@ public class ShareAddPeopleTests
         var toast = ShareSheetStrings.AddedToast("en", "Maria K.", canWrite: false);
         Assert.Contains("Maria K.", toast, StringComparison.Ordinal);
         Assert.Contains("view", toast, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("link", toast, StringComparison.OrdinalIgnoreCase);
+
+        var cloudToast = ShareSheetStrings.AddedToast("en", "Maria K.", canWrite: false, plantsUnderMyCloud: true);
+        Assert.Contains("Maria K.", cloudToast, StringComparison.Ordinal);
+        Assert.Contains("My Cloud", cloudToast, StringComparison.Ordinal);
+        Assert.DoesNotContain("Send them the link", cloudToast, StringComparison.Ordinal);
+        Assert.Contains("Моё облако", ShareSheetStrings.AddedToast("ru", "Мария", canWrite: true, plantsUnderMyCloud: true), StringComparison.Ordinal);
+        Assert.Contains("My Cloud", ShareSheetStrings.AddedToastMany("en", 3, plantsUnderMyCloud: true), StringComparison.Ordinal);
         Assert.DoesNotContain("token", ShareSheetStrings.PasteIdHint("en"), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("email", ShareSheetStrings.PasteIdHint("en"), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("email", ShareSheetStrings.NoUserWithId("en"), StringComparison.OrdinalIgnoreCase);

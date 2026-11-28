@@ -214,14 +214,38 @@ public static class ShareSheetStrings
     public static string Add(string? lang) =>
         IsRussian(lang) ? "Добавить" : "Add";
 
-    public static string AddedToast(string? lang, string name, bool canWrite)
+    /// <summary>
+    /// People-share success toast. Cloud (E13) appear = My Cloud; Notes/other keep link find hint (AT-S49).
+    /// </summary>
+    public static string AddedToast(string? lang, string name, bool canWrite, bool plantsUnderMyCloud = false)
     {
         var level = canWrite
             ? (IsRussian(lang) ? "редактировать" : "edit")
             : (IsRussian(lang) ? "смотреть" : "view");
+        if (plantsUnderMyCloud)
+        {
+            return IsRussian(lang)
+                ? $"{name} теперь может {level}. Появится у них в «Моё облако»."
+                : $"{name} can now {level}. It will appear in their My Cloud.";
+        }
+
         return IsRussian(lang)
             ? $"{name} теперь может {level}. Отправьте ссылку, чтобы найти."
             : $"{name} can now {level}. Send them the link so they can find it.";
+    }
+
+    public static string AddedToastMany(string? lang, int count, bool plantsUnderMyCloud = false)
+    {
+        if (plantsUnderMyCloud)
+        {
+            return IsRussian(lang)
+                ? $"{count} человек добавлено. Появится у них в «Моё облако»."
+                : $"{count} people can now access this. It will appear in their My Cloud.";
+        }
+
+        return IsRussian(lang)
+            ? $"{count} человек добавлено. Отправьте ссылку, чтобы найти."
+            : $"{count} people can now access this. Send them the link so they can find it.";
     }
 
     public static string NoContactsYet(string? lang) =>
@@ -256,8 +280,8 @@ public static class ShareSheetStrings
 
     public static string EmptySharedBody(string? lang) =>
         IsRussian(lang)
-            ? "Когда кто-то даст вам доступ, это появится здесь."
-            : "When someone gives you access, it shows up here.";
+            ? "Старые доступы — здесь. Новые папки Cloud также появляются в «Моё облако»."
+            : "Legacy grants list here. New Cloud shares also appear under My Cloud.";
 
     public static string EmptySharedByMeTitle(string? lang) =>
         IsRussian(lang) ? "Пока ничем не поделились" : "Nothing shared yet";

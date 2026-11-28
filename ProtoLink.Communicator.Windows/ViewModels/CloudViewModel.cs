@@ -137,7 +137,12 @@ public partial class CloudViewModel : ViewModelBase
             () => _settingsService.LoadSettings().UiLanguage,
             () => _authService.CurrentToken?.UserId,
             s => StatusText = s,
-            url => _onSendShareLinkInMessenger?.Invoke(url));
+            url => _onSendShareLinkInMessenger?.Invoke(url),
+            onPeopleGranted: () =>
+            {
+                // E13 AT-CFS-2: ParentIds My Cloud refresh without requiring SWM Locations.
+                _ = LoadCurrentAsync(quiet: true);
+            });
         ShareSheet.CopyCanonicalLink = () => CopyLink(CurrentEntity?.Id);
         ShareSheet.GetCanonicalLink = () => CurrentEntity?.Id is { } id ? BuildLink(id) : null;
         RefreshCommand = new RelayCommand(async _ => await LoadCurrentAsync());

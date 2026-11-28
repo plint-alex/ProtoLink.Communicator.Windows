@@ -15,10 +15,12 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
     private readonly Func<string?> _uiLanguage;
     private readonly Action<string>? _onStatus;
     private readonly Action<string>? _onSendInMessenger;
+    private readonly Action? _onPeopleGranted;
     private readonly TimeSpan _pasteResolveDebounce;
     private Guid _entityId;
     private string _entityName = "";
     private bool _isFolder;
+    private bool _plantsUnderMyCloud;
     private int _childCount;
     private bool _canEdit = true;
     private bool _isOnline = true;
@@ -41,13 +43,15 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
         Func<Guid?>? currentUserId = null,
         Action<string>? onStatus = null,
         Action<string>? onSendInMessenger = null,
-        TimeSpan? pasteResolveDebounce = null)
+        TimeSpan? pasteResolveDebounce = null,
+        Action? onPeopleGranted = null)
     {
         _api = api;
         _uiLanguage = uiLanguage;
         _currentUserId = currentUserId ?? (() => null);
         _onStatus = onStatus;
         _onSendInMessenger = onSendInMessenger;
+        _onPeopleGranted = onPeopleGranted;
         // Debounce paste-ID auto-resolve so typing a GUID does not spam GetEntity; tests may pass Zero.
         _pasteResolveDebounce = pasteResolveDebounce ?? TimeSpan.FromMilliseconds(350);
 
@@ -370,11 +374,13 @@ public sealed partial class ShareSheetViewModel : ViewModelBase
         bool isFolder,
         int childCount,
         bool canEdit,
-        bool isOnline)
+        bool isOnline,
+        bool plantsUnderMyCloud = false)
     {
         _entityId = entityId;
         _entityName = entityName ?? "";
         _isFolder = isFolder;
+        _plantsUnderMyCloud = plantsUnderMyCloud;
         _childCount = childCount;
         CanEdit = canEdit;
         IsOnline = isOnline;

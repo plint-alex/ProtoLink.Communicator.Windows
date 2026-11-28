@@ -392,20 +392,17 @@ public sealed partial class ShareSheetViewModel
             foreach (var (userId, _) in targets)
                 await _api.AddPermissionAsync(_entityId, userId, AddCanWrite, includeSubtree: _isFolder);
 
-            var firstName = targets.Values.First();
-            var toast = ShareSheetStrings.AddedToast(Lang, firstName, AddCanWrite);
-            if (targets.Count > 1)
-            {
-                toast = ShareSheetStrings.IsRussian(Lang)
-                    ? $"{targets.Count} человек добавлено. Отправьте ссылку, чтобы найти."
-                    : $"{targets.Count} people can now access this. Send them the link so they can find it.";
-            }
+            var toast = targets.Count > 1
+                ? ShareSheetStrings.AddedToastMany(Lang, targets.Count, _plantsUnderMyCloud)
+                : ShareSheetStrings.AddedToast(Lang, targets.Values.First(), AddCanWrite, _plantsUnderMyCloud);
 
             AddedBannerText = toast;
             ShowAddedBanner = true;
             _onStatus?.Invoke(toast);
             ResetAddPeoplePanel();
             await LoadAsync();
+            // E13: soft-refresh open Cloud browse so planted children can appear without SWM.
+            try { _onPeopleGranted?.Invoke(); } catch { /* ignore */ }
         }
         catch (Exception)
         {
