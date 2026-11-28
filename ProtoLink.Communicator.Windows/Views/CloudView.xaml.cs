@@ -628,12 +628,6 @@ public partial class CloudView : System.Windows.Controls.UserControl
             FocusList();
             e.Handled = true;
         }
-        else if (key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
-        {
-            ListSearchBox.Focus();
-            ListSearchBox.SelectAll();
-            e.Handled = true;
-        }
         else if (key == Key.F5 && Keyboard.Modifiers == ModifierKeys.None)
         {
             ExecuteIfCan(_vm.RefreshCommand);

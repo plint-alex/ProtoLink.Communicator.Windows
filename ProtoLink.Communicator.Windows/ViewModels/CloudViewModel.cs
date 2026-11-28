@@ -1,9 +1,7 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Windows.Data;
 using System.Windows.Input;
 using ProtoLink.Communicator.Windows.Core;
 using ProtoLink.Communicator.Windows.Models;
@@ -42,7 +40,6 @@ public partial class CloudViewModel : ViewModelBase
     private CloudEntityRef? _currentEntity;
     private CloudItemViewModel? _selectedItem;
     private string _statusText = "Ready";
-    private string _searchText = "";
     private bool _showNetworkBanner;
     private Exception? _lastError;
     private bool _isCompactLayout;
@@ -102,8 +99,6 @@ public partial class CloudViewModel : ViewModelBase
         _recentStore = recentStore ?? new CloudRecentStore();
         _listingDiskCache = listingDiskCache ?? new CloudListingDiskCache();
         Items = new ObservableCollection<CloudItemViewModel>();
-        FilteredItems = CollectionViewSource.GetDefaultView(Items);
-        FilteredItems.Filter = MatchesSearchFilter;
         BreadcrumbPath = new ObservableCollection<CloudBreadcrumbEntry>();
         SyncMappings = new ObservableCollection<CloudSyncMapping>(_syncStore.Load());
         _mappedSync = new CloudMappedSyncCoordinator(
@@ -206,7 +201,6 @@ public partial class CloudViewModel : ViewModelBase
     }
 
     public ObservableCollection<CloudItemViewModel> Items { get; }
-    public ICollectionView FilteredItems { get; }
     public ObservableCollection<CloudBreadcrumbEntry> BreadcrumbPath { get; }
     public ObservableCollection<CloudSyncMapping> SyncMappings { get; }
     public bool IsEmpty => Items.Count == 0;
@@ -365,18 +359,6 @@ public partial class CloudViewModel : ViewModelBase
 
     public bool HasErrorDetails => _lastError != null;
 
-    public string SearchText
-    {
-        get => _searchText;
-        set
-        {
-            if (_searchText == value) return;
-            _searchText = value;
-            OnPropertyChanged();
-            FilteredItems.Refresh();
-        }
-    }
-
     public bool IsCompactLayout
     {
         get => _isCompactLayout;
@@ -523,13 +505,6 @@ public partial class CloudViewModel : ViewModelBase
         }
 
         return false;
-    }
-
-    private bool MatchesSearchFilter(object obj)
-    {
-        if (obj is not CloudItemViewModel item) return false;
-        if (string.IsNullOrWhiteSpace(_searchText)) return true;
-        return item.Name.Contains(_searchText.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task HandleBackAsync()
@@ -1418,7 +1393,6 @@ public partial class CloudViewModel : ViewModelBase
                 return;
             ApplyCheapItemSizes(fresh);
             MergeListing(fresh, selectedId, reset: false);
-            FilteredItems.Refresh();
             // Values-light tree cache never re-fetches IncludeValues — push hydrate Names into it.
             ApplyHydratedNamesToFolderTree(fresh);
         }

@@ -152,24 +152,16 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- CM-HD2: no 20pt "Cloud" title (tab names surface); keep search + map CTA -->
+                <!-- CM-HD2: no 20pt "Cloud" title; CIF1 dropped in-folder search; Refresh/Add-local stay until CARG1 -->
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
                         BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
                     <StackPanel>
-                        <!-- CM-TT4: one listing Refresh beside search (TabToolbar create strip removed) -->
+                        <!-- CM-TT4: listing Refresh discoverable (CARG1 will re-home beside gear) -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="ListSearchBox" Grid.Column="0"
-                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                     Padding="8,6" FontSize="13"
-                                     Background="{DynamicResource ContentBackground}"
-                                     Foreground="{DynamicResource ForegroundBrush}"
-                                     BorderBrush="{DynamicResource BorderBrushStandard}"
-                                     ToolTip="Search in this folder (Ctrl+F)"
-                                     AutomationProperties.Name="Search in this folder"/>
                             <Button Grid.Column="1" Content="Refresh" Margin="8,0,0,0"
                                     Padding="10,4" VerticalAlignment="Center"
                                     Style="{DynamicResource GhostButton}"
@@ -244,7 +236,7 @@
                     </Border>
 
                     <Grid Grid.Row="1">
-                    <ListBox x:Name="CloudListBox" ItemsSource="{Binding FilteredItems}" KeyDown="OnListKeyDown"
+                    <ListBox x:Name="CloudListBox" ItemsSource="{Binding Items}" KeyDown="OnListKeyDown"
                              ScrollViewer.ScrollChanged="OnListScrollChanged"
                              SelectionChanged="OnSelectionChanged" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                              BorderThickness="0" Background="{DynamicResource ListBackground}"
