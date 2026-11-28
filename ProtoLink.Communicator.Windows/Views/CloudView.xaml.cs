@@ -19,7 +19,7 @@ namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class CloudView : System.Windows.Controls.UserControl
 {
-    private const double CompactBreakpoint = 700;
+    private const double CompactBreakpoint = CloudExplorerColumnLayout.CompactBreakpoint;
     private CloudViewModel? _vm;
     private GridLength _treeColumnWidth = new(220);
     private GridLength _stackedListRowHeight = new(1, GridUnitType.Star);
@@ -126,20 +126,13 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(CloudViewModel.CurrentEntity)
-            or nameof(CloudViewModel.HasCurrentFolderMapping)
-            or nameof(CloudViewModel.CanMapCurrentFolder)
-            or nameof(CloudViewModel.CanDeleteCurrentEntity)
-            or nameof(CloudViewModel.IsInSharedWithMeScope)
-            or nameof(CloudViewModel.ShowSharedBrowseOnlyHint)
-            or nameof(CloudViewModel.CanLeaveCurrentSharedRoot)
-            or nameof(CloudViewModel.IsFolderOpen)
-            or nameof(CloudViewModel.IsFileOpen))
-            RebuildEntityMoreMenu();
+        // CIP1: Locations ⋮ rebuilt on MoreMenuOpening (no action-menu PropertyChanged fan-out).
 
         if (e.PropertyName is nameof(CloudViewModel.ShowListPane) or nameof(CloudViewModel.ShowEntityPane)
             or nameof(CloudViewModel.IsCompactLayout)
-            or nameof(CloudViewModel.ShowFolderTree))
+            or nameof(CloudViewModel.ShowContentsInCompact)
+            or nameof(CloudViewModel.ShowFolderTree)
+            or nameof(CloudViewModel.CompactBrowsePanel))
             ApplyColumnLayout();
 
         if (e.PropertyName is nameof(CloudViewModel.ShowPreviewPdf)
@@ -149,8 +142,11 @@ public partial class CloudView : System.Windows.Controls.UserControl
 
     private void OnEntityOpened()
     {
-        if (_vm?.IsCompactLayout == true)
-            _vm.ShowEntityInCompact = true;
+        if (_vm?.IsCompactLayout != true) return;
+        // E9h: any open (tree folder / list / Locations) → contents panel.
+        _vm.EnterCompactContents();
+        // Files (and entity-focused opens) show info/preview; folders stay on the listing.
+        _vm.ShowEntityInCompact = _vm.IsFileOpen;
     }
 
     private async Task StartDeferredSyncAsync()
@@ -189,8 +185,23 @@ public partial class CloudView : System.Windows.Controls.UserControl
             if (TreeColumn.Width.Value > 0)
                 _treeColumnWidth = TreeColumn.Width;
 
-            // Narrow: collapse Folders tree; keep list ↔ entity toggle (AT-C9).
+            var panel = _vm.CompactBrowsePanel;
+            var showTree = CloudExplorerColumnLayout.ShouldShowTreePanel(
+                true, panel, _vm.ShowFolderTree);
+            var showContents = CloudExplorerColumnLayout.ShouldShowContentsPanel(
+                true, panel, _vm.ShowFolderTree);
+
+            if (showTree && !showContents)
+            {
+                // E9h AT-CE24/CE25: Folders tree full width; main collapsed.
+                ExpandTreeColumnFullWidth();
+                CollapseMainColumn();
+                return;
+            }
+
+            // E9h contents (or empty-tree E9d): main full width; tree collapsed.
             CollapseTreeColumn();
+            ExpandMainColumn();
             ApplySideBySideBrowsePanes(compactToggle: true);
 
             if (_vm.ShowEntityInCompact)
@@ -209,6 +220,8 @@ public partial class CloudView : System.Windows.Controls.UserControl
             }
             return;
         }
+
+        ExpandMainColumn();
 
         // Wide: Folders column only when tree has rows (E9d / AT-CE15).
         // E9e / AT-CE16: with tree → Tree | stacked contents+info; without → contents | info.
@@ -233,8 +246,31 @@ public partial class CloudView : System.Windows.Controls.UserControl
     {
         TreeColumn.Width = new GridLength(0);
         TreeColumn.MinWidth = 0;
+        TreeColumn.MaxWidth = 0;
         TreeSplitterColumn.Width = new GridLength(0);
         TreePaneSplitter.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>E9h narrow tree panel: Folders column fills the shell.</summary>
+    private void ExpandTreeColumnFullWidth()
+    {
+        TreeColumn.MinWidth = 0;
+        TreeColumn.MaxWidth = double.PositiveInfinity;
+        TreeColumn.Width = new GridLength(1, GridUnitType.Star);
+        TreeSplitterColumn.Width = new GridLength(0);
+        TreePaneSplitter.Visibility = Visibility.Collapsed;
+    }
+
+    private void CollapseMainColumn()
+    {
+        MainColumn.Width = new GridLength(0);
+        MainColumn.MinWidth = 0;
+    }
+
+    private void ExpandMainColumn()
+    {
+        MainColumn.MinWidth = 280;
+        MainColumn.Width = new GridLength(1, GridUnitType.Star);
     }
 
     /// <summary>Empty-tree / compact: contents | info as two columns inside MainPanesGrid.</summary>
@@ -373,124 +409,44 @@ public partial class CloudView : System.Windows.Controls.UserControl
         _pdfWebViewReady = PdfPreviewWebView.CoreWebView2 != null;
     }
 
+    /// <summary>
+    /// CIP1: EntityHeader ⋮ is Locations-only (E9f SWM / SBM / Recent).
+    /// Folder/file actions live on list + Folders-tree context menus.
+    /// </summary>
     private void RebuildEntityMoreMenu()
     {
         if (_vm == null)
         {
             EntityHeaderControl.MoreMenu = null;
+            EntityHeaderControl.ShowMoreMenu = false;
             return;
         }
 
         var menu = new ContextMenu();
-        menu.Items.Add(new MenuItem { Header = "Share…", Command = _vm.OpenShareCommand });
-        menu.Items.Add(new MenuItem { Header = "Open in browser", Command = _vm.OpenInBrowserCommand });
-        if (_vm.IsFileOpen)
-        {
-            menu.Items.Add(new MenuItem { Header = "Open", Command = _vm.OpenExternallyCommand });
-            menu.Items.Add(new MenuItem { Header = "Download", Command = _vm.DownloadCurrentCommand });
-        }
-        menu.Items.Add(new Separator());
-
-        if (_vm.IsFolderOpen)
-        {
-            if (_vm.CanMapCurrentFolder)
-            {
-                var mapItem = new MenuItem { Header = _vm.MapThisFolderLabel };
-                mapItem.Click += (_, _) => OnMapCurrentFolderClick(this, new RoutedEventArgs());
-                menu.Items.Add(mapItem);
-            }
-
-            if (_vm.ShowAddLocalFolderCta)
-            {
-                menu.Items.Add(new MenuItem
-                {
-                    Header = _vm.AddLocalFolderCtaLabel,
-                    Command = _vm.AddLocalFolderCommand
-                });
-            }
-
-            if (_vm.HasCurrentFolderMapping)
-            {
-                menu.Items.Add(new MenuItem { Header = "Sync", Command = _vm.SyncCurrentMappingCommand });
-                menu.Items.Add(new MenuItem { Header = "Upload all", Command = _vm.ForceUploadCurrentMappingCommand });
-                menu.Items.Add(new MenuItem { Header = "Download all", Command = _vm.ForceDownloadCurrentMappingCommand });
-                menu.Items.Add(new MenuItem { Header = "Unmap", Command = _vm.UnmapCurrentFolderCommand });
-                menu.Items.Add(new Separator());
-            }
-        }
-
-        if (_vm.CanLeaveCurrentSharedRoot)
-        {
-            var lang = _vm.ShareSheet.Lang;
-            var leaveItem = new MenuItem { Header = ShareSheetStrings.LeaveMenu(lang) };
-            System.Windows.Automation.AutomationProperties.SetName(leaveItem, ShareSheetStrings.Leave(lang));
-            leaveItem.Click += (_, _) => OnLeaveSharedCurrent();
-            menu.Items.Add(leaveItem);
-        }
-
-        if (_vm.CanDeleteCurrentEntity)
-        {
-            var deleteItem = new MenuItem { Header = "Delete" };
-            System.Windows.Automation.AutomationProperties.SetName(deleteItem, "Delete");
-            deleteItem.Click += (_, _) => OnDeleteCurrentEntity();
-            menu.Items.Add(deleteItem);
-        }
-
-        // E9f: SWM / SBM / Recent via Cloud ⋮ Locations (not TabToolbar).
-        if (menu.Items.Count > 0)
-            menu.Items.Add(new Separator());
         var swmItem = new MenuItem
         {
             Header = _vm.OpenSharedWithMeLabel,
             Command = _vm.OpenSharedWithMeCommand
         };
-        System.Windows.Automation.AutomationProperties.SetName(swmItem, "CloudLocationsSharedWithMe");
+        AutomationProperties.SetName(swmItem, "CloudLocationsSharedWithMe");
         menu.Items.Add(swmItem);
         var sbmItem = new MenuItem
         {
             Header = _vm.OpenSharedByMeLabel,
             Command = _vm.OpenSharedByMeCommand
         };
-        System.Windows.Automation.AutomationProperties.SetName(sbmItem, "CloudLocationsSharedByMe");
+        AutomationProperties.SetName(sbmItem, "CloudLocationsSharedByMe");
         menu.Items.Add(sbmItem);
         var recentItem = new MenuItem
         {
             Header = _vm.OpenRecentLabel,
             Command = _vm.OpenRecentCommand
         };
-        System.Windows.Automation.AutomationProperties.SetName(recentItem, "CloudLocationsRecent");
+        AutomationProperties.SetName(recentItem, "CloudLocationsRecent");
         menu.Items.Add(recentItem);
 
         EntityHeaderControl.MoreMenu = menu;
-        EntityHeaderControl.ShowMoreMenu = menu.Items.Count > 0;
-    }
-
-    private void OnMapCurrentFolderClick(object sender, RoutedEventArgs e)
-    {
-        if (_vm?.CurrentEntity is not { IsFolder: true } folder) return;
-        var path = FolderPicker.PickFolder("Select local folder to sync with");
-        if (path is null) return;
-        _vm.AddMapping(folder.Id, path, folder.Name);
-    }
-
-    private void OnDeleteCurrentEntity()
-    {
-        if (_vm?.CurrentEntity is null) return;
-        var entity = _vm.CurrentEntity;
-        var listed = _vm.Items.FirstOrDefault(i => i.Id == entity.Id);
-        var item = listed ?? new CloudItemViewModel
-        {
-            Id = entity.Id,
-            Name = entity.Name,
-            IsFolder = entity.IsFolder,
-            IsShareRoot = _vm.IsSwmShareRootItem(new CloudItemViewModel
-            {
-                Id = entity.Id,
-                Name = entity.Name,
-                IsFolder = entity.IsFolder
-            })
-        };
-        _ = ConfirmAndDeleteAsync(item);
+        EntityHeaderControl.ShowMoreMenu = true;
     }
 
     private void OnListScrollRestoreRequested(double offset)
@@ -548,6 +504,49 @@ public partial class CloudView : System.Windows.Controls.UserControl
     {
         if (IsFolderTreeExpandAffordance(e.OriginalSource as DependencyObject)) return;
         OpenFolderTreeFromSender(e.OriginalSource as DependencyObject);
+    }
+
+    /// <summary>CIP1: select the row under the cursor so the tree ContextMenu targets that folder.</summary>
+    private void OnFolderTreePreviewRightDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsFolderTreeExpandAffordance(e.OriginalSource as DependencyObject)) return;
+        var row = FindFolderTreeRow(e.OriginalSource as DependencyObject);
+        if (row == null || _vm == null) return;
+        FolderTreeListBox.SelectedItem = row;
+        foreach (var r in _vm.FolderTreeRows)
+            r.IsSelected = r.Id == row.Id;
+    }
+
+    private void OnFolderTreeContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (_vm == null)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        var row = FolderTreeListBox.SelectedItem as CloudFolderTreeRowViewModel
+                  ?? FindFolderTreeRow(e.OriginalSource as DependencyObject);
+        if (row == null)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        FolderTreeListBox.ContextMenu = CreateItemContextMenu(FolderTreeRowAsItem(row));
+    }
+
+    private CloudItemViewModel FolderTreeRowAsItem(CloudFolderTreeRowViewModel row)
+    {
+        var item = new CloudItemViewModel
+        {
+            Id = row.Id,
+            Name = row.Name,
+            IsFolder = true
+        };
+        if (_vm != null)
+            item.IsShareRoot = _vm.IsSwmShareRootItem(item);
+        return item;
     }
 
     private void OpenFolderTreeFromSender(DependencyObject? source)
@@ -776,12 +775,6 @@ public partial class CloudView : System.Windows.Controls.UserControl
     {
         if (_vm == null || !ConfirmLeaveShared()) return;
         _ = _vm.LeaveSharedAsync(item.Id);
-    }
-
-    private void OnLeaveSharedCurrent()
-    {
-        if (_vm?.CurrentEntity is null || !ConfirmLeaveShared()) return;
-        _ = _vm.LeaveSharedAsync(_vm.CurrentEntity.Id);
     }
 
     private bool ConfirmLeaveShared()

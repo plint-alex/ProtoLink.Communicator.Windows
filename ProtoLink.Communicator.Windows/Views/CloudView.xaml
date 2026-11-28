@@ -66,6 +66,8 @@
                              VerticalAlignment="Stretch"
                              MouseDoubleClick="OnFolderTreeDoubleClick"
                              PreviewMouseLeftButtonUp="OnFolderTreeItemClick"
+                             PreviewMouseRightButtonDown="OnFolderTreePreviewRightDown"
+                             ContextMenuOpening="OnFolderTreeContextMenuOpening"
                              AutomationProperties.Name="Cloud folders tree">
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
@@ -358,47 +360,37 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
+                <!-- CIP1: Share/Copy/actions live on folder context menus; header is title + Back (+ Locations ⋮). -->
                 <controls:EntityHeader x:Name="EntityHeaderControl" Grid.Row="0"
                                        Title="{Binding HeaderTitle}"
                                        Subtitle="{Binding HeaderSubtitle}"
                                        TypeGlyph="{Binding HeaderTypeGlyph}"
                                        ShowBack="{Binding ShowBack}"
                                        BackCommand="{Binding BackCommand}"
-                                       ShowShare="True"
-                                       ShareButtonLabel="{Binding ShareButtonLabel}"
-                                       ShareCommand="{Binding OpenShareCommand}"
-                                       CopyLinkCommand="{Binding CopyLinkCommand}"
+                                       ShowShare="False"
+                                       ShowCopyLink="False"
                                        NavigateParentCommand="{Binding NavigateParentCommand}"/>
 
-                <!-- Folder info -->
+                <!-- Folder facts (CIP1: no Info heading / action chrome) -->
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,16"
                               Visibility="{Binding IsFolderOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <StackPanel MaxWidth="520" HorizontalAlignment="Left">
-                        <TextBlock Text="Info" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"
-                                   Foreground="{DynamicResource ForegroundBrush}"/>
                         <TextBlock Text="{Binding ListedChildCountText}" FontSize="13" Margin="0,0,0,8"
                                    Foreground="{DynamicResource ForegroundMutedBrush}"/>
                         <TextBlock Text="{Binding FolderSizeSummary, StringFormat=Size: {0}}" FontSize="13" Margin="0,0,0,8"
                                    Foreground="{DynamicResource ForegroundMutedBrush}"
                                    Visibility="{Binding FolderSizeSummary, Converter={StaticResource StringToVisibilityConverter}}"/>
 
-                        <!-- AT-S40: id row + Copy link (canonical URL via CopyLinkCommand) -->
-                        <DockPanel Margin="0,4,0,12"
-                                   Visibility="{Binding HasCurrentEntityId, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Button DockPanel.Dock="Right" Content="Copy link" Margin="12,0,0,0"
-                                    Style="{DynamicResource GhostButton}" VerticalAlignment="Center"
-                                    Command="{Binding CopyLinkCommand}"
-                                    AutomationProperties.Name="Copy link"
-                                    ToolTip="Copy link (Ctrl+Shift+C)"/>
-                            <StackPanel>
-                                <TextBlock Text="Id" FontSize="12"
-                                           Foreground="{DynamicResource ForegroundMutedBrush}"/>
-                                <TextBlock Text="{Binding CurrentEntityIdText}" FontSize="13" TextWrapping="Wrap"
-                                           FontFamily="Consolas"
-                                           Foreground="{DynamicResource ForegroundBrush}"
-                                           AutomationProperties.Name="Entity id"/>
-                            </StackPanel>
-                        </DockPanel>
+                        <!-- AT-S40: id as read-only fact (Copy link via context menu / Ctrl+Shift+C) -->
+                        <StackPanel Margin="0,4,0,12"
+                                    Visibility="{Binding HasCurrentEntityId, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="Id" FontSize="12"
+                                       Foreground="{DynamicResource ForegroundMutedBrush}"/>
+                            <TextBlock Text="{Binding CurrentEntityIdText}" FontSize="13" TextWrapping="Wrap"
+                                       FontFamily="Consolas"
+                                       Foreground="{DynamicResource ForegroundBrush}"
+                                       AutomationProperties.Name="Entity id"/>
+                        </StackPanel>
 
                         <Border Margin="0,8,0,0" Padding="12,10" CornerRadius="10"
                                 Background="{DynamicResource PanelCardBackground}"
@@ -408,25 +400,10 @@
                                 <TextBlock Text="Synced mapping" FontWeight="SemiBold" Margin="0,0,0,4"
                                            Foreground="{DynamicResource ForegroundBrush}"/>
                                 <TextBlock Text="{Binding CurrentFolderMappingPath}" FontSize="12" TextWrapping="Wrap"
-                                           Foreground="{DynamicResource ForegroundMutedBrush}" Margin="0,0,0,10"/>
-                                <WrapPanel>
-                                    <Button Content="Sync" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
-                                            Command="{Binding SyncCurrentMappingCommand}"/>
-                                    <Button Content="Upload all" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
-                                            Command="{Binding ForceUploadCurrentMappingCommand}"
-                                            ToolTip="Overwrite server with local files"/>
-                                    <Button Content="Download all" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
-                                            Command="{Binding ForceDownloadCurrentMappingCommand}"
-                                            ToolTip="Overwrite local files from server"/>
-                                    <Button Content="Unmap" Margin="0,0,8,4" Style="{DynamicResource GhostButton}"
-                                            Command="{Binding UnmapCurrentFolderCommand}"/>
-                                </WrapPanel>
+                                           Foreground="{DynamicResource ForegroundMutedBrush}"
+                                           AutomationProperties.Name="Synced mapping path"/>
                             </StackPanel>
                         </Border>
-
-                        <Button Content="{Binding MapThisFolderLabel}" Margin="0,12,0,0" HorizontalAlignment="Left"
-                                Style="{DynamicResource GhostButton}" Click="OnMapCurrentFolderClick"
-                                Visibility="{Binding CanMapCurrentFolder, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
                         <!-- AT-S42: Shared with me is browse-only (no Map / one-way sync in cycle 1) -->
                         <TextBlock Text="{Binding SharedBrowseOnlyHintText}" FontSize="12" TextWrapping="Wrap"
@@ -434,11 +411,6 @@
                                    Foreground="{DynamicResource ForegroundMutedBrush}"
                                    Visibility="{Binding ShowSharedBrowseOnlyHint, Converter={StaticResource BooleanToVisibilityConverter}}"
                                    AutomationProperties.Name="Shared folder browse-only hint"/>
-
-                        <Button Content="{Binding ShareButtonLabel}" Margin="0,12,0,0" HorizontalAlignment="Left"
-                                Style="{DynamicResource GhostButton}"
-                                Command="{Binding OpenShareCommand}"
-                                AutomationProperties.Name="Share from Info"/>
                     </StackPanel>
                 </ScrollViewer>
 
