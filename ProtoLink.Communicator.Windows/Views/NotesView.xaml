@@ -5,6 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:views="clr-namespace:ProtoLink.Communicator.Windows.Views"
+             xmlns:controls="clr-namespace:ProtoLink.Communicator.Windows.Controls"
              mc:Ignorable="d" d:DesignHeight="450" d:DesignWidth="800"
              Foreground="{DynamicResource ForegroundBrush}"
              SizeChanged="OnRootSizeChanged"
@@ -132,17 +133,30 @@
                       VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
                       ResizeBehavior="PreviousAndNext" ShowsPreview="True"/>
 
-        <!-- Editor pane: no permanent format strip (Pattern 2 floating bar on selection) -->
+        <!-- Editor pane: EntityHeader Back (NNB1 compact discoverable) + Pattern 2 floating format bar -->
         <Grid x:Name="EditorPane" Grid.Column="2">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition x:Name="SiblingSplitterRow" Height="0"/>
                 <RowDefinition x:Name="SiblingPanelRow" Height="0" MinHeight="0" MaxHeight="320"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
+            <!-- NNB1: visible Back via ShowBack/BackCommand (compact editor → tree; history when applicable). -->
+            <controls:EntityHeader x:Name="NotesEntityHeader" Grid.Row="0"
+                                   Title="{Binding HeaderTitle}"
+                                   Subtitle="{Binding HeaderSubtitle}"
+                                   ShowBack="{Binding ShowBack}"
+                                   BackCommand="{Binding BackCommand}"
+                                   CopyLinkCommand="{Binding CopyLinkCommand}"
+                                   CopyLinkToolTip="{Binding CopyLinkToolTip}"
+                                   NavigateParentCommand="{Binding NavigateParentCommand}"
+                                   ShowShare="False"
+                                   ShowMoreMenu="False"/>
+
             <!-- ClipToBounds does not clip WebView2 HWND; layout sync is in ApplySiblingPanelLayout. -->
-            <Grid x:Name="EditorHost" Grid.Row="0" ClipToBounds="True">
+            <Grid x:Name="EditorHost" Grid.Row="1" ClipToBounds="True">
                 <wv2:WebView2 x:Name="NotesWebView"
                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
                 <Popup x:Name="FormatBarPopup"
@@ -219,11 +233,11 @@
             </Grid>
 
             <!-- Spacer rows reserve editor space; panel UI is a Popup (own HWND) so WebView2 airspace cannot cover it. -->
-            <GridSplitter x:Name="SiblingSplitter" Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
+            <GridSplitter x:Name="SiblingSplitter" Grid.Row="2" Height="4" HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch" Background="{DynamicResource BorderBrushStandard}"
                           ResizeDirection="Rows" ShowsPreview="True"
                           Visibility="Collapsed"/>
-            <Border x:Name="SiblingPanelSpacer" Grid.Row="2" Background="{DynamicResource ListBackground}"
+            <Border x:Name="SiblingPanelSpacer" Grid.Row="3" Background="{DynamicResource ListBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0"
                     Visibility="Collapsed"/>
             <!-- E5 Folder files: Popup hosts the real chrome above WebView2 HWND (AT-N7 airspace fix). -->
@@ -286,7 +300,7 @@
                 </Border>
             </Popup>
 
-            <Border Grid.Row="3" Background="{DynamicResource StatusBarBackground}"
+            <Border Grid.Row="4" Background="{DynamicResource StatusBarBackground}"
                     BorderBrush="{DynamicResource BorderBrushStandard}" BorderThickness="0,1,0,0" Padding="16,8">
                 <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource ForegroundMutedBrush}" FontSize="12"/>
             </Border>

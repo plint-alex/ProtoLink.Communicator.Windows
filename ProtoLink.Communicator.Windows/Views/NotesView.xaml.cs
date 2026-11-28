@@ -25,7 +25,8 @@ namespace ProtoLink.Communicator.Windows.Views;
 
 public partial class NotesView : System.Windows.Controls.UserControl
 {
-    private const double CompactBreakpoint = 700;
+    /// <summary>NNB1 / Delivery #1 — narrow Notes stack breakpoint (same as Cloud E9h).</summary>
+    internal const double CompactBreakpoint = 700;
     private bool _isLoading;
     /// <summary>Bumps on each NavigateToAsync so a stale load after rapid tree clicks is dropped.</summary>
     private int _notesNavigateGeneration;
