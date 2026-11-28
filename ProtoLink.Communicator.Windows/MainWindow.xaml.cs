@@ -303,20 +303,23 @@ public partial class MainWindow : Window
     {
         // Chrome-minimal CM-TT1…TT4: Notes/Cloud create/Download/Open stay off the permanent strip.
         // E11a: Notes-tab Add/Remove/Map roots sit adjacent to the Settings gear.
+        // CARG1: Cloud-tab Refresh + Add-local sit adjacent to the Settings gear.
         toolbarPanel.Children.Clear();
         var actionIds = ShellTabToolbarChrome.PermanentActionIds(MainTabControl.SelectedIndex);
         foreach (var id in actionIds)
         {
-            if (!ShellTabToolbarChrome.IsNotesRootChromeAction(id))
+            if (!ShellTabToolbarChrome.IsWiredPermanentAction(id))
                 throw new InvalidOperationException($"Shell TabToolbar action '{id}' is not wired; extend UpdateTabToolbar.");
 
-            toolbarPanel.Children.Add(CreateNotesRootChromeButton(id));
+            toolbarPanel.Children.Add(
+                ShellTabToolbarChrome.IsCloudChromeAction(id)
+                    ? CreateCloudChromeButton(id)
+                    : CreateNotesRootChromeButton(id));
         }
     }
 
-    private System.Windows.Controls.Button CreateNotesRootChromeButton(string actionId)
-    {
-        var button = new System.Windows.Controls.Button
+    private System.Windows.Controls.Button CreateShellChromeButton() =>
+        new()
         {
             MinWidth = 36,
             Height = 36,
@@ -327,6 +330,10 @@ public partial class MainWindow : Window
             Focusable = false,
             Foreground = (System.Windows.Media.Brush)FindResource("ForegroundBrush")
         };
+
+    private System.Windows.Controls.Button CreateNotesRootChromeButton(string actionId)
+    {
+        var button = CreateShellChromeButton();
 
         switch (actionId)
         {
@@ -350,6 +357,48 @@ public partial class MainWindow : Window
                 break;
             default:
                 throw new InvalidOperationException($"Unknown Notes root chrome action '{actionId}'.");
+        }
+
+        return button;
+    }
+
+    private System.Windows.Controls.Button CreateCloudChromeButton(string actionId)
+    {
+        var button = CreateShellChromeButton();
+
+        switch (actionId)
+        {
+            case ShellTabToolbarChrome.CloudRefreshActionId:
+                button.Content = "↻";
+                button.ToolTip = "Refresh listing (F5)";
+                System.Windows.Automation.AutomationProperties.SetName(button, "Refresh Cloud listing");
+                button.Command = _cloudViewModel.RefreshCommand;
+                break;
+            case ShellTabToolbarChrome.CloudAddLocalActionId:
+                button.Content = "📁";
+                button.SetBinding(
+                    System.Windows.Controls.Button.ToolTipProperty,
+                    new System.Windows.Data.Binding(nameof(CloudViewModel.AddLocalFolderCtaLabel))
+                    {
+                        Source = _cloudViewModel
+                    });
+                button.SetBinding(
+                    System.Windows.Automation.AutomationProperties.NameProperty,
+                    new System.Windows.Data.Binding(nameof(CloudViewModel.AddLocalFolderAutomationName))
+                    {
+                        Source = _cloudViewModel
+                    });
+                button.Command = _cloudViewModel.AddLocalFolderCommand;
+                button.SetBinding(
+                    UIElement.VisibilityProperty,
+                    new System.Windows.Data.Binding(nameof(CloudViewModel.ShowAddLocalFolderCta))
+                    {
+                        Source = _cloudViewModel,
+                        Converter = (System.Windows.Data.IValueConverter)FindResource("BooleanToVisibilityConverter")
+                    });
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown Cloud chrome action '{actionId}'.");
         }
 
         return button;

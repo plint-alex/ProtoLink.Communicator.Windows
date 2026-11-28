@@ -54,11 +54,20 @@ public class CloudInFolderSearchRemovalTests
     }
 
     [Fact]
-    public void CloudView_Refresh_And_AddLocal_Stay_Discoverable_Until_Carg1()
+    public void CloudView_ListHeader_NoLonger_Hosts_Refresh_Or_AddLocal_After_Carg1()
     {
         var xaml = CloudViewXaml();
-        Assert.Contains("AutomationProperties.Name=\"Refresh Cloud listing\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("AutomationProperties.Name=\"Refresh Cloud listing\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"Refresh\"", xaml, StringComparison.Ordinal);
+        // FAB context menu may still expose AddLocalFolderCommand; list/empty header must not.
         Assert.Contains("Command=\"{Binding AddLocalFolderCommand}\"", xaml, StringComparison.Ordinal);
+        var headerStart = xaml.IndexOf("CM-HD2", StringComparison.Ordinal);
+        Assert.True(headerStart >= 0, "CM-HD2 header marker missing");
+        var headerEnd = xaml.IndexOf("Offline / status banners", headerStart, StringComparison.Ordinal);
+        Assert.True(headerEnd > headerStart, "header/status boundary missing");
+        var header = xaml[headerStart..headerEnd];
+        Assert.DoesNotContain("AddLocalFolderCommand", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("RefreshCommand", header, StringComparison.Ordinal);
     }
 
     [Fact]

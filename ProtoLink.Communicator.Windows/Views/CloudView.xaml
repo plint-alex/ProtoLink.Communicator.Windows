@@ -152,31 +152,17 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- CM-HD2: no 20pt "Cloud" title; CIF1 dropped in-folder search; Refresh/Add-local stay until CARG1 -->
+                <!-- CM-HD2: no 20pt "Cloud" title; CIF1 dropped search; CARG1 moved Refresh/Add-local to gear chrome.
+                     E9h: compact Back only when list replaces Folders tree (AT-CE26). -->
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBackground}"
-                        BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
-                    <StackPanel>
-                        <!-- CM-TT4: listing Refresh discoverable (CARG1 will re-home beside gear) -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="1" Content="Refresh" Margin="8,0,0,0"
-                                    Padding="10,4" VerticalAlignment="Center"
-                                    Style="{DynamicResource GhostButton}"
-                                    Command="{Binding RefreshCommand}"
-                                    ToolTip="Refresh listing (F5)"
-                                    AutomationProperties.Name="Refresh Cloud listing"/>
-                        </Grid>
-                        <!-- E6: discoverable local-first map (AT-MAP-1) -->
-                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,8,0,0"
-                                HorizontalAlignment="Left" Padding="10,4"
-                                Style="{DynamicResource GhostButton}"
-                                Command="{Binding AddLocalFolderCommand}"
-                                AutomationProperties.Name="{Binding AddLocalFolderAutomationName}"
-                                Visibility="{Binding ShowAddLocalFolderCta, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                    </StackPanel>
+                        BorderBrush="{DynamicResource ToolbarBorderBrush}" BorderThickness="0,0,0,1" Padding="12,8"
+                        Visibility="{Binding ShowCompactListBack, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Button Content="←" Width="36" Height="32" FontSize="16"
+                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                            Style="{DynamicResource GhostButton}"
+                            Command="{Binding BackCommand}"
+                            ToolTip="Back to Folders (Alt+←)"
+                            AutomationProperties.Name="Back"/>
                 </Border>
 
                 <!-- Offline / status banners (UX Pattern 5): reserved status row — quiet Ready stays
@@ -309,12 +295,6 @@
                                 ToolTip="Upload files into this folder"
                                 AutomationProperties.Name="Upload into empty folder"
                                 Visibility="{Binding ShowEmptyUpload, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                        <Button Content="{Binding AddLocalFolderCtaLabel}" Margin="0,12,0,0"
-                                HorizontalAlignment="Center"
-                                Style="{DynamicResource GhostButton}"
-                                Command="{Binding AddLocalFolderCommand}"
-                                AutomationProperties.Name="{Binding AddLocalFolderAutomationName}"
-                                Visibility="{Binding ShowAddLocalFolderCta, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
 
                     <!-- Pattern 1 Create FAB (cycle1-next-polish UX-C-F1…F4); AccentBrush = #2AABEE -->
